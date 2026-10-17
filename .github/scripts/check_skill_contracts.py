@@ -118,7 +118,9 @@ def validate_skill(path: Path) -> list[str]:
         else:
             entries[key] = (i, value)
         if key not in ALLOWED:
-            errors.append(f"{path}: нестандартное поле {key}; условия активации помещай в description")
+            errors.append(
+                f"{path}: нестандартное поле {key}; условия активации помещай в description"
+            )
         # Блочный скаляр (`|`, `>`) продолжается отступленными строками и
         # проверяется отдельно при разборе description.
         if value not in BLOCK_SCALARS:
@@ -133,8 +135,15 @@ def validate_skill(path: Path) -> list[str]:
     else:
         start, value = entries["description"]
         if value in BLOCK_SCALARS:
-            next_key = next((i for i in range(start + 1, len(header)) if KEY.fullmatch(header[i])), len(header))
-            text = " ".join(line.strip() for line in header[start + 1:next_key] if line.startswith((" ", "\t"))).strip()
+            next_key = next(
+                (i for i in range(start + 1, len(header)) if KEY.fullmatch(header[i])),
+                len(header),
+            )
+            text = " ".join(
+                line.strip()
+                for line in header[start + 1 : next_key]
+                if line.startswith((" ", "\t"))
+            ).strip()
         elif value.startswith(("'", '"')):
             text = value[1:-1]
         else:
@@ -154,13 +163,23 @@ def validate_skill(path: Path) -> list[str]:
 
 def validate_tree(root: Path) -> list[str]:
     base = root / ".agents" / "skills"
-    directories = sorted((path for path in base.glob("*") if path.is_dir()), key=lambda path: path.name)
+    directories = sorted(
+        (path for path in base.glob("*") if path.is_dir()), key=lambda path: path.name
+    )
     if not directories:
         return ["Нет каталогов skills в .agents/skills/"]
     # Каталог skill без манифеста — тоже нарушение контракта: обход по
     # `*/SKILL.md` такую поломку не заметил бы.
-    missing = [f"{directory}: отсутствует SKILL.md" for directory in directories if not (directory / "SKILL.md").is_file()]
-    return missing + [error for skill in sorted(base.glob("*/SKILL.md")) for error in validate_skill(skill)]
+    missing = [
+        f"{directory}: отсутствует SKILL.md"
+        for directory in directories
+        if not (directory / "SKILL.md").is_file()
+    ]
+    return missing + [
+        error
+        for skill in sorted(base.glob("*/SKILL.md"))
+        for error in validate_skill(skill)
+    ]
 
 
 def main() -> int:

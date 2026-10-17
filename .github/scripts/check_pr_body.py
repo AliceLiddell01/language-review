@@ -116,16 +116,29 @@ def validate(body: str) -> list[str]:
     for name, content in blocks:
         if name in REQUIRED and not content.strip():
             errors.append(f"Пустой обязательный раздел: ## {name}")
-        if name in REQUIRED and content.strip().casefold() in {"todo", "tbd", "заполнить", "уточнить"}:
+        if (
+            name in REQUIRED
+            and content.strip().casefold() in {"todo", "tbd", "заполнить", "уточнить"}
+        ):
             errors.append(f"Раздел содержит только заглушку: ## {name}")
     if "CodeRabbit review и disposition" in names:
         if names.count("CodeRabbit review и disposition") > 1:
             errors.append("Раздел CodeRabbit повторяется")
         for name, content in blocks:
             if name == "CodeRabbit review и disposition":
-                if "| Итерация / reviewed HEAD | Уровень | Путь | Влияние | Решение | Исправление |" not in content:
-                    errors.append("В разделе CodeRabbit отсутствует заголовок накопительной таблицы")
-                if not re.search(r"(?m)^\|\s*[1-9]\d*\s*·\s*`[0-9a-f]{7,40}`\s*\|(?:\s*[^|\n\s][^|\n]*\|){5}\s*$", content):
+                header = (
+                    "| Итерация / reviewed HEAD | Уровень | Путь | "
+                    "Влияние | Решение | Исправление |"
+                )
+                if header not in content:
+                    errors.append(
+                        "В разделе CodeRabbit отсутствует заголовок накопительной таблицы"
+                    )
+                pattern = (
+                    r"(?m)^\|\s*[1-9]\d*\s*·\s*`[0-9a-f]{7,40}`\s*\|"
+                    r"(?:\s*[^|\n\s][^|\n]*\|){5}\s*$"
+                )
+                if not re.search(pattern, content):
                     errors.append("В разделе CodeRabbit отсутствует строка завершённой итерации")
     return errors
 
@@ -141,7 +154,9 @@ def is_automation_pr(payload: dict) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--body-file", type=Path, help="Local Markdown source before PR publication")
+    source.add_argument(
+        "--body-file", type=Path, help="Local Markdown source before PR publication"
+    )
     source.add_argument("--event-path", type=Path, help="GitHub pull_request event JSON")
     args = parser.parse_args()
     try:

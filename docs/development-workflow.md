@@ -12,6 +12,6 @@
 
 ## CI и безопасность
 
-PR CI — Linux-проверка запертой среды и тестов Python; Windows smoke — отдельно, на реальном колесе и sdist. Полное исследование security выполняет CodeQL для Python/GitHub Actions, только при поддержке GitHub Code Security. Если работа ещё в приватном репозитории и CodeQL недоступен, отсутствие security status нельзя выдавать за PASS.
+PR CI проверяет locked environment, Ruff, mypy и агентские валидаторы на Ubuntu. Полный pytest и packaging smoke выполняются на Windows, где находится поддерживаемый runtime; Linux pytest не является обязательным контрактом текущего Windows-first продукта. Полное исследование security выполняет CodeQL для Python/GitHub Actions, только при поддержке GitHub Code Security. Если работа ещё в приватном репозитории и CodeQL недоступен, отсутствие security status нельзя выдавать за PASS.
 
 Обрабатываемые файлы, результаты экспериментов, credentials, локальные настройки и текстовые отчёты должны оставаться за пределами Git или под `.gitignore`. Для выхода проекта в public проверь историю, а не только текущий checkout. Фактическая доступность внешнего CodeRabbit и Renovate зависит от подключения их GitHub Apps.

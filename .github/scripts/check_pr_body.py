@@ -53,7 +53,7 @@ def strip_comments(lines: list[str]) -> list[str]:
                     rest = ""
                     continue
                 inside = False
-                rest = rest[end + 3:]
+                rest = rest[end + 3 :]
                 continue
             start = rest.find("<!--")
             if start < 0:
@@ -62,7 +62,7 @@ def strip_comments(lines: list[str]) -> list[str]:
                 continue
             visible += rest[:start]
             inside = True
-            rest = rest[start + 4:]
+            rest = rest[start + 4 :]
         result.append(visible)
     return result
 
@@ -116,10 +116,12 @@ def validate(body: str) -> list[str]:
     for name, content in blocks:
         if name in REQUIRED and not content.strip():
             errors.append(f"Пустой обязательный раздел: ## {name}")
-        if (
-            name in REQUIRED
-            and content.strip().casefold() in {"todo", "tbd", "заполнить", "уточнить"}
-        ):
+        if name in REQUIRED and content.strip().casefold() in {
+            "todo",
+            "tbd",
+            "заполнить",
+            "уточнить",
+        }:
             errors.append(f"Раздел содержит только заглушку: ## {name}")
     if "CodeRabbit review и disposition" in names:
         if names.count("CodeRabbit review и disposition") > 1:

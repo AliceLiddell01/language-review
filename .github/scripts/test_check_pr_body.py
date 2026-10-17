@@ -60,9 +60,8 @@ class PrBodyContractTests(unittest.TestCase):
         self.assertEqual(len(validate(f"<!--\n{valid_body()}\n-->")), len(HEADINGS))
 
     def test_unterminated_comment_hides_rest(self):
-        body = (
-            f"## Цель\nИнформация.\n<!-- {chr(10)}"
-            + "\n\n".join(f"## {n}\nИнформация." for n in HEADINGS[1:])
+        body = f"## Цель\nИнформация.\n<!-- {chr(10)}" + "\n\n".join(
+            f"## {n}\nИнформация." for n in HEADINGS[1:]
         )
         self.assertTrue(any("Область изменений" in e for e in validate(body)))
 
@@ -76,7 +75,7 @@ class PrBodyContractTests(unittest.TestCase):
         # Внутри код-блока `<!--` — пример, а не комментарий, поэтому описанный
         # в примере заголовок не становится разделом реального body.
         self.assertEqual(
-            len(validate("\`\`\`md\n<!--\n" + valid_body() + "\n-->\n\`\`\`")),
+            len(validate("```md\n<!--\n" + valid_body() + "\n-->\n```")),
             len(HEADINGS),
         )
         documented = valid_body() + "\n\n```md\n<!-- скрытый пример -->\n```"
@@ -90,17 +89,17 @@ class PrBodyContractTests(unittest.TestCase):
     def test_fenced_content_does_not_make_section_nonempty(self):
         body = valid_body().replace(
             "Фактическая информация для раздела CI.",
-            "\`\`\`md\nThis is a sample, not CI evidence.\n\`\`\`",
+            "```md\nThis is a sample, not CI evidence.\n```",
         )
         self.assertTrue(any("Пустой" in e for e in validate(body)))
 
     def test_coderabbit_table_in_fence_is_not_accepted(self):
         body = valid_body() + (
             "\n\n## CodeRabbit review и disposition\n"
-            "\`\`\`markdown\n"
+            "```markdown\n"
             "| Итерация / reviewed HEAD | Уровень | Путь | Влияние | Решение | Исправление |\n"
             "| 1 · x | — | — | 0 | clean | x |\n"
-            "\`\`\`"
+            "```"
         )
         self.assertTrue(any("таблицы" in e for e in validate(body)))
 
@@ -123,7 +122,7 @@ class PrBodyContractTests(unittest.TestCase):
         body += (
             "\n| Итерация / reviewed HEAD | Уровень | Путь | Влияние | Решение | Исправление |\n"
             "| --- | --- | --- | --- | --- | --- |\n"
-            "| 1 · \`abcdef0\` | — | — | 0 findings | clean | \`def\` |"
+            "| 1 · `abcdef0` | — | — | 0 findings | clean | `def` |"
         )
         self.assertEqual(validate(body), [])
 
@@ -143,16 +142,19 @@ class PrBodyContractTests(unittest.TestCase):
             "| Итерация / reviewed HEAD | Уровень | Путь | Влияние | Решение | Исправление |\n"
             "| --- | --- | --- | --- | --- | --- |\n"
         )
-        invalid = valid_body() + table + "| 1 · \`abcdef0\` | | | | | |"
+        invalid = valid_body() + table + "| 1 · `abcdef0` | | | | | |"
         self.assertTrue(any("строка" in e for e in validate(invalid)))
-        valid = valid_body() + table + (
-            "| 1 · \`abcdef0\` | — | — | 0 findings | clean | \`abcdef0\` |"
+        valid = (
+            valid_body()
+            + table
+            + ("| 1 · `abcdef0` | — | — | 0 findings | clean | `abcdef0` |")
         )
         self.assertEqual(validate(valid), [])
 
     def test_bot_exception_is_limited_to_account_and_branch(self):
         def payload(login, branch):
             return {"pull_request": {"user": {"login": login}, "head": {"ref": branch}}}
+
         self.assertTrue(is_automation_pr(payload("renovate[bot]", "renovate/rust-sha2")))
         self.assertTrue(
             is_automation_pr(payload("dependabot[bot]", "dependabot/github_actions/action"))

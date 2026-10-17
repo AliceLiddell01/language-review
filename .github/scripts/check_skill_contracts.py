@@ -31,7 +31,7 @@ def flow_error(value: str) -> str | None:
                 continue
             if char == quote:
                 # Удвоенная одинарная кавычка — escape внутри одинарного скаляра.
-                if quote == "'" and value[index + 1:index + 2] == "'":
+                if quote == "'" and value[index + 1 : index + 2] == "'":
                     index += 2
                     continue
                 quote = ""
@@ -44,7 +44,7 @@ def flow_error(value: str) -> str | None:
         elif char in CLOSING:
             if not stack or stack.pop() != char:
                 return "несбалансированная flow-скобка"
-            if not stack and value[index + 1:].strip():
+            if not stack and value[index + 1 :].strip():
                 return "текст после flow-структуры"
         index += 1
     if quote:
@@ -150,7 +150,7 @@ def validate_skill(path: Path) -> list[str]:
             text = value
         if not text or len(text) > 1024:
             errors.append(f"{path}: description должен содержать 1–1024 символа")
-    body = "\n".join(lines[end + 1:])
+    body = "\n".join(lines[end + 1 :])
     for match in LINK.finditer(body):
         target = match.group(1).split("#", 1)[0]
         if not target or ":" in target or target.startswith(("/", "#")):
@@ -176,9 +176,7 @@ def validate_tree(root: Path) -> list[str]:
         if not (directory / "SKILL.md").is_file()
     ]
     return missing + [
-        error
-        for skill in sorted(base.glob("*/SKILL.md"))
-        for error in validate_skill(skill)
+        error for skill in sorted(base.glob("*/SKILL.md")) for error in validate_skill(skill)
     ]
 
 

@@ -17,15 +17,11 @@ class SkillContractTests(unittest.TestCase):
         self.file = self.folder / "SKILL.md"
 
     def write_skill(self, metadata=None, body="See [details](references/details.md)."):
-        self.file.write_text(
-            metadata
-            or (
-                "---\nname: sample-skill\ndescription: >-\n"
-                "  Use this to perform a concrete skill task.\n---\n"
-            )
-            + body,
-            encoding="utf-8",
+        header = metadata or (
+            "---\nname: sample-skill\ndescription: >-\n"
+            "  Use this to perform a concrete skill task.\n---\n"
         )
+        self.file.write_text(header + body, encoding="utf-8")
 
     def test_valid_skill_and_local_ref(self):
         (self.folder / "references").mkdir()
@@ -36,11 +32,19 @@ class SkillContractTests(unittest.TestCase):
     def test_local_reference_with_title(self):
         (self.folder / "references").mkdir()
         (self.folder / "references/details.md").write_text("Details", encoding="utf-8")
-        self.write_skill(body='See [details](references/details.md "Details").')
+        link = 'See [details](references/details.md "Details").'
+        self.write_skill(
+            metadata="---\nname: sample-skill\ndescription: Custom description.\n---\n",
+            body=link,
+        )
+        self.assertIn(link, self.file.read_text(encoding="utf-8"))
         self.assertEqual(validate_tree(self.root), [])
 
     def test_invalid_name_and_nonstandard_routing_key(self):
-        self.write_skill("---\nname: wrong-name\ndescription: Demo skill.\nwhenToUse: never\n---\n")
+        self.write_skill(
+            "---\nname: wrong-name\ndescription: Demo skill.\nwhenToUse: never\n---\n",
+            body="Без ссылок.",
+        )
         self.assertTrue(any("name" in x for x in validate_skill(self.file)))
         self.assertTrue(any("whenToUse" in x for x in validate_skill(self.file)))
 
@@ -49,7 +53,10 @@ class SkillContractTests(unittest.TestCase):
         self.assertTrue(any("ссылка" in x for x in validate_skill(self.file)))
 
     def test_description_limit(self):
-        self.write_skill("---\nname: sample-skill\ndescription: >-\n  " + "x" * 1025 + "\n---\n")
+        self.write_skill(
+            "---\nname: sample-skill\ndescription: >-\n  " + "x" * 1025 + "\n---\n",
+            body="Без ссылок.",
+        )
         self.assertTrue(any("1024" in x for x in validate_skill(self.file)))
 
     def test_description_must_be_a_string_scalar(self):
@@ -87,7 +94,7 @@ class SkillContractTests(unittest.TestCase):
         self.assertTrue(any("500" in error for error in validate_skill(self.file)))
 
     def test_missing_frontmatter(self):
-        self.write_skill("# Just text")
+        self.write_skill("# Just text", body="Без ссылок.")
         self.assertTrue(any("frontmatter" in x for x in validate_skill(self.file)))
 
     def test_directory_without_manifest_fails(self):
@@ -104,13 +111,19 @@ class SkillContractTests(unittest.TestCase):
             '"первая" "вторая"',
         ):
             with self.subTest(value=value):
-                self.write_skill(f"---\nname: sample-skill\ndescription: {value}\n---\n")
+                self.write_skill(
+                    f"---\nname: sample-skill\ndescription: {value}\n---\n",
+                    body="Без ссылок.",
+                )
                 self.assertTrue(any("неразбираемое" in x for x in validate_skill(self.file)))
 
     def test_empty_block_scalars_are_rejected(self):
         for marker in ("|", "|-", "|+", ">", ">-", ">+"):
             with self.subTest(marker=marker):
-                self.write_skill(f"---\nname: sample-skill\ndescription: {marker}\n---\n")
+                self.write_skill(
+                    f"---\nname: sample-skill\ndescription: {marker}\n---\n",
+                    body="Без ссылок.",
+                )
                 self.assertTrue(any("1024" in x for x in validate_skill(self.file)), marker)
 
     def test_filled_block_scalar_is_accepted(self):

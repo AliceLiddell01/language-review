@@ -29,15 +29,4 @@ Language Review — локальная Python CLI-утилита для инве
 | Настоящая smoke/acceptance-проверка | `.agents/skills/language-review-live-testing/SKILL.md` |
 | Размещение нового знания/документации | `.agents/skills/language-review-documentation/SKILL.md` |
 
-## Базовая verification (PowerShell, из корня)
-
-```powershell
-uv sync --locked
-uv run --locked ruff check .
-uv run --locked ruff format --check .
-uv run --locked mypy
-uv run --locked pytest -n 8
-.\scripts\verify-package.ps1
-```
-
-Проверки агентской инфраструктуры и PR: см. `.codex/context/verification.md`. Указывай PASS/FAIL/PARTIAL/NOT_RUN и фактическое окружение; не называй незапущенные проверки успешными.
+Команды и gates для проверки Python-пакета, агентской инфраструктуры и PR: см. `.codex/context/verification.md`. Указывай PASS/FAIL/PARTIAL/NOT_RUN и фактическое окружение; не называй незапущенные проверки успешными.

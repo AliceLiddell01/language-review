@@ -153,6 +153,16 @@ class PrBodyContractTests(unittest.TestCase):
         )
         self.assertEqual(validate(valid), [])
 
+    def test_every_coderabbit_row_requires_a_reviewed_sha(self):
+        table = (
+            "\n\n## CodeRabbit review и disposition\n"
+            "| Итерация / reviewed HEAD | Уровень | Путь | Влияние | Решение | Исправление |\n"
+            "| --- | --- | --- | --- | --- | --- |\n"
+            "| 1 · `abcdef0` | minor | `.github/check.py` | влияние | confirmed | исправлено |\n"
+            "| 2 | minor | `.github/check.py` | влияние | confirmed | исправлено |"
+        )
+        self.assertTrue(any("строка" in error for error in validate(valid_body() + table)))
+
     def test_bot_exception_is_limited_to_account_and_branch(self):
         def payload(login, branch):
             return {"pull_request": {"user": {"login": login}, "head": {"ref": branch}}}

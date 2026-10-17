@@ -16,6 +16,18 @@ BLOCK_SCALARS = (">", ">-", ">+", "|", "|-", "|+")
 # незакрытые или несбалансированные: они делают frontmatter неразбираемым.
 FLOW_MAP = {"[": "]", "{": "}"}
 CLOSING = set(FLOW_MAP.values())
+NON_STRING_PLAIN_SCALAR = re.compile(
+    r"(?:~|null|true|false|[-+]?(?:"
+    r"0[xX][0-9a-fA-F_]+|0[oO][0-7_]+|0[bB][01_]+|"
+    r"(?:[0-9][0-9_]*(?:\.[0-9_]*)?|\.[0-9][0-9_]*)(?:[eE][-+]?[0-9][0-9_]*)?|"
+    r"\.(?:inf|nan)))\Z",
+    re.IGNORECASE,
+)
+
+
+def is_non_string_scalar(value: str) -> bool:
+    """Return whether an unquoted YAML core scalar resolves to a non-string type."""
+    return value.startswith(("[", "{")) or NON_STRING_PLAIN_SCALAR.fullmatch(value) is not None
 
 
 def flow_error(value: str) -> str | None:
@@ -138,7 +150,7 @@ def validate_skill(path: Path) -> list[str]:
                 for line in header[start + 1 : next_key]
                 if line.startswith((" ", "\t"))
             ).strip()
-        elif value.startswith(("[", "{")):
+        elif is_non_string_scalar(value):
             errors.append(f"{path}: description должен быть текстовым скаляром")
             text = value
         elif value.startswith(("'", '"')):
@@ -147,9 +159,34 @@ def validate_skill(path: Path) -> list[str]:
             text = value
         if not text or len(text) > 1024:
             errors.append(f"{path}: description должен содержать 1–1024 символа")
+    if "compatibility" in entries:
+        start, value = entries["compatibility"]
+        if value in BLOCK_SCALARS:
+            next_key = next(
+                (i for i in range(start + 1, len(header)) if KEY.fullmatch(header[i])),
+                len(header),
+            )
+            text = " ".join(
+                line.strip()
+                for line in header[start + 1 : next_key]
+                if line.startswith((" ", "\t"))
+            ).strip()
+        elif value.startswith(("'", '"')):
+            text = value[1:-1]
+        else:
+            text = value
+        if is_non_string_scalar(value):
+            errors.append(f"{path}: compatibility должен быть текстовым скаляром")
+        if len(text) > 500:
+            errors.append(f"{path}: compatibility не должен превышать 500 символов")
     body = "\n".join(lines[end + 1 :])
     for match in LINK.finditer(body):
-        target = match.group(1).split("#", 1)[0]
+        destination = match.group(1).strip()
+        if destination.startswith("<") and ">" in destination:
+            target = destination[1 : destination.index(">")]
+        else:
+            target = destination.split(maxsplit=1)[0] if destination else ""
+        target = target.split("#", 1)[0]
         if not target or ":" in target or target.startswith(("/", "#")):
             continue
         resolved = (path.parent / target).resolve()

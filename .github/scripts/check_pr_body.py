@@ -136,11 +136,19 @@ def validate(body: str) -> list[str]:
                     errors.append(
                         "В разделе CodeRabbit отсутствует заголовок накопительной таблицы"
                     )
-                pattern = (
-                    r"(?m)^\|\s*[1-9]\d*\s*·\s*`[0-9a-f]{7,40}`\s*\|"
+                row_pattern = re.compile(
+                    r"^\|\s*[1-9]\d*\s*·\s*`[0-9a-f]{7,40}`\s*\|"
                     r"(?:\s*[^|\n\s][^|\n]*\|){5}\s*$"
                 )
-                if not re.search(pattern, content):
+                separator_pattern = re.compile(r"^\|\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*){5}\|?$")
+                rows = [
+                    line.strip()
+                    for line in content.splitlines()
+                    if line.strip().startswith("|")
+                    and line.strip() != header
+                    and not separator_pattern.fullmatch(line.strip())
+                ]
+                if not rows or any(not row_pattern.fullmatch(row) for row in rows):
                     errors.append("В разделе CodeRabbit отсутствует строка завершённой итерации")
     return errors
 

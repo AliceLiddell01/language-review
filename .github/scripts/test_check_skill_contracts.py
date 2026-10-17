@@ -33,6 +33,12 @@ class SkillContractTests(unittest.TestCase):
         self.write_skill()
         self.assertEqual(validate_tree(self.root), [])
 
+    def test_local_reference_with_title(self):
+        (self.folder / "references").mkdir()
+        (self.folder / "references/details.md").write_text("Details", encoding="utf-8")
+        self.write_skill(body='See [details](references/details.md "Details").')
+        self.assertEqual(validate_tree(self.root), [])
+
     def test_invalid_name_and_nonstandard_routing_key(self):
         self.write_skill("---\nname: wrong-name\ndescription: Demo skill.\nwhenToUse: never\n---\n")
         self.assertTrue(any("name" in x for x in validate_skill(self.file)))
@@ -47,7 +53,7 @@ class SkillContractTests(unittest.TestCase):
         self.assertTrue(any("1024" in x for x in validate_skill(self.file)))
 
     def test_description_must_be_a_string_scalar(self):
-        for value in ("[review, git]", "{purpose: review}"):
+        for value in ("[review, git]", "{purpose: review}", "null", "~", "false", "42"):
             with self.subTest(value=value):
                 self.write_skill(
                     f"---\nname: sample-skill\ndescription: {value}\n---\n",
@@ -56,6 +62,14 @@ class SkillContractTests(unittest.TestCase):
                 self.assertTrue(
                     any("текстовым скаляром" in error for error in validate_skill(self.file))
                 )
+
+    def test_compatibility_limit(self):
+        compatibility = "x" * 501
+        self.write_skill(
+            f"---\nname: sample-skill\ndescription: Demo.\ncompatibility: {compatibility}\n---\n",
+            body="Без ссылок.",
+        )
+        self.assertTrue(any("500" in error for error in validate_skill(self.file)))
 
     def test_missing_frontmatter(self):
         self.write_skill("# Just text")

@@ -96,6 +96,34 @@ def syntax_error(value: str) -> str | None:
     return None
 
 
+def strip_yaml_comment(value: str) -> str:
+    """Remove an inline comment without treating quoted hash characters as comments."""
+    quote = ""
+    flow_depth = 0
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if quote:
+            if quote == '"' and char == "\\":
+                index += 2
+                continue
+            if quote == "'" and char == "'" and value[index + 1 : index + 2] == "'":
+                index += 2
+                continue
+            if char == quote:
+                quote = ""
+        elif char in ("'", '"') and (flow_depth or not value[:index].strip()):
+            quote = char
+        elif char in "[{":
+            flow_depth += 1
+        elif char in "]}" and flow_depth:
+            flow_depth -= 1
+        elif char == "#" and (index == 0 or value[index - 1].isspace()):
+            return value[:index].rstrip()
+        index += 1
+    return value.rstrip()
+
+
 def validate_skill(path: Path) -> list[str]:
     errors: list[str] = []
     try:
@@ -118,7 +146,8 @@ def validate_skill(path: Path) -> list[str]:
         if not match:
             errors.append(f"{path}: неверная запись frontmatter, строка {i + 2}")
             continue
-        key, value = match.group(1), (match.group(2) or "").strip()
+        key = match.group(1)
+        value = strip_yaml_comment(match.group(2) or "").strip()
         if key in entries:
             errors.append(f"{path}: повторяющийся YAML-ключ {key}")
         else:

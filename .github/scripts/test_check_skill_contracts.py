@@ -63,6 +63,21 @@ class SkillContractTests(unittest.TestCase):
                     any("текстовым скаляром" in error for error in validate_skill(self.file))
                 )
 
+    def test_comment_without_description_value_is_rejected(self):
+        self.write_skill(
+            "---\nname: sample-skill\ndescription: # TODO\n---\n",
+            body="Без ссылок.",
+        )
+        self.assertTrue(any("description" in error for error in validate_skill(self.file)))
+
+    def test_yaml_comments_preserve_quoted_hashes(self):
+        self.write_skill(
+            "---\nname: sample-skill # name comment\n"
+            'description: "Hash # remains text" # description comment\n---\n',
+            body="Без ссылок.",
+        )
+        self.assertEqual(validate_skill(self.file), [])
+
     def test_compatibility_limit(self):
         compatibility = "x" * 501
         self.write_skill(

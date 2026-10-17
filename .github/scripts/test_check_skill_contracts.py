@@ -17,7 +17,15 @@ class SkillContractTests(unittest.TestCase):
         self.file = self.folder / "SKILL.md"
 
     def write_skill(self, metadata=None, body="See [details](references/details.md)."):
-        self.file.write_text(metadata or "---\nname: sample-skill\ndescription: >-\n  Use this to perform a concrete skill task.\n---\n" + body, encoding="utf-8")
+        self.file.write_text(
+            metadata
+            or (
+                "---\nname: sample-skill\ndescription: >-\n"
+                "  Use this to perform a concrete skill task.\n---\n"
+            )
+            + body,
+            encoding="utf-8",
+        )
 
     def test_valid_skill_and_local_ref(self):
         (self.folder / "references").mkdir()
@@ -48,7 +56,14 @@ class SkillContractTests(unittest.TestCase):
         self.assertTrue(any("SKILL.md" in x for x in validate_tree(self.root)))
 
     def test_broken_yaml_values_are_rejected(self):
-        for value in ("[broken", '"unterminated', "'unterminated", "{a: 1", "trailing,", '"первая" "вторая"'):
+        for value in (
+            "[broken",
+            '"unterminated',
+            "'unterminated",
+            "{a: 1",
+            "trailing,",
+            '"первая" "вторая"',
+        ):
             with self.subTest(value=value):
                 self.write_skill(f"---\nname: sample-skill\ndescription: {value}\n---\n")
                 self.assertTrue(any("неразбираемое" in x for x in validate_skill(self.file)))
@@ -62,26 +77,42 @@ class SkillContractTests(unittest.TestCase):
     def test_filled_block_scalar_is_accepted(self):
         for marker in ("|", "|+", ">-"):
             with self.subTest(marker=marker):
-                self.write_skill(f"---\nname: sample-skill\ndescription: {marker}\n  Достаточное описание.\n---\n", body="Без ссылок.")
+                self.write_skill(
+                    f"---\nname: sample-skill\ndescription: {marker}\n"
+                    "  Достаточное описание.\n---\n",
+                    body="Без ссылок.",
+                )
                 self.assertEqual(validate_skill(self.file), [])
 
     def test_flow_collections_are_accepted(self):
         # `metadata` — YAML-отображение, поэтому корректные flow-структуры допустимы.
         for value in ("{author: x}", "{author: [a, b]}", "{author: '}'}"):
             with self.subTest(value=value):
-                self.write_skill(f"---\nname: sample-skill\ndescription: Demo.\nmetadata: {value}\n---\n", body="Без ссылок.")
+                self.write_skill(
+                    f"---\nname: sample-skill\ndescription: Demo.\nmetadata: {value}\n---\n",
+                    body="Без ссылок.",
+                )
                 self.assertEqual(validate_skill(self.file), [])
 
     def test_unbalanced_flow_collections_are_rejected(self):
         for value in ("{author: x", "[broken", "{author: x} extra", "}"):
             with self.subTest(value=value):
-                self.write_skill(f"---\nname: sample-skill\ndescription: Demo.\nmetadata: {value}\n---\n", body="Без ссылок.")
+                self.write_skill(
+                    f"---\nname: sample-skill\ndescription: Demo.\nmetadata: {value}\n---\n",
+                    body="Без ссылок.",
+                )
                 self.assertTrue(any("flow" in x for x in validate_skill(self.file)), value)
 
     def test_valid_quoted_and_block_scalars(self):
-        self.write_skill('---\nname: sample-skill\ndescription: "Краткое описание."\n---\n', body="Без ссылок.")
+        self.write_skill(
+            '---\nname: sample-skill\ndescription: "Краткое описание."\n---\n',
+            body="Без ссылок.",
+        )
         self.assertEqual(validate_skill(self.file), [])
-        self.write_skill("---\nname: sample-skill\ndescription: 'It''s fine.'\n---\n", body="Без ссылок.")
+        self.write_skill(
+            "---\nname: sample-skill\ndescription: 'It''s fine.'\n---\n",
+            body="Без ссылок.",
+        )
         self.assertEqual(validate_skill(self.file), [])
         self.write_skill(body="Без ссылок.")
         self.assertEqual(validate_skill(self.file), [])

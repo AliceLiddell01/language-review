@@ -138,6 +138,9 @@ def validate_skill(path: Path) -> list[str]:
                 for line in header[start + 1 : next_key]
                 if line.startswith((" ", "\t"))
             ).strip()
+        elif value.startswith(("[", "{")):
+            errors.append(f"{path}: description должен быть текстовым скаляром")
+            text = value
         elif value.startswith(("'", '"')):
             text = value[1:-1]
         else:

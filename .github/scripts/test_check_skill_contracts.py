@@ -46,6 +46,17 @@ class SkillContractTests(unittest.TestCase):
         self.write_skill("---\nname: sample-skill\ndescription: >-\n  " + "x" * 1025 + "\n---\n")
         self.assertTrue(any("1024" in x for x in validate_skill(self.file)))
 
+    def test_description_must_be_a_string_scalar(self):
+        for value in ("[review, git]", "{purpose: review}"):
+            with self.subTest(value=value):
+                self.write_skill(
+                    f"---\nname: sample-skill\ndescription: {value}\n---\n",
+                    body="Без ссылок.",
+                )
+                self.assertTrue(
+                    any("текстовым скаляром" in error for error in validate_skill(self.file))
+                )
+
     def test_missing_frontmatter(self):
         self.write_skill("# Just text")
         self.assertTrue(any("frontmatter" in x for x in validate_skill(self.file)))

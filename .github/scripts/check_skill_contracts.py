@@ -68,7 +68,7 @@ def quoted_error(value: str) -> str | None:
             if quote == "'" and index + 1 < len(value) and value[index + 1] == "'":
                 index += 2
                 continue
-            return None if not value[index + 1:].strip() else "текст после закрывающей кавычки"
+            return None if not value[index + 1 :].strip() else "текст после закрывающей кавычки"
         index += 1
     return "незакрытая кавычка"
 

@@ -145,9 +145,7 @@ class PrBodyContractTests(unittest.TestCase):
         invalid = valid_body() + table + "| 1 · `abcdef0` | | | | | |"
         self.assertTrue(any("строка" in e for e in validate(invalid)))
         valid = (
-            valid_body()
-            + table
-            + ("| 1 · `abcdef0` | — | — | 0 findings | clean | `abcdef0` |")
+            valid_body() + table + ("| 1 · `abcdef0` | — | — | 0 findings | clean | `abcdef0` |")
         )
         self.assertEqual(validate(valid), [])
 

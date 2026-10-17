@@ -11,3 +11,13 @@ __pycache__/
 /.tmp/
 .coverage
 coverage.xml
+
+# Local settings / credentials / user data
+.env
+.env.*
+!.env.example
+*.local.toml
+.codex/local/
+.review-results/
+.local-results/
+*.log

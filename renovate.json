@@ -1,0 +1,55 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "timezone": "UTC",
+  "labels": [
+    "dependencies"
+  ],
+  "dependencyDashboard": true,
+  "automerge": false,
+  "ignoreUnstable": true,
+  "respectLatest": true,
+  "prConcurrentLimit": 4,
+  "prHourlyLimit": 2,
+  "separateMajorMinor": true,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "before 6am on monday"
+    ]
+  },
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "dependencyDashboardApproval": false,
+    "prConcurrentLimit": 1
+  },
+  "packageRules": [
+    {
+      "description": "Python dependencies via pyproject.toml and uv.lock",
+      "matchManagers": [
+        "pep621"
+      ],
+      "rangeStrategy": "bump"
+    },
+    {
+      "description": "Group updates of GitHub Actions pinned to SHAs",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "GitHub Actions",
+      "pinDigests": true
+    },
+    {
+      "description": "Major updates require deliberate review",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "labels": [
+        "dependencies",
+        "major-update"
+      ]
+    }
+  ]
+}

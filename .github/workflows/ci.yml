@@ -1,0 +1,65 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Python 3.15 • lint / type / tests (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.13.1"
+          enable-cache: true
+      - name: Install Python
+        run: uv python install
+      - name: Locked sync
+        run: uv sync --locked
+      - name: Ruff lint
+        run: uv run --locked ruff check .
+      - name: Ruff format
+        run: uv run --locked ruff format --check .
+      - name: Mypy
+        run: uv run --locked mypy
+      - name: Pytest
+        run: uv run --locked pytest -n 8
+      - name: Agent Skills metadata / links
+        run: uv run --locked python .github/scripts/check_skill_contracts.py
+      - name: Repository script unit tests
+        run: uv run --locked python -m unittest discover -s .github/scripts -p 'test_*.py'
+
+  windows-smoke:
+    name: Python 3.15 • Windows package/CLI smoke
+    runs-on: windows-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.13.1"
+          enable-cache: true
+      - name: Install Python
+        run: uv python install
+      - name: Locked sync
+        run: uv sync --locked
+      - name: Test actual packaged CLI
+        run: .\scripts\verify-package.ps1

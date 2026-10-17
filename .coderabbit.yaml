@@ -1,0 +1,173 @@
+# yaml-language-server: $schema=https://www.coderabbit.ai/integrations/schema.v2.json
+language: ru-RU
+early_access: false
+
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary_instructions: >-
+    Описывай изменения по действительным областям Language Review: Python CLI,
+    scanner и JSON serialization, config/profiles/doctor, tests, packaging/uv,
+    GitHub Actions и agent infrastructure. Сверяй diff с требованиями PR и
+    репозиторными контрактами, не додумывая scope. Отделяй реализованные функции
+    от запланированного языкового анализа: текущий scan лишь инвентаризирует.
+    Отмечай риск утечек файлов или секретов, нарушения CLI/json/exit контрактов,
+    невоспроизводимой сборки и подмены проверяемой реализации тестовыми заглушками.
+  high_level_summary_in_walkthrough: true
+  review_details: true
+  fail_commit_status: false
+  suggested_labels: false
+  suggested_reviewers: false
+  in_progress_fortune: false
+  enable_prompt_for_ai_agents: true
+  path_instructions:
+    - path: "**/*"
+      instructions: >-
+        Читай AGENTS.md и применимые документы .codex/context. Проверяй
+        обоснованные ошибки корректности, безопасности, регрессии, тесты,
+        архитектуру и читабельность; не предлагай общую переделку ради вкуса.
+        Прежде чем заявить дефект, проверь callsites, tests и реальный контракт.
+        Hardcode является дефектом только при неправильном владельце или
+        ограничении переносимости. Сомнительные выводы помечай как неопределённые.
+    - path: "src/language_review/scanner.py"
+      instructions: >-
+        Контролируй отсутствие файловых модификаций, защиту границ корня и
+        symlink/cycles, precedence include/exclude и gitignore, BOM, кодировки,
+        Unicode пути, стабильность порядка и корректность причин skip/error.
+        Не требуй AST или языковые findings от текущей инвентаризации.
+    - path: "src/language_review/config.py"
+      instructions: >-
+        Проверяй merge precedence user config, explicit config и CLI, provenance,
+        project markers, path profiles, обработку malformed TOML, path safety
+        и полное скрытие sensitive values в выводе и диагностике.
+    - path: "src/language_review/doctor.py"
+      instructions: >-
+        Диагностика программ и настроенных loopback HTTP не должна выполнять
+        произвольную сеть или записывать в пользовательские проекты.
+        Failure doctor не превращай в требование для успешного scan.
+    - path: "src/language_review/cli.py"
+      instructions: >-
+        Проверяй parse errors, stdout/stderr discipline, contract exit codes,
+        path and output selection, --version и исполнение установленного
+        entrypoint. Никаких обещаний несуществующего check.
+    - path: "src/language_review/report.py"
+      instructions: >-
+        Сохраняй schema_version и JSON keys/semantics, стабильную сериализацию,
+        точную терминологию selected/skipped/error; не подменяй inventory
+        findings языковыми оценками или ложным успешным статусом.
+    - path: "tests/**/*.py"
+      instructions: >-
+        Тестируй реальный public behavior с синтетическими фикстурами.
+        Negative cases должны доказывать ошибки, а не просто отсутствие exception.
+        Не переписывай продукт внутри теста, не привязывай данные к локальной
+        машине, ревью/PR номерам или реальным приватным репозиториям.
+    - path: "pyproject.toml"
+      instructions: >-
+        Проверяй Python 3.15, build_backend uv_build, dev dependencies и
+        target versions Ruff/Mypy. Обновление версии и параметров должно быть
+        согласовано с Python pin, uv.lock, CI и packaging smoke.
+    - path: "uv.lock"
+      instructions: >-
+        Lockfile не редактируется вручную. Не допускай несогласованных
+        зависимостей, лишних транзитивных обновлений и не проверенного
+        Python interpreter resolution.
+    - path: "scripts/**"
+      instructions: >-
+        PowerShell smoke обязан проверять настоящий wheel/sdist и бинарник
+        установленного пакета в изолированных venv, безопасный системный
+        temp, восстановление окружения и отсутствие вмешательства в источники.
+    - path: ".github/workflows/**"
+      instructions: >-
+        Проверяй permissions least privilege, immutable action pins,
+        отсутствие незащищённого выполнения PR текста, locked uv restore,
+        корректное разделение Linux/Windows evidence и concurrency.
+        Дублирование CI не должно изменять build logic Python проекта.
+    - path: "AGENTS.md"
+      instructions: >-
+        Только глобальные invariants и routing. Не копируй сюда подробные
+        навыки, transient PR context либо несуществующие возможности.
+    - path: ".agents/skills/**"
+      instructions: >-
+        Skills должны быть применимыми к Python/PowerShell и не иметь
+        несуществующих ссылок. Git/PR принадлежит git-workflow, CodeRabbit
+        только явно запрашиваемому отдельному skill.
+    - path: ".codex/context/**"
+      instructions: >-
+        В этих документах только долгоживущие capability contracts и ссылки
+        на источники. Не добавляй копии README, transient findings, номера PR.
+    - path: ".coderabbit.yaml"
+      instructions: >-
+        Учитывай актуальную schema v2, отсутствие auto-review, фактические
+        пути Python и проверяй, что инструменты действительно поддерживаются.
+
+  tools:
+    ruff:
+      enabled: true
+    actionlint:
+      enabled: true
+    yamllint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    skillspector:
+      enabled: true
+
+  auto_review:
+    enabled: false
+    auto_incremental_review: false
+    auto_pause_after_reviewed_commits: 0
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+    title:
+      mode: "off"
+    description:
+      mode: "off"
+    issue_assessment:
+      mode: "off"
+
+chat:
+  art: false
+  auto_reply: false
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - files: AGENTS.md
+        applyTo: "**/*"
+      - files: .codex/context/architecture.md
+        applyTo: "src/**/*,tests/**/*,pyproject.toml"
+      - files: .codex/context/scanner.md
+        applyTo: "src/language_review/scanner.py,src/language_review/report.py,tests/test_scanner.py"
+      - files: .codex/context/configuration.md
+        applyTo: "src/language_review/config.py,src/language_review/doctor.py,tests/test_config.py,tests/test_doctor.py"
+      - files: .codex/context/verification.md
+        applyTo: "src/**/*,tests/**/*,scripts/**/*,.github/**/*"
+  learnings:
+    scope: local
+    approval_delay: 30
+  issues:
+    scope: local
+  jira:
+    usage: disabled
+  linear:
+    usage: disabled
+  pull_requests:
+    scope: local
+  mcp:
+    usage: disabled
+
+issue_enrichment:
+  planning:
+    enabled: false
+    auto_planning: false

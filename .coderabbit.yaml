@@ -170,4 +170,5 @@ knowledge_base:
 issue_enrichment:
   planning:
     enabled: false
-    auto_planning: false
+    auto_planning:
+      enabled: false

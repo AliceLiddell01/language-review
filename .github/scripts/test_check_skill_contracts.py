@@ -61,7 +61,6 @@ class SkillContractTests(unittest.TestCase):
             '"unterminated',
             "'unterminated",
             "{a: 1",
-            "trailing,",
             '"первая" "вторая"',
         ):
             with self.subTest(value=value):
@@ -95,13 +94,22 @@ class SkillContractTests(unittest.TestCase):
                 self.assertEqual(validate_skill(self.file), [])
 
     def test_unbalanced_flow_collections_are_rejected(self):
-        for value in ("{author: x", "[broken", "{author: x} extra", "}"):
+        for value in ("{author: x", "[broken", "{author: x} extra", "}", "]"):
             with self.subTest(value=value):
                 self.write_skill(
                     f"---\nname: sample-skill\ndescription: Demo.\nmetadata: {value}\n---\n",
                     body="Без ссылок.",
                 )
                 self.assertTrue(any("flow" in x for x in validate_skill(self.file)), value)
+
+    def test_plain_scalars_allow_trailing_punctuation(self):
+        for value in ("См. раздел [docs]", "a, b,", "C:\\", "слово}"):
+            with self.subTest(value=value):
+                self.write_skill(
+                    f"---\nname: sample-skill\ndescription: {value}\n---\n",
+                    body="Без ссылок.",
+                )
+                self.assertEqual(validate_skill(self.file), [])
 
     def test_valid_quoted_and_block_scalars(self):
         self.write_skill(

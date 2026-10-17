@@ -34,13 +34,13 @@ def strip_comments(lines: list[str]) -> list[str]:
     fence_char = ""
     fence_len = 0
     for line in lines:
-        if fence_char:
+        if fence_char and not inside:
             closing = FENCE_CLOSE.match(line)
             if closing and closing.group(1)[0] == fence_char and len(closing.group(1)) >= fence_len:
                 fence_char = ""
             result.append(line)
             continue
-        if opening := FENCE.match(line):
+        if not inside and (opening := FENCE.match(line)):
             fence_char, fence_len = opening.group(1)[0], len(opening.group(1))
             result.append(line)
             continue

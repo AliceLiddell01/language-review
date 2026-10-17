@@ -77,16 +77,10 @@ def syntax_error(value: str) -> str | None:
     """Return a reason when a frontmatter value is not a parsable YAML scalar."""
     if value.startswith(("'", '"')):
         return quoted_error(value)
-    if value.startswith(("[", "{")):
+    if value.startswith(("[", "{", "]", "}")):
         return flow_error(value)
-    if value.endswith(("[", "{", "]", "}")):
-        return "незакрытая flow-скобка"
-    if value.endswith(","):
-        return "непарная flow-скобка"
     if ": " in value or value.endswith(":"):
         return "неожиданное ':' внутри скаляра"
-    if value.endswith("\\"):
-        return "висячий escape"
     return None
 
 

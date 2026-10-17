@@ -59,6 +59,10 @@ class PrBodyContractTests(unittest.TestCase):
         # GitHub скрывает HTML-комментарии, поэтому шаблон внутри них не является телом PR.
         self.assertEqual(len(validate(f"<!--\n{valid_body()}\n-->")), len(HEADINGS))
 
+    def test_fence_inside_html_comment_does_not_hide_visible_sections(self):
+        body = "<!--\n```\n-->\n\n" + valid_body()
+        self.assertEqual(validate(body), [])
+
     def test_unterminated_comment_hides_rest(self):
         body = f"## Цель\nИнформация.\n<!-- {chr(10)}" + "\n\n".join(
             f"## {n}\nИнформация." for n in HEADINGS[1:]

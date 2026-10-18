@@ -32,8 +32,10 @@ try {
 
     $sample = Join-Path $tempRoot 'пример'
     New-Item -ItemType Directory -Path $sample | Out-Null
-    Set-Content -LiteralPath (Join-Path $sample 'Пример.rs') `
+    $sampleFile = Join-Path $sample 'Пример.rs'
+    Set-Content -LiteralPath $sampleFile `
         -Value 'fn main() { println!("Пример для установленного пакета"); }' -Encoding utf8NoBOM
+    $sampleHash = (Get-FileHash -LiteralPath $sampleFile -Algorithm SHA256).Hash
     $artifacts = @(
         Get-ChildItem -LiteralPath $distributionDirectory -File |
             Where-Object { $_.Name -like 'language_review-0.1.0*' } |
@@ -63,6 +65,9 @@ try {
         }
         $jsonOutput = (& $launcher scan $sample --format json) -join [Environment]::NewLine
         if ($LASTEXITCODE -ne 0) { throw "Установленная команда $kind scan завершилась ошибкой." }
+        if ((Get-FileHash -LiteralPath $sampleFile -Algorithm SHA256).Hash -ne $sampleHash) {
+            throw "Установленный пакет $kind scan изменил исходный файл."
+        }
         $report = $jsonOutput | ConvertFrom-Json
         if ($report.schema_version -ne '1.0' -or $report.summary.selected -ne 1) {
             throw "Установленная команда $kind вернула неожиданный отчёт."
@@ -71,6 +76,9 @@ try {
         $extractJsonOutput = (& $launcher extract $sample --format json) -join [Environment]::NewLine
         if ($LASTEXITCODE -ne 0) {
             throw "Установленная команда $kind extract завершилась ошибкой."
+        }
+        if ((Get-FileHash -LiteralPath $sampleFile -Algorithm SHA256).Hash -ne $sampleHash) {
+            throw "Установленный пакет $kind extract изменил исходный файл."
         }
         $extractReport = $extractJsonOutput | ConvertFrom-Json
         $extractedText = @(
@@ -91,6 +99,9 @@ try {
         ) -join [Environment]::NewLine
         if ($LASTEXITCODE -ne 0) {
             throw "Установленный модуль $kind extract завершился ошибкой."
+        }
+        if ((Get-FileHash -LiteralPath $sampleFile -Algorithm SHA256).Hash -ne $sampleHash) {
+            throw "Установленный модуль $kind extract изменил исходный файл."
         }
         $moduleExtractReport = $moduleExtractOutput | ConvertFrom-Json
         if (

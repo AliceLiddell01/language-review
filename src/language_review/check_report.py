@@ -255,6 +255,10 @@ def check_human(result: CheckResult) -> str:
         header = f"{extract.root} :: {extract.path} [{document.status}]"
         if extract.status not in {"extracted", "skipped"}:
             header += f"; извлечение: {extract.status}"
+        if extract.reason:
+            header += f"; причина {extract.reason}"
+        if document.diagnostics:
+            header += f" [{', '.join(document.diagnostics)}]"
         lines.append(header)
         for finding in document.findings:
             mapping = _finding_mapping(finding)

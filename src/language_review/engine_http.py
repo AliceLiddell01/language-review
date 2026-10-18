@@ -9,7 +9,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from language_review import __version__
 from language_review.config import is_loopback_host, redact_url
@@ -59,7 +59,9 @@ def safe_endpoint(url: str) -> str:
 
 
 def join_url(base: str, path: str) -> str:
-    return base.rstrip("/") + "/" + path.lstrip("/")
+    parts = urlsplit(base)
+    joined = parts.path.rstrip("/") + "/" + path.lstrip("/")
+    return urlunsplit(parts._replace(path=joined))
 
 
 def request_json(

@@ -198,10 +198,16 @@ class LanguageToolEngine:
                 category = "spelling"
             else:
                 category = CATEGORY_MAP.get(rule_category or "", "other")
+            raw_replacements = match.get("replacements", [])
+            if not isinstance(raw_replacements, list):
+                outcome.rejected.append(
+                    RejectedOutput(self.name, unit.index, "schema_violation", rule_id, message)
+                )
+                continue
             replacements = tuple(
                 dict.fromkeys(
                     item["value"]
-                    for item in match.get("replacements", [])
+                    for item in raw_replacements
                     if isinstance(item, dict) and isinstance(item.get("value"), str)
                 )
             )[:MAX_REPLACEMENTS]

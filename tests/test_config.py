@@ -251,3 +251,36 @@ def test_invalid_check_settings_fail(
 ) -> None:
     with pytest.raises(ConfigurationError, match=message):
         load_config(_write(tmp_path / "bad.toml", text))
+
+
+def test_remote_endpoint_check_runs_after_merging_all_files(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    user_path = isolated_appdata / "language-review" / "config.toml"
+    user_path.parent.mkdir(parents=True)
+    _write(user_path, '[check.llm.ollama]\nendpoint = "http://10.0.0.5:11434/?token=secret"\n')
+    allow = _write(tmp_path / "allow.toml", "[check]\nallow_remote_endpoints = true\n")
+
+    config = load_config(allow)
+    settings, sources = config.check_settings_for_profile(None)
+
+    assert settings.llm_ollama_endpoint.startswith("http://10.0.0.5:11434")
+    assert str(allow) in sources["allow_remote_endpoints"]
+    assert "secret" not in json.dumps(config.as_mapping(), ensure_ascii=False)
+
+
+def test_explicit_config_can_forbid_remote_endpoints_allowed_by_user_config(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    user_path = isolated_appdata / "language-review" / "config.toml"
+    user_path.parent.mkdir(parents=True)
+    _write(
+        user_path,
+        "[check]\nallow_remote_endpoints = true\n"
+        '[check.llm.ollama]\nendpoint = "http://10.0.0.5:11434"\n',
+    )
+    deny = _write(tmp_path / "deny.toml", "[check]\nallow_remote_endpoints = false\n")
+
+    load_config()
+    with pytest.raises(ConfigurationError, match="allow_remote_endpoints"):
+        load_config(deny)

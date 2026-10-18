@@ -16,7 +16,7 @@ from conftest import JsonServer, RecordedRequest
 
 from language_review.check import check_paths
 from language_review.config import load_config
-from language_review.engine_http import EngineHttpError, request_json
+from language_review.engine_http import EngineHttpError, join_url, request_json
 from language_review.engine_llm import SYSTEM_PROMPT, response_schema
 from language_review.errors import ConfigurationError
 
@@ -730,3 +730,65 @@ def test_truncated_chunked_response_is_a_controlled_protocol_error() -> None:
         thread.join(timeout=5)
 
     assert raised.value.code == "protocol_error"
+
+
+def test_languagetool_non_list_replacements_are_rejected_not_crashed(
+    tmp_path: Path, isolated_appdata: Path, json_server: JsonServer
+) -> None:
+    def respond(request: RecordedRequest) -> tuple[int, Any]:
+        if request.path == "/v2/languages":
+            return 200, [{"name": "Russian", "code": "ru", "longCode": "ru-RU"}]
+        return 200, {
+            "software": {"version": "stub"},
+            "matches": [
+                {
+                    "message": "Опечатка.",
+                    "offset": 0,
+                    "length": 4,
+                    "replacements": None,
+                    "rule": {"id": "MORFOLOGIK_RULE_RU_RU", "category": {"id": "TYPOS"}},
+                }
+            ],
+        }
+
+    json_server.responder = respond
+    source = tmp_path / "notes.txt"
+    source.write_text("Ошыбка в слове.\n", encoding="utf-8")
+    config = _languagetool_config(tmp_path, json_server.url)
+
+    code, report, _stderr = _report(source, config, isolated_appdata)
+
+    assert code == 0
+    document = report["documents"][0]
+    assert document["findings"] == []
+    assert [item["reason"] for item in document["rejected"]] == ["schema_violation"]
+
+
+def test_join_url_keeps_query_and_fragment_after_path() -> None:
+    assert join_url("http://127.0.0.1:9/?token=x", "/v2/languages") == (
+        "http://127.0.0.1:9/v2/languages?token=x"
+    )
+    assert join_url("http://127.0.0.1:9/api/", "v1/models") == "http://127.0.0.1:9/api/v1/models"
+
+
+def test_check_human_shows_extraction_reason(tmp_path: Path, isolated_appdata: Path) -> None:
+    source = tmp_path / "blob.txt"
+    source.write_bytes(b"abc\x00\x00def\n")
+    config = _config(tmp_path, '[check]\nengines = ["languagetool"]\n')
+
+    process = _run(["--config", str(config), "check", str(source)], isolated_appdata)
+
+    assert "; причина binary_content" in process.stdout
+
+
+@pytest.mark.skipif(VALE is None, reason="Vale не установлен")
+def test_vale_dash_ignores_line_joins_and_list_markers(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    source = tmp_path / "notes.txt"
+    source.write_text("Первая строка\n- пункт списка\n", encoding="utf-8")
+    config = _config(tmp_path, '[check]\nengines = ["vale"]\n')
+
+    code, report, _ = _report(source, config, isolated_appdata)
+
+    assert (code, report["status"]) == (0, "clean")

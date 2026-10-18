@@ -150,6 +150,20 @@ def test_c_source_comments_messages_and_non_user_literals() -> None:
     assert "%s" in _protection_texts(source, result.fragments)
 
 
+def test_fprintf_extracts_the_format_argument() -> None:
+    source = SourceMap.create(
+        'void run(const char *path) { fprintf(stderr, "Не удалось открыть %s", path); }'.encode(),
+        "utf-8",
+        None,
+    )
+
+    result = extract_code(source, ".c", ExtractSettings())
+
+    assert result.partial is False
+    assert [fragment.text for fragment in result.fragments] == ["Не удалось открыть %s"]
+    assert "%s" in _protection_texts(source, result.fragments)
+
+
 def test_valid_code_without_message_context_has_no_fragments() -> None:
     source = SourceMap.create(
         b'class Protocol { const string Status = "FAILED"; }\n', "utf-8", None
@@ -175,6 +189,11 @@ def test_header_language_auto_and_explicit_selection() -> None:
     assert cpp_mode.language == "cpp"
     assert cpp_mode.partial is False
     assert [item.text for item in c_mode.fragments] == ["Header prose."]
+
+    namespaced = extract_code(_source("sample.h"), ".h", ExtractSettings())
+    assert namespaced.language == "cpp"
+    assert namespaced.partial is False
+    assert [item.text for item in namespaced.fragments] == ["Внутренний заголовочный комментарий."]
 
 
 def test_powershell_comment_help_messages_and_here_strings() -> None:
@@ -269,6 +288,17 @@ def test_plain_rst_and_asciidoc_keep_daily_prose_and_skip_literal_blocks() -> No
     assert "Заголовок AsciiDoc" in [item.text for item in adoc]
     assert "Первый пункт списка." in [item.text for item in adoc]
     assert not any("кодовый блок" in item.text for item in adoc)
+
+
+def test_plain_text_does_not_protect_slash_words_as_paths() -> None:
+    source = SourceMap.create("Используйте чтение/запись и read/write.\n".encode(), "utf-8", None)
+
+    fragments, diagnostics = extract_plain_text(source)
+
+    assert diagnostics == []
+    assert [item.text for item in fragments] == ["Используйте чтение/запись и read/write."]
+    assert "/запись" not in _protection_texts(source, fragments)
+    assert "/write" not in _protection_texts(source, fragments)
 
 
 def test_structured_extractors_require_selectors_and_keep_exact_source_values() -> None:
@@ -611,6 +641,29 @@ def test_extract_detects_source_change_after_scan(
     assert result.documents[0].status == "error"
     assert result.documents[0].reason == "source_unavailable_or_changed"
     assert result.documents[0].fragments == []
+
+
+def test_extract_classifies_adapter_value_error_as_extractor_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from language_review import extraction
+
+    source = tmp_path / "message.txt"
+    source.write_text("Сообщение.\n", encoding="utf-8")
+    config = load_config()
+    scanned = scan_paths([str(source)], config)
+    monkeypatch.setattr(extraction, "scan_paths", lambda *_args, **_kwargs: scanned)
+
+    def fail_adapter(*_args: object, **_kwargs: object) -> None:
+        raise ValueError("ошибка адаптера")
+
+    monkeypatch.setattr(extraction, "_adapt", fail_adapter)
+
+    result = extract_paths([str(source)], config)
+
+    assert result.documents[0].status == "error"
+    assert result.documents[0].reason == "extractor_failure"
+    assert result.documents[0].diagnostics == ["extractor_failure"]
 
 
 def test_duplicate_input_has_its_own_root_identity_and_skipped_document(

@@ -215,16 +215,17 @@ def extract_paths(
             if record.encoding is None:
                 raise InputError("Для выбранного файла отсутствует кодировка.")
             source = SourceMap.create(raw, record.encoding, record.bom)
-            extension = PurePosixPath(record.path).suffix.lower()
-            language, file_format, fragments, diagnostics, partial, unsupported = _adapt(
-                source, extension, config, record.profile
-            )
         except OSError, UnicodeError, ValueError, InputError:
             document.status = "error"
             document.reason = "source_unavailable_or_changed"
             document.diagnostics.append(document.reason)
             documents.append(document)
             continue
+        extension = PurePosixPath(record.path).suffix.lower()
+        try:
+            language, file_format, fragments, diagnostics, partial, unsupported = _adapt(
+                source, extension, config, record.profile
+            )
         except Exception:
             document.status = "error"
             document.reason = "extractor_failure"

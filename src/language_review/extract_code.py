@@ -19,6 +19,7 @@ MESSAGE_CALLS = {
     "debug",
     "eprintln",
     "error",
+    "fprintf",
     "format",
     "format_args",
     "info",
@@ -88,7 +89,7 @@ DIRECTIVE_PREFIXES = (
     "xxx",
 )
 PATH_OR_URL = re.compile(
-    r"(?:https?://\S+|(?:[A-Za-z]:[\\/]|\\\\|/|\.{1,2}[\\/])\S*)",
+    r"(?:https?://\S+|(?<![\w])(?:[A-Za-z]:[\\/]|\\\\|/|\.{1,2}[\\/])\S*)",
     re.IGNORECASE,
 )
 

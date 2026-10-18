@@ -147,14 +147,18 @@ match_paths = ["*.json"]
     assert selectors[".yaml"]["source"].endswith(str(explicit))
 
 
-def test_extract_report_example_matches_real_cli_output(isolated_appdata: Path) -> None:
+def test_extract_report_example_matches_real_cli_output(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
     fixtures = Path(__file__).parent / "fixtures" / "extract"
+    source = tmp_path / "sample.json"
+    source.write_bytes((fixtures / "sample.json").read_bytes().replace(b"\r\n", b"\n"))
     process = _run(
         [
             "--config",
             str(fixtures / "example-config.toml"),
             "extract",
-            str(fixtures / "sample.json"),
+            str(source),
             "--format",
             "json",
         ],

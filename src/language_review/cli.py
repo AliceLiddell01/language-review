@@ -17,6 +17,41 @@ from language_review.report import scan_document, scan_human, write_report
 from language_review.scanner import scan_paths
 
 
+def _add_selection_arguments(command: argparse.ArgumentParser) -> None:
+    command.add_argument("paths", nargs="+", metavar="ПУТЬ")
+    command.add_argument("--format", choices=("human", "json"), default="human")
+    command.add_argument("--output", type=Path, metavar="ФАЙЛ", help="сохранить отчёт в файл")
+    command.add_argument("--profile", metavar="ИМЯ")
+    command.add_argument(
+        "--extension",
+        action="append",
+        default=[],
+        metavar=".EXT",
+        help="добавить расширение; параметр можно повторять",
+    )
+    command.add_argument(
+        "--only-extension",
+        action="append",
+        default=None,
+        metavar=".EXT",
+        help="использовать только указанные расширения",
+    )
+    command.add_argument("--exclude", action="append", default=[], metavar="ШАБЛОН")
+    command.add_argument(
+        "--respect-gitignore",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="учитывать правила .gitignore (по умолчанию включено)",
+    )
+    command.add_argument(
+        "--follow-symlinks",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="обходить внутренние символические ссылки (по умолчанию выключено)",
+    )
+    command.add_argument("--max-file-size", type=int, metavar="БАЙТЫ")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="language-review",
@@ -31,74 +66,12 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     scan = commands.add_parser("scan", help="инвентаризировать файлы и их базовые характеристики")
-    scan.add_argument("paths", nargs="+", metavar="ПУТЬ")
-    scan.add_argument("--format", choices=("human", "json"), default="human")
-    scan.add_argument("--output", type=Path, metavar="ФАЙЛ", help="сохранить отчёт в файл")
-    scan.add_argument("--profile", metavar="ИМЯ")
-    scan.add_argument(
-        "--extension",
-        action="append",
-        default=[],
-        metavar=".EXT",
-        help="добавить расширение; параметр можно повторять",
-    )
-    scan.add_argument(
-        "--only-extension",
-        action="append",
-        default=None,
-        metavar=".EXT",
-        help="использовать только указанные расширения",
-    )
-    scan.add_argument("--exclude", action="append", default=[], metavar="ШАБЛОН")
-    scan.add_argument(
-        "--respect-gitignore",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="учитывать правила .gitignore (по умолчанию включено)",
-    )
-    scan.add_argument(
-        "--follow-symlinks",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="обходить внутренние символические ссылки (по умолчанию выключено)",
-    )
-    scan.add_argument("--max-file-size", type=int, metavar="БАЙТЫ")
+    _add_selection_arguments(scan)
 
     extract = commands.add_parser(
         "extract", help="извлечь человекочитаемые фрагменты с точными диапазонами исходника"
     )
-    extract.add_argument("paths", nargs="+", metavar="ПУТЬ")
-    extract.add_argument("--format", choices=("human", "json"), default="human")
-    extract.add_argument("--output", type=Path, metavar="ФАЙЛ", help="сохранить отчёт в файл")
-    extract.add_argument("--profile", metavar="ИМЯ")
-    extract.add_argument(
-        "--extension",
-        action="append",
-        default=[],
-        metavar=".EXT",
-        help="добавить расширение; параметр можно повторять",
-    )
-    extract.add_argument(
-        "--only-extension",
-        action="append",
-        default=None,
-        metavar=".EXT",
-        help="использовать только указанные расширения",
-    )
-    extract.add_argument("--exclude", action="append", default=[], metavar="ШАБЛОН")
-    extract.add_argument(
-        "--respect-gitignore",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="учитывать правила .gitignore (по умолчанию включено)",
-    )
-    extract.add_argument(
-        "--follow-symlinks",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="обходить внутренние символические ссылки (по умолчанию выключено)",
-    )
-    extract.add_argument("--max-file-size", type=int, metavar="БАЙТЫ")
+    _add_selection_arguments(extract)
 
     doctor = commands.add_parser("doctor", help="проверить пакет, конфигурацию и заданные сервисы")
     doctor.add_argument("paths", nargs="*", metavar="ПУТЬ")

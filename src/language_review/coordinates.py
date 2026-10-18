@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from array import array
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 
@@ -46,9 +47,11 @@ class SourceMap:
     bom: str | None
     text: str
     parser_bytes: bytes
-    _source_byte_offsets: tuple[int, ...]
-    _parser_byte_offsets: tuple[int, ...]
-    _line_starts: tuple[int, ...]
+    _source_byte_offsets: array[int] | None
+    _source_byte_offset_base: int
+    _parser_byte_offsets: array[int]
+    _supplementary_offsets: array[int]
+    _line_starts: array[int]
 
     @classmethod
     def create(cls, raw: bytes, encoding: str, bom: str | None) -> SourceMap:
@@ -64,13 +67,25 @@ class SourceMap:
             raise ValueError("BOM исходника не совпадает с метаданными scan.")
         text = raw[len(prefix) :].decode(encoding, errors="strict")
 
-        source_offsets = [len(prefix)]
-        parser_offsets = [0]
-        for character in text:
-            source_offsets.append(source_offsets[-1] + len(character.encode(encoding)))
-            parser_offsets.append(parser_offsets[-1] + len(character.encode("utf-8")))
+        source_offsets = None if encoding == "utf-8" else array("Q", [len(prefix)])
+        parser_offsets = array("Q", [0])
+        supplementary_offsets = array("Q")
+        for index, character in enumerate(text):
+            codepoint = ord(character)
+            if codepoint <= 0x7F:
+                parser_width = 1
+            elif codepoint <= 0x7FF:
+                parser_width = 2
+            elif codepoint <= 0xFFFF:
+                parser_width = 3
+            else:
+                parser_width = 4
+                supplementary_offsets.append(index)
+            parser_offsets.append(parser_offsets[-1] + parser_width)
+            if source_offsets is not None:
+                source_offsets.append(source_offsets[-1] + len(character.encode(encoding)))
 
-        line_starts = [0]
+        line_starts = array("Q", [0])
         index = 0
         while index < len(text):
             character = text[index]
@@ -88,9 +103,11 @@ class SourceMap:
             bom=bom,
             text=text,
             parser_bytes=text.encode("utf-8"),
-            _source_byte_offsets=tuple(source_offsets),
-            _parser_byte_offsets=tuple(parser_offsets),
-            _line_starts=tuple(line_starts),
+            _source_byte_offsets=source_offsets,
+            _source_byte_offset_base=len(prefix),
+            _parser_byte_offsets=parser_offsets,
+            _supplementary_offsets=supplementary_offsets,
+            _line_starts=line_starts,
         )
 
     def parser_byte_to_char(self, offset: int) -> int:
@@ -104,12 +121,20 @@ class SourceMap:
             raise ValueError("Смещение символа вне исходного файла.")
         line_index = bisect_right(self._line_starts, char_offset) - 1
         line_start = self._line_starts[line_index]
-        prefix = self.text[line_start:char_offset]
+        supplementary_before = bisect_left(self._supplementary_offsets, char_offset)
+        supplementary_at_line_start = bisect_left(self._supplementary_offsets, line_start)
+        source_byte_offset = (
+            self._source_byte_offsets[char_offset]
+            if self._source_byte_offsets is not None
+            else self._source_byte_offset_base + self._parser_byte_offsets[char_offset]
+        )
         return SourcePosition(
-            byte_offset=self._source_byte_offsets[char_offset],
+            byte_offset=source_byte_offset,
             line=line_index + 1,
-            column=len(prefix) + 1,
-            utf16_column=len(prefix.encode("utf-16-le")) // 2 + 1,
+            column=char_offset - line_start + 1,
+            utf16_column=(
+                char_offset - line_start + supplementary_before - supplementary_at_line_start + 1
+            ),
         )
 
     def range_dict(self, start: int, end: int) -> dict[str, dict[str, int]]:

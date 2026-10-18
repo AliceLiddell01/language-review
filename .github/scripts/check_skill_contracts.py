@@ -1,135 +1,74 @@
 #!/usr/bin/env python3
-"""Check repository Agent Skills metadata and local reference links (stdlib only)."""
+"""Проверяет метаданные Agent Skills и локальные ссылки в Markdown."""
 
 import argparse
 import re
 import sys
+from collections.abc import Mapping
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
+
+from markdown_it import MarkdownIt
+from ruamel.yaml import YAML
+from ruamel.yaml.error import YAMLError
 
 NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
-KEY = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*):(?:\s*(.*))?$")
-LINK = re.compile(r"\]\(([^)]+)\)")
 ALLOWED = {"name", "description", "license", "compatibility", "metadata", "allowed-tools"}
-# Все формы блочных скаляров YAML: значение продолжается отступленными строками.
-BLOCK_SCALARS = (">", ">-", ">+", "|", "|-", "|+")
-# Flow-структуры YAML допустимы (`metadata: {author: x}`), недопустимы только
-# незакрытые или несбалансированные: они делают frontmatter неразбираемым.
-FLOW_MAP = {"[": "]", "{": "}"}
-CLOSING = set(FLOW_MAP.values())
-NON_STRING_PLAIN_SCALAR = re.compile(
-    r"(?:~|null|true|false|[-+]?(?:"
-    r"0[xX][0-9a-fA-F_]+|0[oO][0-7_]+|0[bB][01_]+|"
-    r"(?:[0-9][0-9_]*(?:\.[0-9_]*)?|\.[0-9][0-9_]*)(?:[eE][-+]?[0-9][0-9_]*)?|"
-    r"\.(?:inf|nan)))\Z",
-    re.IGNORECASE,
-)
+STRING_FIELDS = {"name", "description", "license", "compatibility", "allowed-tools"}
+MARKDOWN = MarkdownIt("commonmark")
 
 
-def is_non_string_scalar(value: str) -> bool:
-    """Return whether an unquoted YAML core scalar resolves to a non-string type."""
-    return value.startswith(("[", "{")) or NON_STRING_PLAIN_SCALAR.fullmatch(value) is not None
+class RussianArgumentParser(argparse.ArgumentParser):
+    """Локализует стандартные заголовки справки argparse."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, add_help=False, **kwargs)
+        self.add_argument(
+            "-h", "--help", action="help", help="Показать эту справку и завершить работу"
+        )
+        self._positionals.title = "Позиционные аргументы"
+        self._optionals.title = "Параметры"
+
+    def format_help(self) -> str:
+        return super().format_help().replace("usage:", "Использование:", 1)
 
 
-def flow_error(value: str) -> str | None:
-    """Check a value that starts with a flow bracket: balance and trailing text."""
-    stack: list[str] = []
-    quote = ""
-    index = 0
-    while index < len(value):
-        char = value[index]
-        if quote:
-            if quote == '"' and char == "\\":
-                index += 2
-                continue
-            if char == quote:
-                # Удвоенная одинарная кавычка — escape внутри одинарного скаляра.
-                if quote == "'" and value[index + 1 : index + 2] == "'":
-                    index += 2
-                    continue
-                quote = ""
-            index += 1
+def load_frontmatter(text: str) -> object:
+    """Разбирает frontmatter как безопасный YAML 1.2 с запретом повторных ключей."""
+    parser = YAML(typ="safe", pure=True)
+    parser.max_depth = 50
+    return parser.load(text)
+
+
+def markdown_link_destinations(body: str) -> list[str]:
+    """Возвращает назначения настоящих Markdown-ссылок и изображений."""
+    destinations: list[str] = []
+    for token in MARKDOWN.parse(body):
+        if token.type != "inline" or token.children is None:
             continue
-        if char in ("'", '"'):
-            quote = char
-        elif char in FLOW_MAP:
-            stack.append(FLOW_MAP[char])
-        elif char in CLOSING:
-            if not stack or stack.pop() != char:
-                return "несбалансированная flow-скобка"
-            if not stack and value[index + 1 :].strip():
-                return "текст после flow-структуры"
-        index += 1
-    if quote:
-        return "незакрытая кавычка"
-    if stack:
-        return "незакрытая flow-скобка"
-    return None
+        for child in token.children:
+            attribute = "src" if child.type == "image" else "href"
+            if child.type in {"link_open", "image"} and (target := child.attrGet(attribute)):
+                destinations.append(target)
+    return destinations
 
 
-def quoted_error(value: str) -> str | None:
-    """Check a value that starts with a quote; return a reason if it is not one scalar."""
-    quote = value[0]
-    index = 1
-    while index < len(value):
-        char = value[index]
-        if quote == '"' and char == "\\":
-            index += 2
-            continue
-        if char == quote:
-            # В одинарных кавычках удвоенная кавычка — это escape, а не конец значения.
-            if quote == "'" and index + 1 < len(value) and value[index + 1] == "'":
-                index += 2
-                continue
-            return None if not value[index + 1 :].strip() else "текст после закрывающей кавычки"
-        index += 1
-    return "незакрытая кавычка"
-
-
-def syntax_error(value: str) -> str | None:
-    """Return a reason when a frontmatter value is not a parsable YAML scalar."""
-    if value.startswith(("'", '"')):
-        return quoted_error(value)
-    if value.startswith(("[", "{", "]", "}")):
-        return flow_error(value)
-    if ": " in value or value.endswith(":"):
-        return "неожиданное ':' внутри скаляра"
-    return None
-
-
-def strip_yaml_comment(value: str) -> str:
-    """Remove an inline comment without treating quoted hash characters as comments."""
-    quote = ""
-    flow_depth = 0
-    index = 0
-    while index < len(value):
-        char = value[index]
-        if quote:
-            if quote == '"' and char == "\\":
-                index += 2
-                continue
-            if quote == "'" and char == "'" and value[index + 1 : index + 2] == "'":
-                index += 2
-                continue
-            if char == quote:
-                quote = ""
-        elif char in ("'", '"') and (flow_depth or not value[:index].strip()):
-            quote = char
-        elif char in "[{":
-            flow_depth += 1
-        elif char in "]}" and flow_depth:
-            flow_depth -= 1
-        elif char == "#" and (index == 0 or value[index - 1].isspace()):
-            return value[:index].rstrip()
-        index += 1
-    return value.rstrip()
+def local_target(destination: str) -> str | None:
+    """Возвращает путь локальной Markdown-ссылки или None для внешнего адреса."""
+    parsed = urlsplit(destination)
+    if parsed.scheme or parsed.netloc or not parsed.path or parsed.path.startswith("/"):
+        return None
+    return unquote(parsed.path)
 
 
 def validate_skill(path: Path) -> list[str]:
+    """Проверяет SKILL.md по типам и ограничениям спецификации Agent Skills."""
     errors: list[str] = []
     try:
         source = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
         return [f"{path}: не удалось прочитать: {error}"]
+
     lines = source.splitlines()
     if not lines or lines[0] != "---":
         return [f"{path}: отсутствует начальный YAML frontmatter"]
@@ -137,102 +76,75 @@ def validate_skill(path: Path) -> list[str]:
         end = lines.index("---", 1)
     except ValueError:
         return [f"{path}: отсутствует закрывающий ---"]
-    header = lines[1:end]
-    entries: dict[str, tuple[int, str]] = {}
-    for i, line in enumerate(header):
-        if not line or line.startswith((" ", "#")):
+
+    try:
+        data = load_frontmatter("\n".join(lines[1:end]))
+    except YAMLError as error:
+        mark = getattr(error, "problem_mark", None) or getattr(error, "context_mark", None)
+        location = f", строка {mark.line + 2}, столбец {mark.column + 1}" if mark else ""
+        return [f"{path}: некорректный YAML frontmatter{location}"]
+
+    if not isinstance(data, Mapping):
+        return [f"{path}: YAML frontmatter должен быть отображением"]
+
+    for key, value in data.items():
+        if not isinstance(key, str):
+            errors.append(f"{path}: ключи YAML frontmatter должны быть строками")
             continue
-        match = KEY.fullmatch(line)
-        if not match:
-            errors.append(f"{path}: неверная запись frontmatter, строка {i + 2}")
-            continue
-        key = match.group(1)
-        value = strip_yaml_comment(match.group(2) or "").strip()
-        if key in entries:
-            errors.append(f"{path}: повторяющийся YAML-ключ {key}")
-        else:
-            entries[key] = (i, value)
         if key not in ALLOWED:
             errors.append(
                 f"{path}: нестандартное поле {key}; условия активации помещай в description"
             )
-        # Блочный скаляр (`|`, `>`) продолжается отступленными строками и
-        # проверяется отдельно при разборе description.
-        if value not in BLOCK_SCALARS:
-            reason = syntax_error(value)
-            if reason:
-                errors.append(f"{path}: неразбираемое значение {key}: {reason}")
-    name = entries.get("name", (-1, ""))[1]
-    if not NAME.fullmatch(name) or len(name) > 64 or name != path.parent.name:
+        elif key in STRING_FIELDS and not isinstance(value, str):
+            errors.append(f"{path}: поле {key} должно быть строкой")
+
+    if "metadata" in data:
+        metadata = data["metadata"]
+        if not isinstance(metadata, Mapping):
+            errors.append(f"{path}: metadata должно быть отображением строковых значений")
+        elif any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in metadata.items()
+        ):
+            errors.append(f"{path}: ключи и значения metadata должны быть строками")
+
+    name = data.get("name")
+    if (
+        not isinstance(name, str)
+        or not NAME.fullmatch(name)
+        or len(name) > 64
+        or name != path.parent.name
+    ):
         errors.append(f"{path}: name должен совпадать с каталогом и отвечать Agent Skills spec")
-    if "description" not in entries:
-        errors.append(f"{path}: отсутствует description")
-    else:
-        start, value = entries["description"]
-        if value in BLOCK_SCALARS:
-            next_key = next(
-                (i for i in range(start + 1, len(header)) if KEY.fullmatch(header[i])),
-                len(header),
-            )
-            text = " ".join(
-                line.strip()
-                for line in header[start + 1 : next_key]
-                if line.startswith((" ", "\t"))
-            ).strip()
-        elif is_non_string_scalar(value):
-            errors.append(f"{path}: description должен быть текстовым скаляром")
-            text = value
-        elif value.startswith(("'", '"')):
-            text = value[1:-1]
-        else:
-            text = value
-        if not text or len(text) > 1024:
-            errors.append(f"{path}: description должен содержать 1–1024 символа")
-    if "compatibility" in entries:
-        start, value = entries["compatibility"]
-        if value in BLOCK_SCALARS:
-            next_key = next(
-                (i for i in range(start + 1, len(header)) if KEY.fullmatch(header[i])),
-                len(header),
-            )
-            text = " ".join(
-                line.strip()
-                for line in header[start + 1 : next_key]
-                if line.startswith((" ", "\t"))
-            ).strip()
-        elif value.startswith(("'", '"')):
-            text = value[1:-1]
-        else:
-            text = value
-        if is_non_string_scalar(value):
-            errors.append(f"{path}: compatibility должен быть текстовым скаляром")
-        if len(text) > 500:
-            errors.append(f"{path}: compatibility не должен превышать 500 символов")
+
+    description = data.get("description")
+    if not isinstance(description, str) or not description or len(description) > 1024:
+        errors.append(f"{path}: description должен содержать 1–1024 символа")
+
+    compatibility = data.get("compatibility")
+    if isinstance(compatibility, str) and (not compatibility or len(compatibility) > 500):
+        errors.append(f"{path}: compatibility должен содержать 1–500 символов")
+
+    skill_root = path.parent.resolve()
     body = "\n".join(lines[end + 1 :])
-    for match in LINK.finditer(body):
-        destination = match.group(1).strip()
-        if destination.startswith("<") and ">" in destination:
-            target = destination[1 : destination.index(">")]
-        else:
-            target = destination.split(maxsplit=1)[0] if destination else ""
-        target = target.split("#", 1)[0]
-        if not target or ":" in target or target.startswith(("/", "#")):
+    for destination in markdown_link_destinations(body):
+        target = local_target(destination)
+        if target is None:
             continue
-        resolved = (path.parent / target).resolve()
-        if not resolved.is_relative_to(path.parent.resolve()) or not resolved.is_file():
+        resolved = (skill_root / target).resolve()
+        if not resolved.is_relative_to(skill_root) or not resolved.is_file():
             errors.append(f"{path}: несуществующая или выходящая за skill ссылка: {target}")
     return errors
 
 
 def validate_tree(root: Path) -> list[str]:
+    """Проверяет все skills и наличие их обязательных манифестов."""
     base = root / ".agents" / "skills"
     directories = sorted(
         (path for path in base.glob("*") if path.is_dir()), key=lambda path: path.name
     )
     if not directories:
         return ["Нет каталогов skills в .agents/skills/"]
-    # Каталог skill без манифеста — тоже нарушение контракта: обход по
-    # `*/SKILL.md` такую поломку не заметил бы.
     missing = [
         f"{directory}: отсутствует SKILL.md"
         for directory in directories
@@ -244,8 +156,9 @@ def validate_tree(root: Path) -> list[str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=Path.cwd())
+    """Проверяет skills в указанном корне репозитория."""
+    parser = RussianArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=Path.cwd(), help="Корень репозитория")
     args = parser.parse_args()
     errors = validate_tree(args.root)
     if errors:

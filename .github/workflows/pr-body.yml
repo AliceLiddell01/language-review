@@ -1,4 +1,4 @@
-name: PR description contract
+name: Проверка структуры PR
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened, ready_for_review]
@@ -8,25 +8,25 @@ permissions:
 
 jobs:
   pr-body:
-    name: Validate PR sections
+    name: Проверить разделы PR
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Checkout PR content
+      - name: Получить содержимое PR
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Checkout trusted base
+      - name: Получить доверенную базу
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: trusted-base
           persist-credentials: false
-      - name: Validate actual PR body
+      - name: Проверить фактическое описание PR
         run: |
           checker=trusted-base/.github/scripts/check_pr_body.py
           if [[ ! -f "$checker" ]]; then
-            echo "::warning::The base commit has no PR body validator yet; using the validator introduced by this PR."
+            echo "::warning::В базовом коммите ещё нет валидатора описания PR; используется валидатор из этого PR."
             checker=.github/scripts/check_pr_body.py
           fi
           python3 "$checker" --event-path "$GITHUB_EVENT_PATH"

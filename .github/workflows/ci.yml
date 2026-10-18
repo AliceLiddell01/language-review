@@ -1,4 +1,4 @@
-name: CI
+name: Проверки проекта
 on:
   pull_request:
   push:
@@ -7,59 +7,61 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
   quality:
-    name: Python 3.15 • lint / type / tests (Ubuntu)
+    name: Python 3.15 • стиль / типы / тесты (Ubuntu)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Checkout
+      - name: Получить исходники
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install uv
+      - name: Установить uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.13.1"
           enable-cache: true
-      - name: Install Python
+      - name: Установить Python
         run: uv python install
-      - name: Locked sync
+      - name: Установить закреплённые зависимости
         run: uv sync --locked
-      - name: Ruff lint
+      - name: Проверить стиль Ruff
         run: uv run --locked ruff check .
-      - name: Ruff format
+      - name: Проверить форматирование Ruff
         run: uv run --locked ruff format --check .
-      - name: Mypy
+      - name: Проверить типы mypy
         run: uv run --locked mypy
-      - name: Agent Skills metadata / links
+      - name: Проверить метаданные Agent Skills и ссылки
         run: uv run --locked python .github/scripts/check_skill_contracts.py
-      - name: Repository script unit tests
+      - name: Проверить защиту локальных данных
+        run: uv run --locked python .github/scripts/check_local_data_untracked.py
+      - name: Проверить скрипты репозитория
         run: uv run --locked python -m unittest discover -s .github/scripts -p 'test_*.py'
 
   windows-smoke:
-    name: Python 3.15 • Windows package/CLI smoke
+    name: Python 3.15 • пакет и CLI (Windows)
     runs-on: windows-latest
     timeout-minutes: 25
     defaults:
       run:
         shell: pwsh
     steps:
-      - name: Checkout
+      - name: Получить исходники
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install uv
+      - name: Установить uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.13.1"
           enable-cache: true
-      - name: Install Python
+      - name: Установить Python
         run: uv python install
-      - name: Locked sync
+      - name: Установить закреплённые зависимости
         run: uv sync --locked
-      - name: Pytest
+      - name: Запустить pytest
         run: uv run --locked pytest -n 8
-      - name: Test actual packaged CLI
+      - name: Проверить CLI в собранном пакете
         run: .\scripts\verify-package.ps1

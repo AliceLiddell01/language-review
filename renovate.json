@@ -27,14 +27,14 @@
   },
   "packageRules": [
     {
-      "description": "Python dependencies via pyproject.toml and uv.lock",
+      "description": "Зависимости Python из pyproject.toml и uv.lock",
       "matchManagers": [
         "pep621"
       ],
       "rangeStrategy": "bump"
     },
     {
-      "description": "Group updates of GitHub Actions pinned to SHAs",
+      "description": "Группировать обновления GitHub Actions, закреплённых по SHA",
       "matchManagers": [
         "github-actions"
       ],
@@ -42,7 +42,7 @@
       "pinDigests": true
     },
     {
-      "description": "Major updates require deliberate review",
+      "description": "Мажорные обновления требуют отдельного ревью",
       "matchUpdateTypes": [
         "major"
       ],

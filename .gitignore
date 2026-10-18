@@ -12,12 +12,12 @@ __pycache__/
 .coverage
 coverage.xml
 
-# Local settings / credentials / user data
+# Локальные настройки, секреты и пользовательские данные
 .env
 .env.*
+# Отслеживаемым примером окружения может быть только .env.example.
 !.env.example
+# Личные TOML-настройки с суффиксом .local.toml
 *.local.toml
 .codex/local/
-.review-results/
-.local-results/
 *.log

@@ -1,4 +1,4 @@
-"""Negative and positive contract tests for PR body formatting."""
+"""Положительные и отрицательные проверки формата PR body."""
 
 import json
 import subprocess
@@ -90,12 +90,22 @@ class PrBodyContractTests(unittest.TestCase):
         self.assertEqual(validate("\n\n".join(f"## {n} ##\nИнформация." for n in HEADINGS)), [])
         self.assertEqual(validate("\n\n".join(f"## {n} ###\nИнформация." for n in HEADINGS)), [])
 
-    def test_fenced_content_does_not_make_section_nonempty(self):
+    def test_fenced_commands_make_section_nonempty(self):
         body = valid_body().replace(
             "Фактическая информация для раздела CI.",
-            "```md\nThis is a sample, not CI evidence.\n```",
+            "```powershell\nuv run --locked ruff check .\nuv run --locked pytest -n 8\n```",
         )
-        self.assertTrue(any("Пустой" in e for e in validate(body)))
+        self.assertEqual(validate(body), [])
+
+    def test_empty_fenced_block_does_not_make_section_nonempty(self):
+        body = valid_body().replace("Фактическая информация для раздела CI.", "```powershell\n```")
+        self.assertTrue(any("Пустой" in error for error in validate(body)))
+
+    def test_html_comment_does_not_make_section_nonempty(self):
+        body = valid_body().replace(
+            "Фактическая информация для раздела CI.", "<!-- скрытая заметка -->"
+        )
+        self.assertTrue(any("Пустой" in error for error in validate(body)))
 
     def test_coderabbit_table_in_fence_is_not_accepted(self):
         body = valid_body() + (
@@ -126,9 +136,10 @@ class PrBodyContractTests(unittest.TestCase):
         body += (
             "\n| Итерация / reviewed HEAD | Уровень | Путь | Влияние | Решение | Исправление |\n"
             "| --- | --- | --- | --- | --- | --- |\n"
-            "| 1 · `abcdef0` | — | — | 0 findings | clean | `def` |"
+            "| 1 · `abcdef0` | — | — | 0 findings | clean | `def`"
         )
         self.assertEqual(validate(body), [])
+        self.assertEqual(validate(body.replace("| `def`", "| `def` |")), [])
 
     def test_coderabbit_row_requires_reviewed_sha(self):
         body = valid_body() + (
@@ -138,6 +149,15 @@ class PrBodyContractTests(unittest.TestCase):
             "| 1 | — | — | 0 findings | clean | unknown |"
         )
         self.assertTrue(any("строка" in e for e in validate(body)))
+
+    def test_coderabbit_row_requires_six_columns(self):
+        body = valid_body() + (
+            "\n\n## CodeRabbit review и disposition\n"
+            "| Итерация / reviewed HEAD | Уровень | Путь | Влияние | Решение | Исправление |\n"
+            "| --- | --- | --- | --- | --- | --- |\n"
+            "| 1 · `abcdef0` | minor | `.github/check.py` | влияние | confirmed |"
+        )
+        self.assertTrue(any("строка" in error for error in validate(body)))
 
     def test_coderabbit_row_requires_filled_cells(self):
         # Строка из одних разделителей не является записью disposition.
@@ -167,7 +187,7 @@ class PrBodyContractTests(unittest.TestCase):
         def payload(login, branch):
             return {"pull_request": {"user": {"login": login}, "head": {"ref": branch}}}
 
-        self.assertTrue(is_automation_pr(payload("renovate[bot]", "renovate/rust-sha2")))
+        self.assertTrue(is_automation_pr(payload("renovate[bot]", "renovate/pathspec")))
         self.assertTrue(
             is_automation_pr(payload("dependabot[bot]", "dependabot/github_actions/action"))
         )

@@ -1,8 +1,8 @@
-# Verification и доказательства
+# Проверки и доказательства
 
-Все фактически применимые проверки запускаются на актуальном HEAD после интеграции пишущих агентов. Не подменяй проверки автономным имитатором логики продукта.
+Все фактически применимые проверки запускаются на актуальном HEAD после интеграции изменений. Не подменяй проверки автономным имитатором логики продукта.
 
-## Windows development gate (канонический)
+## Канонические проверки разработки в Windows
 
 ```powershell
 uv sync --locked
@@ -13,18 +13,19 @@ uv run --locked pytest -n 8
 .\scripts\verify-package.ps1
 ```
 
-Smoke script собирает wheel/sdist, устанавливает их в изолированные окружения Windows, вызывает настоящий CLI, `python -m language_review`, JSON `scan`.
+Скрипт собирает wheel/sdist, устанавливает их в изолированные среды Windows и проверяет настоящий CLI, `python -m language_review` и JSON-вывод `scan`.
 
-## Agent/GitHub infrastructure gate
+## Проверки агентской и GitHub-инфраструктуры
 
 ```powershell
 python .github/scripts/check_skill_contracts.py
+python .github/scripts/check_local_data_untracked.py
 python -m unittest discover -s .github/scripts -p 'test_*.py'
-python .github/scripts/check_pr_body.py --body-file path\to\pr-body.md
+python .github/scripts/check_pr_body.py --body-file путь\к\pr-body.md
 ```
 
-PR-body-validator на файле запускай только для реального draft body. GitHub Actions проверяет фактическое тело PR отдельно. GitHub Actions YAML, CodeRabbit YAML, Renovate JSON и локальные ссылки проверяй перед публикацией; не вноси вторую реализацию Python dependency resolution.
+Проверяй файл с описанием PR только на реальном тексте чернового описания. GitHub Actions отдельно проверяет фактическое описание PR. Конфигурацию Renovate проверяет `.github/workflows/renovate-config.yml` официальным строгим валидатором. Перед публикацией проверяй YAML GitHub Actions и CodeRabbit, JSON Renovate и локальные ссылки; не создавай вторую реализацию разрешения зависимостей Python.
 
 ## Статусы
 
-`PASS` — реально запущено и прошло; `FAIL` — запущено и не прошло; `PARTIAL` — проверена лишь часть; `NOT_RUN` — не запускалось. Указывай точное окружение и недоказанные аспекты. CI Ubuntu и CodeQL анализ не подтверждают Windows runtime. После изменения HEAD прежние CI/CodeRabbit свидетельства не переносятся автоматически.
+`PASS` — реально запущено и прошло; `FAIL` — запущено и не прошло; `PARTIAL` — проверена лишь часть; `NOT_RUN` — не запускалось. Указывай точную среду и недоказанные аспекты. CI в Ubuntu и анализ CodeQL не подтверждают работу в Windows. После изменения HEAD прежние результаты CI и CodeRabbit автоматически не переносятся.

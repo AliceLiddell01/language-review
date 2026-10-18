@@ -53,7 +53,7 @@ language-review doctor .\src
 language-review doctor --format json
 ~~~
 
-`doctor` проверяет установленный пакет, версию Python, загруженную конфигурацию, заданные пути, программы из `doctor.programs` и loopback HTTP-адреса из `doctor.http_services`. Недоступность необязательной программы не мешает `scan`, но отражается в результате диагностики и коде завершения.
+`doctor` проверяет установленный пакет, версию Python, загруженную конфигурацию, заданные пути, программы из `doctor.programs` и доступность HTTP-сервисов на локальном компьютере из `doctor.http_services`. Недоступность необязательной программы не мешает `scan`, но отражается в результате диагностики и коде завершения.
 
 ### Конфигурация
 
@@ -63,7 +63,7 @@ language-review config show --format json
 language-review --config .\language-review.toml scan .\repo
 ~~~
 
-Пользовательский конфиг хранится в `%APPDATA%\language-review\config.toml` на Windows и в `$XDG_CONFIG_HOME/language-review/config.toml` (или `~/.config/language-review/config.toml`) на Unix. Явно переданный `--config` объединяется поверх пользовательского файла; параметры CLI имеют наивысший приоритет. Значения `config show` сопровождаются источником. Секретоподобные поля и query-параметры URL скрываются.
+Пользовательский конфиг хранится в `%APPDATA%\language-review\config.toml` на Windows и в `$XDG_CONFIG_HOME/language-review/config.toml` (или `~/.config/language-review/config.toml`) на Unix. Явно переданный `--config` объединяется поверх пользовательского файла; параметры CLI имеют наивысший приоритет. Значения `config show` сопровождаются источником. Поля, похожие на секреты, и параметры URL скрываются.
 
 Пример TOML:
 
@@ -96,16 +96,7 @@ extensions = [".rs", ".md", ".txt"]
 
 Python-исходники, тесты и документация находятся в проекте. Временные окружения и результаты сборки не входят в исходники.
 
-~~~powershell
-uv sync --locked
-uv run --locked ruff check .
-uv run --locked ruff format --check .
-uv run --locked mypy
-uv run --locked pytest -n 8
-.\scripts\verify-package.ps1
-~~~
-
-Smoke-скрипт строит wheel и sdist, устанавливает их в отдельные временные окружения и запускает установленные команды и модуль.
+Порядок команд и критерии проверки собраны в [контексте проверок](.codex/context/verification.md). Скрипт проверяет сборку wheel и sdist, устанавливает их в отдельные временные среды и запускает команды и модуль из установленного пакета.
 
 ## Следующий этап
 

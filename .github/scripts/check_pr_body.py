@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the repository's human-authored PR body contract (stdlib only)."""
+"""Проверяет структуру описания PR, подготовленного человеком."""
 
 import argparse
 import json
@@ -20,21 +20,36 @@ BOT_BRANCHES = {"renovate[bot]": "renovate/", "dependabot[bot]": "dependabot/"}
 # ATX-заголовок: закрывающие `#` — часть оформления, а не имени раздела.
 HEADING = re.compile(r"^ {0,3}##\s+(.+?)(?:\s+#+)?\s*$")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
-# Закрывающая граница не допускает info string: ```` ```python ```` — это строка
-# содержимого блока, а не его конец.
+# Закрывающая граница не допускает info string: ```` ```python ```` остаётся
+# содержимым блока, а не его концом.
 FENCE_CLOSE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
 # GitHub скрывает HTML-комментарии, поэтому заголовки внутри них не являются
 # видимыми разделами body. Внутри код-блока `<!--` — литерал, а не комментарий.
 
 
+class RussianArgumentParser(argparse.ArgumentParser):
+    """Локализует стандартные заголовки справки argparse."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, add_help=False, **kwargs)
+        self.add_argument(
+            "-h", "--help", action="help", help="Показать эту справку и завершить работу"
+        )
+        self._positionals.title = "Позиционные аргументы"
+        self._optionals.title = "Параметры"
+
+    def format_help(self) -> str:
+        return super().format_help().replace("usage:", "Использование:", 1)
+
+
 def strip_comments(lines: list[str]) -> list[str]:
-    """Remove HTML comments line by line, leaving fenced code blocks intact."""
+    """Удаляет HTML-комментарии, сохраняя их содержимое внутри кодовых блоков."""
     result: list[str] = []
     inside = False
     fence_char = ""
     fence_len = 0
     for line in lines:
-        if fence_char and not inside:
+        if fence_char:
             closing = FENCE_CLOSE.match(line)
             if closing and closing.group(1)[0] == fence_char and len(closing.group(1)) >= fence_len:
                 fence_char = ""
@@ -68,7 +83,7 @@ def strip_comments(lines: list[str]) -> list[str]:
 
 
 def sections(body: str) -> list[tuple[str, str]]:
-    """Extract visible level-two headings and their text."""
+    """Извлекает видимые заголовки второго уровня и текст разделов."""
     lines = strip_comments(body.replace("\r\n", "\n").replace("\r", "\n").split("\n"))
     found: list[tuple[str, str]] = []
     active: list[str] = []
@@ -76,6 +91,8 @@ def sections(body: str) -> list[tuple[str, str]]:
     fence_len = 0
     for line in lines:
         if fence_char:
+            if found:
+                active.append(line)
             closing = FENCE_CLOSE.match(line)
             if closing and closing.group(1)[0] == fence_char and len(closing.group(1)) >= fence_len:
                 fence_char = ""
@@ -84,6 +101,8 @@ def sections(body: str) -> list[tuple[str, str]]:
         if opening:
             token = opening.group(1)
             fence_char, fence_len = token[0], len(token)
+            if found:
+                active.append(line)
             continue
         match = HEADING.match(line)
         if match:
@@ -98,8 +117,48 @@ def sections(body: str) -> list[tuple[str, str]]:
     return found
 
 
+def content_without_fence_markers(content: str) -> str:
+    """Удаляет строки-границы кодовых блоков, оставляя их содержимое."""
+    result: list[str] = []
+    fence_char = ""
+    fence_len = 0
+    for line in content.splitlines():
+        if fence_char:
+            closing = FENCE_CLOSE.match(line)
+            if closing and closing.group(1)[0] == fence_char and len(closing.group(1)) >= fence_len:
+                fence_char = ""
+            else:
+                result.append(line)
+            continue
+        if opening := FENCE.match(line):
+            marker = opening.group(1)
+            fence_char, fence_len = marker[0], len(marker)
+            continue
+        result.append(line)
+    return "\n".join(result).strip()
+
+
+def content_outside_fences(content: str) -> str:
+    """Возвращает строки раздела вне ограждённых кодовых блоков."""
+    result: list[str] = []
+    fence_char = ""
+    fence_len = 0
+    for line in content.splitlines():
+        if fence_char:
+            closing = FENCE_CLOSE.match(line)
+            if closing and closing.group(1)[0] == fence_char and len(closing.group(1)) >= fence_len:
+                fence_char = ""
+            continue
+        if opening := FENCE.match(line):
+            marker = opening.group(1)
+            fence_char, fence_len = marker[0], len(marker)
+            continue
+        result.append(line)
+    return "\n".join(result)
+
+
 def validate(body: str) -> list[str]:
-    """Return deterministic errors; empty list means structurally valid."""
+    """Возвращает ошибки контракта; пустой список означает корректную структуру."""
     blocks = sections(body)
     names = [heading for heading, _ in blocks]
     errors: list[str] = []
@@ -114,9 +173,10 @@ def validate(body: str) -> list[str]:
         if positions != sorted(positions):
             errors.append("Обязательные разделы расположены не в установленном порядке")
     for name, content in blocks:
-        if name in REQUIRED and not content.strip():
+        visible_content = content_without_fence_markers(content)
+        if name in REQUIRED and not visible_content:
             errors.append(f"Пустой обязательный раздел: ## {name}")
-        if name in REQUIRED and content.strip().casefold() in {
+        if name in REQUIRED and visible_content.casefold() in {
             "todo",
             "tbd",
             "заполнить",
@@ -132,20 +192,26 @@ def validate(body: str) -> list[str]:
                     "| Итерация / reviewed HEAD | Уровень | Путь | "
                     "Влияние | Решение | Исправление |"
                 )
-                if header not in content:
+                visible_content = content_outside_fences(content)
+                normalized_header = header.removesuffix("|").rstrip()
+                if not any(
+                    line.strip().removesuffix("|").rstrip() == normalized_header
+                    for line in visible_content.splitlines()
+                ):
                     errors.append(
                         "В разделе CodeRabbit отсутствует заголовок накопительной таблицы"
                     )
                 row_pattern = re.compile(
                     r"^\|\s*[1-9]\d*\s*·\s*`[0-9a-f]{7,40}`\s*\|"
-                    r"(?:\s*[^|\n\s][^|\n]*\|){5}\s*$"
+                    r"(?:\s*[^|\n\s][^|\n]*\|){4}"
+                    r"\s*[^|\n\s][^|\n]*(?:\|)?\s*$"
                 )
                 separator_pattern = re.compile(r"^\|\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*){5}\|?$")
                 rows = [
                     line.strip()
-                    for line in content.splitlines()
+                    for line in visible_content.splitlines()
                     if line.strip().startswith("|")
-                    and line.strip() != header
+                    and line.strip().removesuffix("|").rstrip() != normalized_header
                     and not separator_pattern.fullmatch(line.strip())
                 ]
                 if not rows or any(not row_pattern.fullmatch(row) for row in rows):
@@ -154,7 +220,7 @@ def validate(body: str) -> list[str]:
 
 
 def is_automation_pr(payload: dict) -> bool:
-    """Narrow exception for dependency PRs authored by verified bot identities."""
+    """Ограниченное исключение для PR зависимостей от известных ботов."""
     pr = payload.get("pull_request") or {}
     login = (pr.get("user") or {}).get("login", "")
     branch = (pr.get("head") or {}).get("ref", "")
@@ -162,12 +228,11 @@ def is_automation_pr(payload: dict) -> bool:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    """Проверяет PR body из файла или события GitHub Actions."""
+    parser = RussianArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument(
-        "--body-file", type=Path, help="Local Markdown source before PR publication"
-    )
-    source.add_argument("--event-path", type=Path, help="GitHub pull_request event JSON")
+    source.add_argument("--body-file", type=Path, help="Путь к файлу с Markdown-текстом PR")
+    source.add_argument("--event-path", type=Path, help="Путь к JSON события pull_request")
     args = parser.parse_args()
     try:
         if args.body_file is not None:

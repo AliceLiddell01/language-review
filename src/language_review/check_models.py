@@ -26,7 +26,13 @@ class CheckUnit:
     views: dict[str, EngineView]
     engines: tuple[str, ...]
     terms: dict[str, str]
-    skip_reason: str | None = None
+    # Есть ли в виде для движка кириллица; без неё русскоязычные правила неприменимы.
+    has_russian: bool = True
+    # Применимость по движкам: движок → причина пропуска. Движок без записи проверяет единицу.
+    skip_reasons: dict[str, str] = field(default_factory=dict)
+
+    def checked_by(self, engine: str) -> bool:
+        return engine in self.engines and engine not in self.skip_reasons
 
 
 @dataclass(frozen=True)

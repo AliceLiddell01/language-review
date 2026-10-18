@@ -27,7 +27,7 @@ from language_review.engine_http import (
     safe_endpoint,
 )
 
-PROMPT_VERSION = "ru-technical-review/1"
+PROMPT_VERSION = "ru-technical-review/2"
 LLM_CATEGORIES = (
     "spelling",
     "grammar",
@@ -78,6 +78,13 @@ Git, CLI) — точные технические названия, а не ос
 9. explanation — кратко по-русски, почему это ошибка.
 10. confidence — low, medium или high: насколько ты уверен, что это ошибка.
 11. Разные ошибки в одном предложении — разные замечания, каждое со своим коротким excerpt.
+12. Элемент с "language": "en" целиком написан по-английски. Для него допустима только
+   категория untranslated_english: отметь предложение (excerpt — одно предложение
+   целиком), если это обычный текст для читателя — комментарий, сообщение программы или
+   абзац документации, — который в русскоязычном проекте следует писать по-русски. Не
+   отмечай цитаты, лицензии, заголовки-названия, имена API, команд и продуктов, примеры
+   вывода и намеренно англоязычные разделы. Английскую орфографию и стиль не проверяй.
+   replacement — русский перевод всего excerpt или null.
 """
 _EXAMPLE_INPUT = {
     "items": [
@@ -165,6 +172,10 @@ class LlmItem:
     unit: CheckUnit
     offset: int
     text: str
+
+    @property
+    def english(self) -> bool:
+        return not self.unit.has_russian
 
 
 @dataclass(frozen=True)
@@ -482,6 +493,9 @@ def parse_response(
             continue
         excerpt, replacement = finding["excerpt"], finding["replacement"]
         explanation = finding["explanation"]
+        if item.english and finding["category"] != "untranslated_english":
+            rejected.append((item, "category_not_applicable", finding))
+            continue
         if (
             len(excerpt) > MAX_EXCERPT_CHARS
             or not explanation.strip()
@@ -585,7 +599,9 @@ class LlmEngine:
         user = json.dumps(
             {
                 "items": [
-                    {"id": item.id, "kind": item.unit.kind, "text": item.text} for item in batch
+                    {"id": item.id, "kind": item.unit.kind, "text": item.text}
+                    | ({"language": "en"} if item.english else {})
+                    for item in batch
                 ]
             },
             ensure_ascii=False,

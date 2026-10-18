@@ -202,3 +202,31 @@ def test_ollama_live_same_logical_task(tmp_path: Path, isolated_appdata: Path) -
     # Ollama применяет собственный шаблон чата; ложные замечания на чистом тексте фиксируются
     # в отчёте, но положительный случай и отображение координат обязаны совпадать.
     _assert_llm_positive_and_clean(tmp_path, isolated_appdata, config, require_clean=False)
+
+
+@pytest.mark.skipif(LLAMA_CPP is None, reason="LANGUAGE_REVIEW_LIVE_LLAMA_CPP не задан")
+def test_llama_cpp_live_english_prose_reaches_model_and_stays_unchanged(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    assert LLAMA_CPP is not None
+    config = _llm_config(tmp_path, "llama_cpp", LLAMA_CPP, LLAMA_CPP_MODEL)
+    notes = tmp_path / "notes.txt"
+    original = (
+        "Программа сохраняет настройки.\n\n"
+        "The tool reads the configuration file from disk before it starts.\n\n"
+        "git status --short\n"
+    ).encode()
+    notes.write_bytes(original)
+
+    code, report = _check(notes, config, isolated_appdata)
+
+    # Вердикт модели о английском абзаце не фиксируется, но абзац обязан быть проверен,
+    # а команда без прозы — честно пропущена.
+    assert code in {0, 1}, report["engines"]
+    checks = [item["checks"]["llm"] for item in report["documents"][0]["fragments"]]
+    assert checks[0]["status"] == checks[1]["status"] == "checked"
+    assert checks[2] == {"status": "skipped", "reason": "no_russian_text"}
+    for finding in report["documents"][0]["findings"]:
+        start = finding["range"]["start"]
+        assert original[start["byte_offset"] :].decode().startswith(finding["excerpt"])
+    assert notes.read_bytes() == original

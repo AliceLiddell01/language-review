@@ -236,9 +236,14 @@ class ValeEngine:
             if character == "\n":
                 line_starts.append(index + 1)
         outcomes = {unit.index: UnitOutcome(unit.index, "checked") for unit in units}
+        broken = False
         for alert in alerts:
-            self._map_alert(alert, combined, line_starts, regions, outcomes)
+            broken = not self._map_alert(alert, combined, line_starts, regions, outcomes) or broken
         for unit in units:
+            if broken:
+                # Координаты нельзя отнести к конкретной единице: чистой проверку не считаем.
+                outcomes[unit.index].status = "failed"
+                outcomes[unit.index].reason = "vale_schema_violation"
             yield outcomes[unit.index]
 
     def _map_alert(
@@ -248,7 +253,8 @@ class ValeEngine:
         line_starts: list[int],
         regions: list[tuple[int, int, CheckUnit]],
         outcomes: dict[int, UnitOutcome],
-    ) -> None:
+    ) -> bool:
+        """Отобразить замечание; False — структура замечания Vale недостоверна."""
         check = str(alert.get("Check") or "")
         message = str(alert.get("Message") or "")
         line, span, match = alert.get("Line"), alert.get("Span"), alert.get("Match")
@@ -273,14 +279,15 @@ class ValeEngine:
             outcomes[target[2].index].rejected.append(
                 RejectedOutput(self.name, target[2].index, "position_out_of_range", check, message)
             )
-            return
+            # Достоверное замечание вне одной единицы — отбраковка; нарушение структуры — сбой.
+            return valid
         region_start, _region_end, unit = region
         outcome = outcomes[unit.index]
         if isinstance(match, str) and match and combined[start:end] != match:
             outcome.rejected.append(
                 RejectedOutput(self.name, unit.index, "position_mismatch", check, message, match)
             )
-            return
+            return True
         raw_action = alert.get("Action")
         action: dict[str, Any] = raw_action if isinstance(raw_action, dict) else {}
         params = action.get("Params") if action.get("Name") == "replace" else None
@@ -308,6 +315,7 @@ class ValeEngine:
                 engine_excerpt=original,
             )
         )
+        return True
 
     def close(self) -> None:
         if self._temporary is not None:

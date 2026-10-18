@@ -18,6 +18,7 @@ from language_review.check import check_paths
 from language_review.config import load_config
 from language_review.engine_http import EngineHttpError, join_url, request_json
 from language_review.engine_llm import SYSTEM_PROMPT, response_schema
+from language_review.engine_vale import ValeEngine
 from language_review.errors import ConfigurationError
 
 SCHEMA = json.loads(
@@ -1063,24 +1064,69 @@ def test_truncated_chunked_response_is_a_controlled_protocol_error() -> None:
     assert raised.value.code == "protocol_error"
 
 
-def test_languagetool_non_list_replacements_are_rejected_not_crashed(
+def _broken_match(**override: Any) -> dict[str, Any]:
+    match: dict[str, Any] = {
+        "message": "Опечатка.",
+        "offset": 0,
+        "length": 6,
+        "replacements": [{"value": "Ошибка"}],
+        "rule": {"id": "MORFOLOGIK_RULE_RU_RU", "category": {"id": "TYPOS"}},
+    }
+    match.update(override)
+    return match
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        _broken_match(replacements=None),
+        _broken_match(offset="0"),
+        _broken_match(offset=500),
+        "не объект",
+    ],
+    ids=["replacements_none", "offset_string", "offset_beyond_text", "match_not_object"],
+)
+def test_languagetool_schema_violation_is_incomplete_not_clean(
+    tmp_path: Path, isolated_appdata: Path, json_server: JsonServer, broken: Any
+) -> None:
+    def respond(request: RecordedRequest) -> tuple[int, Any]:
+        if request.path == "/v2/languages":
+            return 200, [{"name": "Russian", "code": "ru", "longCode": "ru-RU"}]
+        text = request.body["text"]
+        matches = [broken] if text.startswith("Ошыбка") else []
+        if text.startswith("Второй"):
+            matches = [_broken_match(offset=7, length=4, replacements=[{"value": "файл"}])]
+        return 200, {"software": {"version": "stub"}, "matches": matches}
+
+    json_server.responder = respond
+    source = tmp_path / "notes.txt"
+    source.write_text("Ошыбка в слове.\n\nВторой фаил лежит рядом.\n", encoding="utf-8")
+    config = _languagetool_config(tmp_path, json_server.url)
+
+    code, report, stderr = _report(source, config, isolated_appdata)
+
+    assert (code, report["status"]) == (4, "partial")
+    assert report["engines"][0]["status"] == "partial"
+    document = report["documents"][0]
+    assert document["status"] == "partial"
+    # Корректное замечание из другой единицы не теряется.
+    assert [item["excerpt"] for item in document["findings"]] == ["фаил"]
+    checks = [item["checks"]["languagetool"] for item in document["fragments"]]
+    assert checks == [
+        {"status": "failed", "reason": "languagetool_schema_violation"},
+        {"status": "checked", "reason": None},
+    ]
+    assert "languagetool_schema_violation" in report["engines"][0]["diagnostics"]
+    assert "Неполная проверка" in stderr
+
+
+def test_languagetool_schema_violation_in_only_unit_is_engine_error(
     tmp_path: Path, isolated_appdata: Path, json_server: JsonServer
 ) -> None:
     def respond(request: RecordedRequest) -> tuple[int, Any]:
         if request.path == "/v2/languages":
             return 200, [{"name": "Russian", "code": "ru", "longCode": "ru-RU"}]
-        return 200, {
-            "software": {"version": "stub"},
-            "matches": [
-                {
-                    "message": "Опечатка.",
-                    "offset": 0,
-                    "length": 4,
-                    "replacements": None,
-                    "rule": {"id": "MORFOLOGIK_RULE_RU_RU", "category": {"id": "TYPOS"}},
-                }
-            ],
-        }
+        return 200, {"software": {"version": "stub"}, "matches": [_broken_match(replacements=None)]}
 
     json_server.responder = respond
     source = tmp_path / "notes.txt"
@@ -1089,10 +1135,288 @@ def test_languagetool_non_list_replacements_are_rejected_not_crashed(
 
     code, report, _stderr = _report(source, config, isolated_appdata)
 
-    assert code == 0
+    assert (code, report["status"]) == (5, "unavailable")
+    assert report["engines"][0]["status"] == "error"
+    assert report["documents"][0]["findings"] == []
+    assert [item["reason"] for item in report["documents"][0]["rejected"]] == ["schema_violation"]
+
+
+def test_languagetool_valid_match_with_rejected_suggestion_stays_checked(
+    tmp_path: Path, isolated_appdata: Path, json_server: JsonServer
+) -> None:
+    json_server.responder = languagetool_responder({"ошыбка": ["не ошибка"]})
+    source = tmp_path / "notes.txt"
+    source.write_text("Здесь ошыбка.\n", encoding="utf-8")
+    config = _languagetool_config(tmp_path, json_server.url)
+
+    code, report, _stderr = _report(source, config, isolated_appdata)
+
+    assert (code, report["status"]) == (1, "findings")
+    assert report["engines"][0]["status"] == "ok"
+    finding = report["documents"][0]["findings"][0]
+    assert finding["suggestions"][0]["status"] == "rejected"
+    assert "negation_changed" in finding["suggestions"][0]["reasons"]
+
+
+def _vale_engine_factory(stdout: str) -> Any:
+    class FakeVale(ValeEngine):
+        def _resolve(self) -> str | None:
+            return "vale"
+
+        def _invoke(self, arguments: list[str], text: str | None) -> tuple[int, str, str]:
+            if arguments == ["--version"]:
+                return 0, "vale version 3.0.0", ""
+            return 0, stdout if text and "ошыбка" in text else "{}", ""
+
+    def factory(name: str, settings: Any) -> Any:
+        assert name == "vale"
+        return FakeVale(settings)
+
+    return factory
+
+
+@pytest.mark.parametrize(
+    ("alert", "clean"),
+    [
+        ({"Check": "X.Y", "Message": "m", "Line": "1", "Span": [1, 3]}, False),
+        ({"Check": "X.Y", "Message": "m", "Line": 1, "Span": [1]}, False),
+        ({"Check": "X.Y", "Message": "m", "Line": 1, "Span": [1, 3], "Match": "нет"}, True),
+    ],
+    ids=["line_not_int", "span_short", "match_mismatch_is_semantic_rejection"],
+)
+def test_vale_malformed_alert_is_not_clean(
+    tmp_path: Path, alert: dict[str, Any], clean: bool
+) -> None:
+    source = tmp_path / "notes.txt"
+    source.write_text("Здесь ошыбка.\n", encoding="utf-8")
+    config = load_config(_config(tmp_path, '[check]\nengines = ["vale"]\n'))
+    stdout = json.dumps({"stdin.txt": [alert]})
+
+    result = check_paths([str(source)], config, engine_factory=_vale_engine_factory(stdout))
+
+    document = result.documents[0]
+    if clean:
+        assert (result.status, document.status) == ("clean", "clean")
+        assert [item.reason for item in document.rejected] == ["position_mismatch"]
+    else:
+        assert result.status in {"partial", "unavailable"}
+        assert document.status != "clean"
+        assert document.unit_status[(0, "vale")] == ("failed", "vale_schema_violation")
+
+
+ENGLISH_SENTENCE = "The tool reads the configuration file from disk."
+
+
+def _english_llm(findings: Any) -> Any:
+    """Ответ модели только для английских элементов; русские элементы без замечаний."""
+
+    def respond(items: list[dict[str, Any]]) -> str:
+        return _findings(
+            *(
+                finding
+                for item in items
+                if item.get("language") == "en"
+                for finding in findings(item)
+            )
+        )
+
+    return respond
+
+
+def _chat_items(json_server: JsonServer) -> list[dict[str, Any]]:
+    return [
+        item
+        for request in json_server.requests
+        if request.path == "/v1/chat/completions"
+        for item in json.loads(request.body["messages"][1]["content"])["items"]
+    ]
+
+
+def test_english_prose_reaches_llm_but_not_russian_language_engines(
+    tmp_path: Path, isolated_appdata: Path, json_server: JsonServer
+) -> None:
+    lt = languagetool_responder({"ошыбка": ["ошибка"]})
+    llama = llama_responder(
+        _english_llm(
+            lambda item: [
+                _llm_finding(
+                    item["id"],
+                    item["text"],
+                    None,
+                    category="untranslated_english",
+                    explanation="Комментарий в русскоязычном проекте написан по-английски.",
+                    confidence="medium",
+                )
+            ]
+        )
+    )
+
+    def respond(request: RecordedRequest) -> tuple[int, Any]:
+        return lt(request) if request.path.startswith("/v2/") else llama(request)
+
+    json_server.responder = respond
+    source = tmp_path / "notes.txt"
+    source.write_text(
+        f"Здесь ошыбка в слове.\n\n{ENGLISH_SENTENCE}\n\ngit status --short\n\n--verbose\n",
+        encoding="utf-8",
+    )
+    config = _config(
+        tmp_path,
+        f"""[check]
+engines = ["languagetool", "llm"]
+[check.languagetool]
+endpoint = "{json_server.url}"
+[check.llm.llama_cpp]
+endpoint = "{json_server.url}"
+""",
+    )
+
+    code, report, _stderr = _report(source, config, isolated_appdata)
+
+    assert (code, report["status"]) == (1, "findings")
     document = report["documents"][0]
-    assert document["findings"] == []
-    assert [item["reason"] for item in document["rejected"]] == ["schema_violation"]
+    english = [item for item in document["findings"] if item["category"] == "untranslated_english"]
+    assert [item["excerpt"] for item in english] == [ENGLISH_SENTENCE]
+    # replacement: null допустим — замечание без варианта замены.
+    assert english[0]["suggestions"] == []
+    assert english[0]["agreement"] == ["llm"]
+    checks = [
+        (item["checks"]["languagetool"], item["checks"]["llm"]) for item in document["fragments"]
+    ]
+    skipped = {"status": "skipped", "reason": "no_russian_text"}
+    done = {"status": "checked", "reason": None}
+    assert checks == [(done, done), (skipped, done), (skipped, skipped), (skipped, skipped)]
+    assert report["summary"]["units_without_russian_text"] == 3
+    languagetool_texts = [
+        item.body["text"] for item in json_server.requests if item.path == "/v2/check"
+    ]
+    assert all("configuration" not in text for text in languagetool_texts)
+    items = _chat_items(json_server)
+    assert [item["text"] for item in items if item.get("language") == "en"] == [ENGLISH_SENTENCE]
+    assert all("language" not in item for item in items if "ошыбка" in item["text"])
+    assert not any("--verbose" in item["text"] or "git status" in item["text"] for item in items)
+
+
+def test_english_translation_is_checked_for_dropped_negation_and_acronyms(
+    tmp_path: Path, isolated_appdata: Path, json_server: JsonServer
+) -> None:
+    sentences = {
+        "The tool does not delete files from the disk.": "Утилита удаляет файлы с диска.",
+        "The tool does not delete files from the disk twice.": "Утилита не удаляет файлы дважды.",
+        "The JSON parser reads the configuration file.": "Разбор читает файл настройки.",
+        "The parser reads the configuration file.": "Разбор читает файл настройки.",
+    }
+    json_server.responder = llama_responder(
+        _english_llm(
+            lambda item: [
+                _llm_finding(
+                    item["id"],
+                    item["text"],
+                    sentences[item["text"]],
+                    category="untranslated_english",
+                    explanation="Текст написан по-английски.",
+                )
+            ]
+        )
+    )
+    source = tmp_path / "notes.txt"
+    source.write_text("\n\n".join(sentences) + "\n", encoding="utf-8")
+    config = _config(
+        tmp_path,
+        f'[check]\nengines = ["llm"]\n[check.llm.llama_cpp]\nendpoint = "{json_server.url}"\n',
+    )
+
+    code, report, _stderr = _report(source, config, isolated_appdata)
+
+    assert code == 1
+    statuses = {
+        item["excerpt"]: (item["suggestions"][0]["status"], item["suggestions"][0]["reasons"])
+        for item in report["documents"][0]["findings"]
+    }
+    assert statuses == {
+        "The tool does not delete files from the disk.": ("rejected", ["negation_changed"]),
+        "The tool does not delete files from the disk twice.": ("candidate", []),
+        "The JSON parser reads the configuration file.": (
+            "rejected",
+            ["technical_content_changed"],
+        ),
+        "The parser reads the configuration file.": ("candidate", []),
+    }
+
+
+def test_english_items_accept_only_untranslated_english_category(
+    tmp_path: Path, isolated_appdata: Path, json_server: JsonServer
+) -> None:
+    json_server.responder = llama_responder(
+        _english_llm(
+            lambda item: [
+                _llm_finding(item["id"], "configuration", "конфигурация", category="spelling")
+            ]
+        )
+    )
+    source = tmp_path / "notes.txt"
+    source.write_text(f"{ENGLISH_SENTENCE}\n", encoding="utf-8")
+    config = _config(
+        tmp_path,
+        f'[check]\nengines = ["llm"]\n[check.llm.llama_cpp]\nendpoint = "{json_server.url}"\n',
+    )
+
+    code, report, _stderr = _report(source, config, isolated_appdata)
+
+    assert (code, report["status"]) == (0, "clean")
+    document = report["documents"][0]
+    assert [item["reason"] for item in document["rejected"]] == ["category_not_applicable"]
+    assert document["fragments"][0]["checks"]["llm"] == {"status": "checked", "reason": None}
+
+
+def test_disabled_category_does_not_check_english_hidden(
+    tmp_path: Path, isolated_appdata: Path, json_server: JsonServer
+) -> None:
+    json_server.responder = llama_responder('{"findings": []}')
+    source = tmp_path / "notes.txt"
+    source.write_text(f"{ENGLISH_SENTENCE}\n", encoding="utf-8")
+    config = _config(
+        tmp_path,
+        f'[check]\nengines = ["llm"]\n[check.llm.llama_cpp]\nendpoint = "{json_server.url}"\n',
+    )
+
+    code, report, _stderr = _report(source, config, isolated_appdata, "--category", "grammar")
+
+    assert (code, report["status"]) == (0, "clean")
+    assert report["documents"][0]["fragments"][0]["checks"]["llm"] == {
+        "status": "skipped",
+        "reason": "category_disabled",
+    }
+    assert _chat_items(json_server) == []
+
+
+def test_english_markdown_prose_and_code_fragments(
+    tmp_path: Path, isolated_appdata: Path, json_server: JsonServer
+) -> None:
+    json_server.responder = llama_responder('{"findings": []}')
+    source = tmp_path / "guide.md"
+    source.write_text(
+        "# Руководство\n\nКоманда `cargo build` собирает проект.\n\n"
+        "Use the `HttpClient.GetAsync` method to fetch the page.\n\n"
+        "```text\nThis block is code and must stay untouched here.\n```\n",
+        encoding="utf-8",
+    )
+    config = _config(
+        tmp_path,
+        f'[check]\nengines = ["llm"]\n[check.llm.llama_cpp]\nendpoint = "{json_server.url}"\n',
+    )
+
+    code, report, _stderr = _report(source, config, isolated_appdata)
+
+    assert (code, report["status"]) == (0, "clean")
+    english = [item["text"] for item in _chat_items(json_server) if item.get("language") == "en"]
+    assert len(english) == 1
+    assert "method to fetch the page" in english[0]
+    assert not any("must stay untouched" in item["text"] for item in _chat_items(json_server))
+    assert all(
+        item["checks"]["llm"]["status"] in {"checked", "skipped"}
+        for item in report["documents"][0]["fragments"]
+    )
 
 
 def test_join_url_keeps_query_and_fragment_after_path() -> None:

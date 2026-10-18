@@ -72,6 +72,22 @@ NEGATION_WORDS = {
     "нисколько",
 }
 _WORD = re.compile(r"[^\W\d_]+")
+# Слово английской прозы: латиница со строчной буквой, допустимы дефис и апостроф внутри,
+# скобки, кавычки и знаки препинания по краям. Пути, флаги, вызовы и ВЕРХНИЙ РЕГИСТР не слова.
+_ENGLISH_WORD = re.compile(
+    r"""[("«]?(?=[A-Za-z'’-]*[a-z])[A-Za-z][A-Za-z'’-]*[.,;:!?…)"»]*""",
+)
+_LLM_PLACEHOLDER = re.compile(r"⟦\d+⟧")
+# Виды фрагментов с человекочитаемым текстом; значения конфигурации — часто идентификаторы.
+_PROSE_KINDS = {
+    "comment",
+    "documentation_comment",
+    "user_facing_string",
+    "markdown_prose",
+    "plain_text",
+}
+# Меньше трёх слов — имя, команда или метка, а не английское предложение.
+MIN_ENGLISH_WORDS = 3
 _TECHNICAL = re.compile(r"\d+|[A-Za-z][A-Za-z0-9_]*")
 # Символы, вставка которых в исходник требует экранирования или меняет разметку.
 _SYNTAX_SENSITIVE = {
@@ -152,6 +168,32 @@ def _fragment_groups(document: ExtractDocument) -> list[list[ResolvedFragment]]:
     return groups
 
 
+def _english_prose(unit: CheckUnit) -> bool:
+    """Единица — английский человекочитаемый текст, а не имя, команда или защищённая вставка."""
+    if unit.kind not in _PROSE_KINDS:
+        return False
+    text = unit.views["llm"].text
+    placeholders = len(_LLM_PLACEHOLDER.findall(text))
+    words = [
+        token for token in _LLM_PLACEHOLDER.sub(" ", text).split() if _ENGLISH_WORD.fullmatch(token)
+    ]
+    # Больше защищённых вставок, чем слов, — код или перечень идентификаторов, а не проза.
+    return len(words) >= MIN_ENGLISH_WORDS and placeholders <= len(words)
+
+
+def _skip_reasons(unit: CheckUnit, settings: CheckSettings) -> dict[str, str]:
+    """Применимость движков: правила LanguageTool и Vale русские, остаточный английский — у LLM."""
+    if unit.has_russian:
+        return {}
+    reasons = dict.fromkeys(unit.engines, "no_russian_text")
+    if "llm" in unit.engines:
+        if settings.categories and "untranslated_english" not in settings.categories:
+            reasons["llm"] = "category_disabled"
+        elif _english_prose(unit):
+            del reasons["llm"]
+    return reasons
+
+
 def build_units(
     documents: Sequence[ExtractDocument], settings: Sequence[CheckSettings]
 ) -> list[CheckUnit]:
@@ -179,8 +221,8 @@ def build_units(
                 engines=settings[document_index].engines,
                 terms=settings[document_index].terms,
             )
-            if not _CYRILLIC.search(views["plain"].text):
-                unit.skip_reason = "no_russian_text"
+            unit.has_russian = bool(_CYRILLIC.search(views["plain"].text))
+            unit.skip_reasons = _skip_reasons(unit, settings[document_index])
             units.append(unit)
     return units
 
@@ -231,22 +273,57 @@ def _negation_profile(text: str) -> tuple[int, int]:
     return standalone, prefixed
 
 
+_ENGLISH_NEGATION = re.compile(
+    r"\b(?:not|no|never|none|nothing|nobody|nowhere|neither|nor|without|cannot)\b|n't\b",
+    re.IGNORECASE,
+)
+_ENGLISH_NEGATION_RUSSIAN = {"не", "нет", "нельзя", "без", "никогда", "ничего", "никто", "ни"}
+
+
+def _english_technical(text: str) -> Counter[str]:
+    """Акронимы, числа, snake_case и camelCase: перевод обязан сохранить их дословно."""
+    return Counter(
+        token
+        for token in _TECHNICAL.findall(text)
+        if token.isdigit()
+        or (len(token) > 1 and token.isupper())
+        or "_" in token
+        or re.search(r"[a-z][A-Z]", token)
+    )
+
+
+def _english_translation_risks(original: str, replacement: str) -> list[str]:
+    """Проверки перевода целого английского фрагмента на русский."""
+    reasons: list[str] = []
+    russian = {word.casefold() for word in _WORD.findall(replacement)} & _ENGLISH_NEGATION_RUSSIAN
+    if bool(_ENGLISH_NEGATION.search(original)) != bool(russian):
+        reasons.append("negation_changed")
+    if _english_technical(original) - _english_technical(replacement):
+        reasons.append("technical_content_changed")
+    return reasons
+
+
 def suggestion_risks(
     original: str, replacement: str, category: str, unit: CheckUnit, inserted: str
 ) -> list[str]:
     """Причины, по которым предложенная замена не может считаться пригодной кандидатурой."""
-    reasons: list[str] = []
-    if _negation_profile(original) != _negation_profile(replacement):
-        reasons.append("negation_changed")
-    original_tokens = Counter(_TECHNICAL.findall(original))
-    replacement_tokens = Counter(_TECHNICAL.findall(replacement))
-    if category == "untranslated_english":
-        original_tokens = Counter(token for token in original_tokens.elements() if token.isdigit())
-        replacement_tokens = Counter(
-            token for token in replacement_tokens.elements() if token.isdigit()
-        )
-    if original_tokens != replacement_tokens:
-        reasons.append("technical_content_changed")
+    if category == "untranslated_english" and not unit.has_russian:
+        reasons = _english_translation_risks(original, replacement)
+    else:
+        reasons = []
+        if _negation_profile(original) != _negation_profile(replacement):
+            reasons.append("negation_changed")
+        original_tokens = Counter(_TECHNICAL.findall(original))
+        replacement_tokens = Counter(_TECHNICAL.findall(replacement))
+        if category == "untranslated_english":
+            original_tokens = Counter(
+                token for token in original_tokens.elements() if token.isdigit()
+            )
+            replacement_tokens = Counter(
+                token for token in replacement_tokens.elements() if token.isdigit()
+            )
+        if original_tokens != replacement_tokens:
+            reasons.append("technical_content_changed")
     sensitive = _SYNTAX_SENSITIVE.get(unit.kind)
     if sensitive is None:
         sensitive = (
@@ -426,26 +503,22 @@ def _document_status(document: CheckDocument) -> str:
     extract_status = document.extract.status
     if extract_status in {"error", "skipped"}:
         return extract_status
-    eligible = [unit for unit in document.units if unit.skip_reason is None]
+    pairs = [
+        (unit, engine)
+        for unit in document.units
+        for engine in document.engines
+        if unit.checked_by(engine)
+    ]
     if extract_status == "unsupported" and not document.extract.fragments:
         return "unsupported"
-    incomplete = any(
-        document.unit_status.get((unit.index, engine), ("missing", None))[0] != "checked"
-        for unit in eligible
-        for engine in document.engines
-    )
-    checked_any = any(
-        document.unit_status.get((unit.index, engine), ("missing", None))[0] == "checked"
-        for unit in eligible
-        for engine in document.engines
-    )
-    failed_any = any(
+    statuses = [
         document.unit_status.get((unit.index, engine), ("missing", None))[0]
-        not in {"checked", "skipped"}
-        for unit in eligible
-        for engine in document.engines
-    )
-    if eligible and failed_any and not checked_any:
+        for unit, engine in pairs
+    ]
+    incomplete = any(status != "checked" for status in statuses)
+    checked_any = "checked" in statuses
+    failed_any = any(status not in {"checked", "skipped"} for status in statuses)
+    if pairs and failed_any and not checked_any:
         return "unavailable"
     if incomplete or extract_status in {"partial", "unsupported"}:
         return "partial"
@@ -510,7 +583,7 @@ def check_paths(
         engine = engine_factory(name, base_settings)
         run = EngineRun(name=name, details=engine.describe())
         runs.append(run)
-        engine_units = [unit for unit in units if name in unit.engines and unit.skip_reason is None]
+        engine_units = [unit for unit in units if unit.checked_by(name)]
         run.units_total = len(engine_units)
         started = time.perf_counter()
         try:
@@ -561,9 +634,8 @@ def check_paths(
     for document_index, document in enumerate(documents):
         document.findings = reconcile(document_index, candidates.get(document_index, []))
         for unit in document.units:
-            if unit.skip_reason is not None:
-                for engine_name in document.engines:
-                    document.unit_status[(unit.index, engine_name)] = ("skipped", unit.skip_reason)
+            for engine_name, reason in unit.skip_reasons.items():
+                document.unit_status[(unit.index, engine_name)] = ("skipped", reason)
         document.status = _document_status(document)
         document.diagnostics = sorted(set(document.extract.diagnostics))
 

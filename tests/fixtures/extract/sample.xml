@@ -1,1 +1,1 @@
-<ui><message>Не удалось открыть {Path}</message><button title="Продолжить">Далее</button><item>Один</item><item>Два</item></ui>
+<ui><message>Не удалось открыть {Path}</message><button title="Продолжить">Далее</button><item>Один</item><item>Два</item><form><input placeholder="Введите имя"/></form></ui>

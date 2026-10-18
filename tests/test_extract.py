@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -187,6 +188,7 @@ def test_cpp_doxygen_printf_raw_and_machine_literals() -> None:
     assert all("@brief" not in value for value in values)
     assert "Не удалось прочитать %s: %d" in values
     assert "Не удалось открыть %s" in values
+    assert "Не удалось открыть файл." in values
     assert "ACK" not in values
     protected = _protection_texts(source, result.fragments)
     assert {"%s", "%d"}.issubset(protected)
@@ -278,6 +280,8 @@ def test_powershell_comment_help_messages_and_here_strings() -> None:
     assert result.language == "powershell"
     assert result.partial is False
     assert "Описание команды для пользователя." in values
+    assert "Временное решение" in values
+    assert not any(value.endswith("#>") for value in values)
     assert not any(value.startswith(".SYNOPSIS") for value in values)
     assert "Не удалось открыть $Path" in values
     assert "Не удалось повторить чтение для $Path" in values
@@ -428,7 +432,12 @@ def test_structured_extractors_require_selectors_and_keep_exact_source_values() 
             ".json": ("$.ui.message", "$.ui.protocol"),
             ".yaml": ("$.ui.message", "$.ui.details"),
             ".toml": ("$.ui.message", "$.ui.protocol"),
-            ".xml": ("$.ui.message", "$.ui.button.@title", "$.ui.item[1]"),
+            ".xml": (
+                "$.ui.message",
+                "$.ui.button.@title",
+                "$.ui.item[1]",
+                "$.ui.form.input.@placeholder",
+            ),
         }
     )
     expected = {
@@ -439,7 +448,7 @@ def test_structured_extractors_require_selectors_and_keep_exact_source_values() 
             "Повторите попытку.",
         ],
         "sample.toml": ["Не удалось открыть {Path}"],
-        "sample.xml": ["Не удалось открыть {Path}", "Продолжить", "Два"],
+        "sample.xml": ["Не удалось открыть {Path}", "Продолжить", "Два", "Введите имя"],
     }
     for filename, values in expected.items():
         source = _source(filename)
@@ -804,6 +813,57 @@ def test_extract_classifies_adapter_value_error_as_extractor_failure(
     assert result.documents[0].status == "error"
     assert result.documents[0].reason == "extractor_failure"
     assert result.documents[0].diagnostics == ["extractor_failure"]
+
+
+def test_extract_preserves_scanner_error_reason_in_diagnostics(
+    tmp_path: Path, isolated_appdata: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from language_review import extraction
+
+    source = tmp_path / "message.txt"
+    source.write_text("Сообщение.\n", encoding="utf-8")
+    config = load_config()
+    scanned = scan_paths([str(source)], config)
+    scanned.files[0] = replace(scanned.files[0], status="error", reason="io_error")
+    monkeypatch.setattr(extraction, "scan_paths", lambda *_args, **_kwargs: scanned)
+
+    result = extract_paths([str(source)], config)
+
+    assert result.documents[0].status == "error"
+    assert result.documents[0].reason == "scan_error"
+    assert result.documents[0].diagnostics == ["scan_error", "io_error"]
+
+
+def test_extract_classifies_fragment_source_mismatch_as_error(
+    tmp_path: Path, isolated_appdata: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from language_review import extraction
+
+    source = tmp_path / "message.txt"
+    source.write_text("Исходный текст.\n", encoding="utf-8")
+    config = load_config()
+    scanned = scan_paths([str(source)], config)
+    monkeypatch.setattr(extraction, "scan_paths", lambda *_args, **_kwargs: scanned)
+    invalid_fragment = FragmentDraft(
+        kind="message",
+        context="plain_text",
+        text="Подменённый текст",
+        start_char=0,
+        end_char=5,
+    )
+    monkeypatch.setattr(
+        extraction,
+        "_adapt",
+        lambda *_args, **_kwargs: ("text", "txt", [invalid_fragment], [], False, False),
+    )
+
+    result = extract_paths([str(source)], config)
+
+    assert result.documents[0].status == "error"
+    assert result.documents[0].reason == "fragment_source_mismatch"
+    assert result.documents[0].diagnostics == ["fragment_source_mismatch"]
+    assert result.documents[0].fragments == []
+    assert json.loads(extract_json(result))["documents"][0]["reason"] == "fragment_source_mismatch"
 
 
 def test_duplicate_input_has_its_own_root_identity_and_skipped_document(

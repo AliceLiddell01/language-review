@@ -454,7 +454,7 @@ def _xml_walk_element(
     if name is None or not element_path:
         return
     for child in element.named_children:
-        if child.type == "STag":
+        if child.type in {"STag", "EmptyElemTag"}:
             for attribute in child.named_children:
                 if attribute.type != "Attribute":
                     continue

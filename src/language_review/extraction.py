@@ -204,6 +204,8 @@ def extract_paths(
             document.status = "error"
             document.reason = "scan_error"
             document.diagnostics.append("scan_error")
+            if record.reason:
+                document.diagnostics.append(record.reason)
             documents.append(document)
             continue
         if record.status != "selected":
@@ -229,6 +231,18 @@ def extract_paths(
         except Exception:
             document.status = "error"
             document.reason = "extractor_failure"
+            document.diagnostics.append(document.reason)
+            documents.append(document)
+            continue
+        if any(
+            fragment.start_char < 0
+            or fragment.start_char > fragment.end_char
+            or fragment.end_char > len(source.text)
+            or fragment.text != source.source_text(fragment.start_char, fragment.end_char)
+            for fragment in fragments
+        ):
+            document.status = "error"
+            document.reason = "fragment_source_mismatch"
             document.diagnostics.append(document.reason)
             documents.append(document)
             continue

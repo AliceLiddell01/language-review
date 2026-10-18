@@ -452,6 +452,12 @@ def _comment_views(source: SourceMap, node: Node, language: str) -> tuple[bool, 
             and source.text[content_end - 2 : content_end] == "*/"
         ):
             content_end -= 2
+        if (
+            language == "powershell"
+            and content_end >= content_start + 2
+            and source.text[content_end - 2 : content_end] == "#>"
+        ):
+            content_end -= 2
         if is_doc and language in {"rust", "c", "cpp", "csharp"}:
             comment_body = source.text[content_start:content_end]
             directive = re.match(
@@ -619,19 +625,6 @@ def _comment_fragments(
                     diagnostics.append("documentation_markup_parse_error")
                 node_index = next_index
                 continue
-        if language == "csharp" and is_doc:
-            combined = "\n".join(view.text for view in views)
-            if "<" in combined and ">" in combined:
-                xml_fragments = _xml_doc_fragments(
-                    source, _join_comment_views(source, views), context
-                )
-                if xml_fragments is not None:
-                    fragments.extend(xml_fragments)
-                    node_index += 1
-                    continue
-                diagnostics.append("documentation_markup_parse_error")
-                node_index += 1
-                continue
         for view in views:
             text = view.text
             if _comment_is_directive(text) or _is_machine_literal(text):
@@ -695,7 +688,7 @@ def _call_name(call: Node, language: str) -> str:
 
 
 def _call_leaf(name: str) -> str:
-    return re.split(r"::|[.:!]+", name)[-1].rstrip("!") or "unknown"
+    return re.split(r"::|->|[.:!]+", name)[-1].rstrip("!") or "unknown"
 
 
 def _call_matches(name: str, custom_calls: Sequence[str]) -> bool:

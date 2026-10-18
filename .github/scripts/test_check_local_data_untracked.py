@@ -44,12 +44,12 @@ class LocalDataGitGuardTests(unittest.TestCase):
         self.assertEqual(validate_local_data(self.root), [])
 
     def test_force_added_secret_is_rejected_without_reading_its_contents(self):
-        secret = "private-token-must-not-appear-in-diagnostics"
-        (self.root / ".env").write_text(secret, encoding="utf-8")
+        file_contents = "локальные тестовые данные"
+        (self.root / ".env").write_text(file_contents, encoding="utf-8")
         self.git_add(".env", force=True)
         errors = validate_local_data(self.root)
         self.assertTrue(any(".env" in error for error in errors))
-        self.assertNotIn(secret, "\n".join(errors))
+        self.assertNotIn(file_contents, "\n".join(errors))
 
     def test_force_added_personal_toml_is_rejected(self):
         (self.root / "user.local.toml").write_text("token = 'private'\n", encoding="utf-8")

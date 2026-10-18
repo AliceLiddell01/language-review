@@ -146,10 +146,15 @@ class LoadedConfig:
                 dict.fromkeys((*settings.message_calls, *overrides["message_calls"]))
             )
         settings = replace(settings, **overrides)
+        profile_sources = self.profile_sources.get(profile_name, {})
         for key in profile.extract_overrides:
-            sources[key] = self.profile_sources.get(profile_name, {}).get(
-                f"extract.{key}", f"профиль: {profile_name}"
-            )
+            if key == "selectors":
+                for extension in profile.extract_overrides["selectors"]:
+                    sources[f"selectors.{extension}"] = profile_sources.get(
+                        f"extract.selectors.{extension}", f"профиль: {profile_name}"
+                    )
+            else:
+                sources[key] = profile_sources.get(f"extract.{key}", f"профиль: {profile_name}")
         return settings, sources
 
     def as_mapping(self, profile_name: str | None = None) -> dict[str, Any]:

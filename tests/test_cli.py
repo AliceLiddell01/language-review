@@ -104,3 +104,44 @@ def test_version_module_entrypoint_and_config_show(tmp_path: Path, isolated_appd
     assert mapping["scan"]["respect_gitignore"]["value"] is True
     assert mapping["scan"]["respect_gitignore"]["source"] == "по умолчанию"
     assert "findings" not in mapping
+
+
+def test_config_show_profile_reports_selector_sources(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    user_path = isolated_appdata / "language-review" / "config.toml"
+    user_path.parent.mkdir(parents=True)
+    user_path.write_text('[extract.selectors]\n".json" = ["$.ui.base"]\n', encoding="utf-8")
+    explicit = tmp_path / "explicit.toml"
+    explicit.write_text(
+        """
+[profiles.readable_json]
+match_paths = ["*.json"]
+
+[profiles.readable_json.extract.selectors]
+".json" = ["$.ui.message"]
+".yaml" = ["$.ui.message"]
+""",
+        encoding="utf-8",
+    )
+
+    process = _run(
+        [
+            "--config",
+            str(explicit),
+            "config",
+            "show",
+            "--profile",
+            "readable_json",
+            "--format",
+            "json",
+        ],
+        isolated_appdata,
+    )
+
+    assert process.returncode == 0
+    selectors = json.loads(process.stdout)["extract"]["selectors"]
+    assert selectors[".json"]["value"] == ["$.ui.message"]
+    assert selectors[".json"]["source"].endswith(str(explicit))
+    assert selectors[".yaml"]["value"] == ["$.ui.message"]
+    assert selectors[".yaml"]["source"].endswith(str(explicit))

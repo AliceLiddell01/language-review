@@ -11,10 +11,14 @@ if (-not $tempRoot.StartsWith($tempBase, [StringComparison]::OrdinalIgnoreCase))
     throw 'Временный путь smoke-проверки вышел за системный каталог временных файлов.'
 }
 $previousAppData = $env:APPDATA
+$previousPythonIOEncoding = $env:PYTHONIOENCODING
+$previousOutputEncoding = [Console]::OutputEncoding
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
 $env:APPDATA = Join-Path $tempRoot 'appdata'
 New-Item -ItemType Directory -Path $env:APPDATA | Out-Null
 try {
+    $env:PYTHONIOENCODING = 'utf-8'
+    [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
     $distributionDirectory = Join-Path $tempRoot 'dist'
     New-Item -ItemType Directory -Path $distributionDirectory | Out-Null
     Push-Location $projectRoot
@@ -100,6 +104,8 @@ try {
 }
 finally {
     $env:APPDATA = $previousAppData
+    $env:PYTHONIOENCODING = $previousPythonIOEncoding
+    [Console]::OutputEncoding = $previousOutputEncoding
     $finalTemp = [IO.Path]::GetFullPath($tempRoot)
     if ($finalTemp.StartsWith($tempBase, [StringComparison]::OrdinalIgnoreCase)) {
         Remove-Item -LiteralPath $finalTemp -Recurse -Force

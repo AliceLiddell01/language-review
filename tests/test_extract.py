@@ -98,6 +98,20 @@ def test_csharp_extraction_handles_xml_interpolated_raw_and_verbatim_contexts() 
     }.issubset(_protection_texts(source, result.fragments))
 
 
+def test_csharp_chained_message_call_uses_outer_arguments() -> None:
+    source = SourceMap.create(
+        "class Example { void Run(Context ctx) { "
+        'Log.ForContext(ctx).Error("Не удалось выполнить."); } }'.encode(),
+        "utf-8",
+        None,
+    )
+
+    result = extract_code(source, ".cs", ExtractSettings())
+
+    assert result.partial is False
+    assert [fragment.text for fragment in result.fragments] == ["Не удалось выполнить."]
+
+
 def test_cpp_doxygen_printf_raw_and_machine_literals() -> None:
     source = _source("sample.cpp")
     result = extract_code(source, ".cpp", ExtractSettings())
@@ -339,6 +353,20 @@ def test_structured_escape_sequences_remain_protected() -> None:
     assert toml_partial is False
     assert "\\U0001F600" in _protection_texts(toml_source, toml_fragments)
     assert "\\\n  " in _protection_texts(toml_source, toml_fragments)
+
+
+def test_json_strings_keep_text_after_escapes_and_allow_empty_keys() -> None:
+    raw = r'{"":{"ignored":"Значение"},"ui":{"message":"Первая\nвторая \"часть\""}}'
+    source = SourceMap.create(raw.encode("utf-8"), "utf-8", None)
+    settings = ExtractSettings(selectors={".json": ("$.ui.message",)})
+
+    _language, fragments, diagnostics, partial = extract_structured(source, ".json", settings)
+
+    assert diagnostics == []
+    assert partial is False
+    assert len(fragments) == 1
+    assert fragments[0].text == r"Первая\nвторая \"часть\""
+    assert {"\\n", '\\"'} <= _protection_texts(source, fragments)
 
 
 def test_yaml_flow_mappings_extract_selected_values() -> None:

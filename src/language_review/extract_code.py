@@ -700,9 +700,9 @@ def _within(node: Node, container: Node) -> bool:
 
 def _is_first_string_argument(container: Node, call: Node, language: str) -> bool:
     if language in {"csharp", "cpp", "c"}:
-        argument_lists = [item for item in _walk(call) if item.type == "argument_list"]
-        if argument_lists:
-            arguments = list(argument_lists[0].named_children)
+        argument_list = call.child_by_field_name("arguments")
+        if argument_list is not None and argument_list.type == "argument_list":
+            arguments = list(argument_list.named_children)
             if language == "csharp":
                 arguments = [item for item in arguments if item.type == "argument"]
             if arguments:

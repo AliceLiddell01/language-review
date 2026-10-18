@@ -84,10 +84,10 @@ def _has_error_ancestor(node: Node) -> bool:
 
 def _string_content_span(source: SourceMap, node: Node, language: str) -> tuple[int, int] | None:
     if language == "json":
-        content = next(
-            (child for child in node.named_children if child.type == "string_content"), None
-        )
-        return _node_span(source, content) if content is not None else None
+        start, end = _node_span(source, node)
+        if end - start < 2:
+            return None
+        return start + 1, end - 1
     if language == "yaml":
         if node.type in {"single_quote_scalar", "double_quote_scalar"}:
             start, end = _node_span(source, node)

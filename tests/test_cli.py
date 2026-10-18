@@ -145,3 +145,28 @@ match_paths = ["*.json"]
     assert selectors[".json"]["source"].endswith(str(explicit))
     assert selectors[".yaml"]["value"] == ["$.ui.message"]
     assert selectors[".yaml"]["source"].endswith(str(explicit))
+
+
+def test_extract_report_example_matches_real_cli_output(isolated_appdata: Path) -> None:
+    fixtures = Path(__file__).parent / "fixtures" / "extract"
+    process = _run(
+        [
+            "--config",
+            str(fixtures / "example-config.toml"),
+            "extract",
+            str(fixtures / "sample.json"),
+            "--format",
+            "json",
+        ],
+        isolated_appdata,
+    )
+
+    assert process.returncode == 0
+    assert process.stderr == ""
+    actual = json.loads(process.stdout)
+    expected = json.loads(
+        (Path(__file__).parents[1] / "docs" / "extract-report.example.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert actual == expected

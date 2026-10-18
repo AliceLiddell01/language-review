@@ -51,6 +51,15 @@ MESSAGE_CALLS = {
     "write-output",
     "write-warning",
 }
+CSHARP_LOG_MESSAGE_CALLS = {
+    "log",
+    "logcritical",
+    "logdebug",
+    "logerror",
+    "loginformation",
+    "logtrace",
+    "logwarning",
+}
 CONTAINER_TYPES = {
     "string_literal",
     "raw_string_literal",
@@ -608,7 +617,7 @@ def _comment_fragments(
                     diagnostics.append("documentation_markup_parse_error")
                 node_index = next_index
                 continue
-        if is_doc:
+        if language == "csharp" and is_doc:
             combined = "\n".join(view.text for view in views)
             if "<" in combined and ">" in combined:
                 xml_fragments = _xml_doc_fragments(
@@ -699,7 +708,7 @@ def _within(node: Node, container: Node) -> bool:
     return container.start_byte <= node.start_byte and node.end_byte <= container.end_byte
 
 
-def _is_first_string_argument(container: Node, call: Node, language: str) -> bool:
+def _is_message_string_argument(container: Node, call: Node, language: str) -> bool:
     if language in {"csharp", "cpp", "c"}:
         argument_list = call.child_by_field_name("arguments")
         if argument_list is not None and argument_list.type == "argument_list":
@@ -707,13 +716,49 @@ def _is_first_string_argument(container: Node, call: Node, language: str) -> boo
             if language == "csharp":
                 arguments = [item for item in arguments if item.type == "argument"]
             if arguments:
-                call_leaf = _call_leaf(_call_name(call, language))
+                call_leaf = _call_leaf(_call_name(call, language)).lower()
+                if language == "csharp" and call_leaf in CSHARP_LOG_MESSAGE_CALLS:
+                    for argument in arguments:
+                        direct_strings = [
+                            item for item in argument.named_children if item.type in CONTAINER_TYPES
+                        ]
+                        if direct_strings:
+                            return any(_within(container, item) for item in direct_strings)
+                    return False
                 target_index = {"fprintf": 1, "sprintf": 1, "snprintf": 2}.get(call_leaf, 0)
                 return target_index < len(arguments) and _within(container, arguments[target_index])
     if language == "rust":
         token_tree = next((item for item in _walk(call) if item.type == "token_tree"), None)
-        if token_tree is not None and token_tree.named_children:
-            return _within(container, token_tree.named_children[0])
+        if token_tree is not None:
+            groups: list[list[Node]] = []
+            group: list[Node] = []
+            for item in token_tree.children:
+                if item.type in {"(", ")"}:
+                    continue
+                if item.type == ",":
+                    if group:
+                        groups.append(group)
+                        group = []
+                else:
+                    group.append(item)
+            if group:
+                groups.append(group)
+            for arguments in groups:
+                if (
+                    len(arguments) > 1
+                    and arguments[0].type == "identifier"
+                    and arguments[1].type in {":", "="}
+                ):
+                    continue
+                strings = [
+                    candidate
+                    for argument in arguments
+                    for candidate in _walk(argument)
+                    if candidate.type in CONTAINER_TYPES and not _node_has_error_ancestor(candidate)
+                ]
+                if strings:
+                    return any(_within(container, candidate) for candidate in strings)
+            return False
     if language == "powershell":
         elements = next((item for item in _walk(call) if item.type == "command_elements"), None)
         if elements is not None:
@@ -721,6 +766,13 @@ def _is_first_string_argument(container: Node, call: Node, language: str) -> boo
                 item for item in elements.named_children if item.type != "command_argument_sep"
             ]
             if arguments:
+                for index, item in enumerate(arguments[:-1]):
+                    if item.type != "command_parameter":
+                        continue
+                    parameter = (item.text or b"").decode("utf-8", errors="replace")
+                    parameter_name = parameter.lstrip("-").split(":", 1)[0].casefold()
+                    if parameter_name in {"message", "object"}:
+                        return _within(container, arguments[index + 1])
                 return _within(container, arguments[0])
     candidates = [
         item
@@ -912,8 +964,7 @@ def _extract_strings(
         if call.has_error:
             ambiguous += 1
             continue
-        if not _is_first_string_argument(container, call, language):
-            ambiguous += 1
+        if not _is_message_string_argument(container, call, language):
             continue
         fragments = _container_text_fragments(source, container, call, language)
         if fragments is None:

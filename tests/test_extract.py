@@ -68,6 +68,38 @@ def test_rust_extraction_keeps_docs_format_fields_and_ignores_machine_values() -
         assert source.raw[start.byte_offset : end.byte_offset].decode("utf-8") == fragment.text
 
 
+def test_rust_documentation_with_generic_types_is_not_parsed_as_xml() -> None:
+    source = SourceMap.create(
+        b"/// Returns Vec<String> or Option<u8>.\nfn result() {}\n", "utf-8", None
+    )
+
+    result = extract_code(source, ".rs", ExtractSettings())
+
+    assert result.partial is False
+    assert "documentation_markup_parse_error" not in result.diagnostics
+    assert [item.text for item in result.fragments] == ["Returns Vec<String> or Option<u8>."]
+
+
+def test_rust_logging_macros_skip_fields_and_select_the_message() -> None:
+    source = SourceMap.create(
+        (
+            'fn run(user: &str) { error!(target: "app", "Не удалось открыть {}", user); '
+            'info!(user = %user, "Повторите попытку."); }'
+        ).encode(),
+        "utf-8",
+        None,
+    )
+
+    result = extract_code(source, ".rs", ExtractSettings())
+
+    assert result.partial is False
+    assert result.diagnostics == []
+    assert [item.text for item in result.fragments] == [
+        "Не удалось открыть {}",
+        "Повторите попытку.",
+    ]
+
+
 def test_csharp_extraction_handles_xml_interpolated_raw_and_verbatim_contexts() -> None:
     source = _source("sample.cs")
     result = extract_code(source, ".cs", ExtractSettings())
@@ -112,6 +144,21 @@ def test_csharp_chained_message_call_uses_outer_arguments() -> None:
     assert [fragment.text for fragment in result.fragments] == ["Не удалось выполнить."]
 
 
+def test_csharp_logger_extracts_message_after_exception_argument() -> None:
+    source = SourceMap.create(
+        "class Example { void Run(ILogger logger, Exception ex, string path) { "
+        'logger.LogError(ex, "Не удалось открыть {Path}", path); } }'.encode(),
+        "utf-8",
+        None,
+    )
+
+    result = extract_code(source, ".cs", ExtractSettings())
+
+    assert result.partial is False
+    assert result.diagnostics == []
+    assert [item.text for item in result.fragments] == ["Не удалось открыть {Path}"]
+
+
 def test_cpp_doxygen_printf_raw_and_machine_literals() -> None:
     source = _source("sample.cpp")
     result = extract_code(source, ".cpp", ExtractSettings())
@@ -148,6 +195,16 @@ def test_c_source_comments_messages_and_non_user_literals() -> None:
     assert "Не удалось открыть %s" in values
     assert "ACK" not in values
     assert "%s" in _protection_texts(source, result.fragments)
+
+
+def test_additional_format_string_arguments_do_not_make_c_partial() -> None:
+    source = SourceMap.create(b'void run() { printf("%s", "literal"); }', "utf-8", None)
+
+    result = extract_code(source, ".c", ExtractSettings())
+
+    assert result.partial is False
+    assert result.diagnostics == []
+    assert [item.text for item in result.fragments] == ["%s"]
 
 
 def test_fprintf_extracts_the_format_argument() -> None:
@@ -221,6 +278,18 @@ def test_powershell_comment_help_messages_and_here_strings() -> None:
     assert "Literal $Path remains literal" in [item.text for item in module_result.fragments]
 
 
+def test_powershell_write_error_extracts_named_message_argument() -> None:
+    source = SourceMap.create(
+        'Write-Error -Message "Не удалось открыть $Path"'.encode(), "utf-8", None
+    )
+
+    result = extract_code(source, ".ps1", ExtractSettings())
+
+    assert result.partial is False
+    assert result.diagnostics == []
+    assert [item.text for item in result.fragments] == ["Не удалось открыть $Path"]
+
+
 def test_markdown_maps_duplicate_cells_and_protects_markup() -> None:
     source = _source("sample.md")
     fragments, diagnostics = extract_markdown(source)
@@ -249,7 +318,7 @@ def test_markdown_maps_duplicate_cells_and_protects_markup() -> None:
         assert source.raw[start.byte_offset : end.byte_offset].decode("utf-8") == fragment.text
 
 
-def test_markdown_ambiguous_mapping_is_partial_instead_of_guessing() -> None:
+def test_markdown_repeated_text_maps_to_distinct_ranges() -> None:
     raw = b"# Same\n\nSame\n"
     source = SourceMap.create(raw, "utf-8", None)
     fragments, diagnostics = extract_markdown(source)
@@ -257,6 +326,41 @@ def test_markdown_ambiguous_mapping_is_partial_instead_of_guessing() -> None:
     assert diagnostics == []
     assert [fragment.text for fragment in fragments] == ["Same", "Same"]
     assert fragments[0].start_char != fragments[1].start_char
+
+
+def test_ambiguous_markdown_mapping_produces_partial_document(
+    tmp_path: Path, isolated_appdata: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from language_review import extract_docs
+
+    source_map = SourceMap.create(b"Original source.\n", "utf-8", None)
+    token = extract_docs.Token("inline", "", 0)
+    token.map = [0, 1]
+    token.content = "Text absent from the source"
+    assert extract_docs._mapped_inline_lines(source_map, token, {}) is None
+
+    source = tmp_path / "ambiguous.md"
+    source.write_text("Проверяем точное сопоставление.\n", encoding="utf-8")
+    original_mapping = extract_docs._mapped_inline_lines
+    mapping_results = []
+
+    def force_ambiguous_mapping(source_map, inline_token, line_cursors):
+        original_content = inline_token.content
+        inline_token.content = "Text absent from the source"
+        try:
+            mapped = original_mapping(source_map, inline_token, line_cursors)
+        finally:
+            inline_token.content = original_content
+        mapping_results.append(mapped)
+        return mapped
+
+    monkeypatch.setattr(extract_docs, "_mapped_inline_lines", force_ambiguous_mapping)
+
+    result = extract_paths([str(source)], load_config())
+
+    assert mapping_results == [None]
+    assert result.documents[0].status == "partial"
+    assert result.documents[0].diagnostics == ["ambiguous_markdown_source_mapping"]
 
 
 def test_plain_rst_and_asciidoc_keep_daily_prose_and_skip_literal_blocks() -> None:

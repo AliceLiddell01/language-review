@@ -94,6 +94,17 @@ class Profile:
     extract_overrides: dict[str, Any]
 
 
+def _combine_sources(*sources: str | None) -> str:
+    parts = [
+        part
+        for source in sources
+        if source is not None and source != "по умолчанию"
+        for part in source.split("; ")
+        if part
+    ]
+    return "; ".join(dict.fromkeys(parts)) or "по умолчанию"
+
+
 @dataclass(frozen=True)
 class LoadedConfig:
     scan: ScanSettings
@@ -137,6 +148,8 @@ class LoadedConfig:
         if profile is None:
             raise ConfigurationError(f"Профиль «{profile_name}» не найден.")
         overrides = dict(profile.extract_overrides)
+        base_message_calls = settings.message_calls
+        profile_message_calls = tuple(overrides.get("message_calls", ()))
         if "selectors" in overrides:
             selectors = settings.selector_map()
             selectors.update(overrides.pop("selectors"))
@@ -153,6 +166,14 @@ class LoadedConfig:
                     sources[f"selectors.{extension}"] = profile_sources.get(
                         f"extract.selectors.{extension}", f"профиль: {profile_name}"
                     )
+            elif key == "message_calls":
+                profile_source = profile_sources.get(
+                    "extract.message_calls", f"профиль: {profile_name}"
+                )
+                sources[key] = _combine_sources(
+                    sources.get(key) if base_message_calls else None,
+                    profile_source if profile_message_calls else None,
+                )
             else:
                 sources[key] = profile_sources.get(f"extract.{key}", f"профиль: {profile_name}")
         return settings, sources
@@ -336,7 +357,7 @@ def _validate_scan(raw: Any, label: str, *, partial: bool) -> dict[str, Any]:
 
 def _validate_selector(selector: str, label: str) -> str:
     if not selector.startswith("$"):
-        raise ConfigurationError(f"Селектор {label} должен начинаться с символа $. ")
+        raise ConfigurationError(f"Селектор {label} должен начинаться с символа $.")
     index = 1
     while index < len(selector):
         if selector[index] == ".":
@@ -590,7 +611,12 @@ def _merge_file(
                         )
                     else:
                         extract_target[key] = value
-            profile_sources.setdefault(name, {}).update(new_sources.get(name, {}))
+            source_target = profile_sources.setdefault(name, {})
+            for key, source in new_sources.get(name, {}).items():
+                if key == "extract.message_calls":
+                    source_target[key] = _combine_sources(source_target.get(key), source)
+                else:
+                    source_target[key] = source
     if "doctor" in document:
         values = _validate_doctor(document["doctor"], f"{label}.doctor")
         doctor.update(values)

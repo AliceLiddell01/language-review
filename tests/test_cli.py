@@ -10,6 +10,7 @@ from pathlib import Path
 def _run(args: list[str], appdata: Path) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     environment["APPDATA"] = str(appdata)
+    environment["XDG_CONFIG_HOME"] = str(appdata)
     environment["PYTHONUTF8"] = "1"
     return subprocess.run(
         [sys.executable, "-m", "language_review", *args],
@@ -124,6 +125,13 @@ match_paths = ["*.json"]
 """,
         encoding="utf-8",
     )
+
+    base = _run(["--config", str(explicit), "config", "show", "--format", "json"], isolated_appdata)
+    assert base.returncode == 0
+    base_selectors = json.loads(base.stdout)["extract"]["selectors"]
+    assert base_selectors[".json"]["value"] == ["$.ui.base"]
+    assert base_selectors[".json"]["source"].endswith(str(user_path))
+    assert ".yaml" not in base_selectors
 
     process = _run(
         [

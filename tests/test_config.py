@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from language_review.config import load_config
 from language_review.errors import ConfigurationError
 
@@ -60,6 +62,48 @@ priority = 20
     assert "Cargo.toml" in mapping["profiles"]["rust"]["project_markers"]["value"]
 
 
+def test_profile_message_call_sources_include_all_contributors(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    user_path = isolated_appdata / "language-review" / "config.toml"
+    user_path.parent.mkdir(parents=True)
+    _write(
+        user_path,
+        """
+[extract]
+message_calls = ["UserBaseLogger"]
+
+[profiles.logging.extract]
+message_calls = ["UserProfileLogger"]
+""",
+    )
+    explicit = _write(
+        tmp_path / "explicit.toml",
+        """
+[extract]
+message_calls = ["ExplicitBaseLogger"]
+
+[profiles.logging.extract]
+message_calls = ["ExplicitProfileLogger"]
+""",
+    )
+
+    mapping = load_config(explicit).as_mapping("logging")
+
+    effective = mapping["extract"]["message_calls"]
+    profile = mapping["profiles"]["logging"]["extract"]["message_calls"]
+    assert effective["value"] == [
+        "ExplicitBaseLogger",
+        "UserProfileLogger",
+        "ExplicitProfileLogger",
+    ]
+    assert str(explicit) in effective["source"]
+    assert str(user_path) in effective["source"]
+    assert profile["value"] == ["UserProfileLogger", "ExplicitProfileLogger"]
+    assert str(user_path) in profile["source"]
+    assert str(explicit) in profile["source"]
+
+
 def test_invalid_unknown_values_and_missing_profile_fail(
     tmp_path: Path, isolated_appdata: Path
 ) -> None:
@@ -74,6 +118,19 @@ def test_invalid_unknown_values_and_missing_profile_fail(
             pass
         else:
             raise AssertionError(f"Ожидалась ошибка конфигурации: {path}")
+
+
+def test_invalid_selector_message_has_no_trailing_whitespace(tmp_path: Path) -> None:
+    invalid = _write(
+        tmp_path / "invalid-selector.toml",
+        '[extract.selectors]\n".json" = ["ui.message"]\n',
+    )
+
+    with pytest.raises(ConfigurationError) as error:
+        load_config(invalid)
+
+    assert str(error.value).endswith("должен начинаться с символа $.")
+    assert not str(error.value).endswith(" ")
 
 
 def test_url_secrets_are_redacted_in_effective_configuration(

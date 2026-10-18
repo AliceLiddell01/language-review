@@ -607,3 +607,47 @@ engines = ["languagetool"]
     assert "«ошыбка»" in process.stdout
     assert "варианты (требуют ручной проверки): «ошибка»" in process.stdout
     assert "предложения не применялись к исходникам" in process.stdout
+
+
+def test_llm_splits_long_text_and_refuses_oversized_sentences(
+    tmp_path: Path, isolated_appdata: Path, json_server: JsonServer
+) -> None:
+    def llm(items: list[dict[str, Any]]) -> str:
+        found = [item for item in items if "ошыбкой" in item["text"]]
+        return _findings(*(_llm_finding(item["id"], "ошыбкой", "ошибкой") for item in found))
+
+    json_server.responder = llama_responder(llm)
+    sentence = "Это обычное предложение для проверки разбиения текста на части. "
+    long_text = sentence * 6 + "Последнее предложение с ошыбкой."
+    oversized = "Слово " * 120
+    source = tmp_path / "notes.txt"
+    source.write_text(f"{long_text}\n\n{oversized.strip()}.\n", encoding="utf-8")
+    config = _config(
+        tmp_path,
+        f"""[check]
+engines = ["llm"]
+[check.llm]
+batch_chars = 200
+[check.llm.llama_cpp]
+endpoint = "{json_server.url}"
+""",
+    )
+
+    code, report, _stderr = _report(source, config, isolated_appdata)
+
+    assert code == 4
+    document = report["documents"][0]
+    [finding] = document["findings"]
+    assert finding["range"]["start"]["column"] == long_text.index("ошыбкой") + 1
+    checks = [item["checks"]["llm"] for item in document["fragments"]]
+    assert checks == [
+        {"status": "checked", "reason": None},
+        {"status": "skipped", "reason": "unit_too_large"},
+    ]
+    sent = [
+        json.loads(item.body["messages"][1]["content"])["items"]
+        for item in json_server.requests
+        if item.path == "/v1/chat/completions"
+    ]
+    assert all(len(entry["text"]) <= 400 for items in sent for entry in items)
+    assert all("Слово Слово" not in entry["text"] for items in sent for entry in items)

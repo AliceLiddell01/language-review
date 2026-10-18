@@ -43,6 +43,8 @@ MAX_EXCERPT_CHARS = 300
 MAX_REPLACEMENT_CHARS = 600
 MAX_EXPLANATION_CHARS = 1000
 CONSECUTIVE_FAILURE_LIMIT = 3
+# Часть текста не длиннее двух пакетов: иначе запрос превысил бы заданный размер.
+MAX_CHUNK_FACTOR = 2
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+|\n+")
 
 SYSTEM_PROMPT = """\
@@ -501,16 +503,22 @@ class LlmEngine:
     def run(self, units: Sequence[CheckUnit], run: EngineRun) -> Iterator[UnitOutcome]:
         outcomes: dict[int, UnitOutcome] = {}
         pending: dict[int, int] = {}
+        sendable: list[CheckUnit] = []
+        limit = MAX_CHUNK_FACTOR * self.settings.llm_batch_chars
         for unit in units:
+            chunks = split_text(unit.views["llm"].text, self.settings.llm_batch_chars)
+            if any(len(text) > limit for _offset, text in chunks):
+                # Предложение без допустимой границы разбиения не отправляется модели целиком.
+                yield UnitOutcome(unit.index, "skipped", "unit_too_large")
+                continue
             outcomes[unit.index] = UnitOutcome(unit.index, "checked")
-            pending[unit.index] = len(
-                split_text(unit.views["llm"].text, self.settings.llm_batch_chars)
-            )
-        for unit in units:
-            if pending[unit.index] == 0:
+            pending[unit.index] = len(chunks)
+            if chunks:
+                sendable.append(unit)
+            else:
                 yield outcomes[unit.index]
         failures = 0
-        for batch in self._batches(units):
+        for batch in self._batches(sendable):
             if failures >= CONSECUTIVE_FAILURE_LIMIT:
                 reason: str | None = "engine_aborted"
             else:

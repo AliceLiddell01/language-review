@@ -59,6 +59,14 @@ def _languagetool_config(tmp_path: Path, url: str) -> Path:
     )
 
 
+def _assert_no_local_path(report: dict[str, Any], tmp_path: Path) -> None:
+    serialized = json.dumps(report, ensure_ascii=False)
+    # json.dumps экранирует обратную косую черту, поэтому проверяем и сериализованную форму пути.
+    assert json.dumps(str(tmp_path), ensure_ascii=False)[1:-1] not in serialized
+    assert str(tmp_path) not in serialized
+    assert tmp_path.as_posix() not in serialized
+
+
 def _utf16(text: str, index: int) -> int:
     return len(text[:index].encode("utf-16-le")) // 2
 
@@ -183,7 +191,7 @@ def test_languagetool_pipeline_maps_utf16_offsets_and_rejects_placeholder_matche
     assert "ToString" not in sent and "{0}" not in sent
     assert source.read_bytes() == original
     # Отчёт можно передавать: в нём нет локальных путей к входам и конфигурации.
-    assert str(tmp_path) not in json.dumps(report, ensure_ascii=False)
+    _assert_no_local_path(report, tmp_path)
     assert report["configuration"]["sources"]["engines"] == "файл конфигурации"
 
 
@@ -564,7 +572,7 @@ def test_vale_project_terms_and_invalid_custom_configuration(
     code, report, _ = _report(source, config, isolated_appdata)
     assert code == 5
     assert report["engines"][0]["status"] == "unavailable"
-    assert str(tmp_path) not in json.dumps(report)
+    _assert_no_local_path(report, tmp_path)
 
 
 def test_missing_vale_program_is_controlled(tmp_path: Path, isolated_appdata: Path) -> None:

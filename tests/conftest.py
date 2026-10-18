@@ -37,6 +37,7 @@ class JsonServer:
     url: str
     requests: list[RecordedRequest] = field(default_factory=list)
     responder: Responder | None = None
+    errors: list[BaseException] = field(default_factory=list)
 
 
 def _decode_body(handler: BaseHTTPRequestHandler) -> Any:
@@ -60,8 +61,12 @@ def json_server() -> Iterator[JsonServer]:
         def _serve(self) -> None:
             request = RecordedRequest(self.command, self.path, _decode_body(self))
             state.requests.append(request)
-            assert state.responder is not None
-            status, payload = state.responder(request)
+            try:
+                assert state.responder is not None, "responder не задан"
+                status, payload = state.responder(request)
+            except BaseException as error:
+                state.errors.append(error)
+                raise
             body = payload if isinstance(payload, bytes) else json.dumps(payload).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
@@ -88,3 +93,5 @@ def json_server() -> Iterator[JsonServer]:
         server.shutdown()
         server.server_close()
         thread.join(timeout=3)
+    if state.errors:
+        raise state.errors[0]

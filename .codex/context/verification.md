@@ -18,9 +18,9 @@ uv run --locked pytest -n 8
 ## Проверки агентской и GitHub-инфраструктуры
 
 ```powershell
-python .github/scripts/check_skill_contracts.py
-python .github/scripts/check_local_data_untracked.py
-python -m unittest discover -s .github/scripts -p 'test_*.py'
+uv run --locked python .github/scripts/check_skill_contracts.py
+uv run --locked python .github/scripts/check_local_data_untracked.py
+uv run --locked python -m unittest discover -s .github/scripts -p 'test_*.py'
 python .github/scripts/check_pr_body.py --body-file путь\к\pr-body.md
 ```
 

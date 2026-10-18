@@ -31,7 +31,7 @@ class CheckUnit:
 
 @dataclass(frozen=True)
 class RawFinding:
-    """Замечание движка в координатах его вида (code points)."""
+    """Замечание движка в координатах его вида (кодовые точки Unicode)."""
 
     engine: str
     unit: int
@@ -152,6 +152,8 @@ class CheckDocument:
     extract: ExtractDocument
     status: str
     engines: tuple[str, ...]
+    # Эффективные настройки документа (профиль и CLI) в публичном виде для отчёта.
+    configuration: dict[str, Any] = field(default_factory=dict)
     units: list[CheckUnit] = field(default_factory=list)
     unit_status: dict[tuple[int, str], tuple[str, str | None]] = field(default_factory=dict)
     findings: list[Finding] = field(default_factory=list)

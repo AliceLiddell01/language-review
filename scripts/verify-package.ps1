@@ -151,7 +151,7 @@ try {
         }
         # Ожидаемый код 5 проверен выше; он не должен стать кодом завершения всего скрипта.
         $global:LASTEXITCODE = 0
-        Write-Output "${kind}: установка, entry point, python -m, scan, extract и check прошли."
+        Write-Output "${kind}: установка, точка входа, python -m, scan, extract и check прошли."
     }
 }
 finally {

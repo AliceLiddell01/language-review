@@ -272,8 +272,10 @@ def test_llm_rejects_invalid_quotes_placeholders_and_meaning_changes(
 
     json_server.responder = llama_responder(llm)
     source = tmp_path / "notes.txt"
+    # Второй абзац — второй элемент пакета: предел maxItems вмещает все восемь замечаний.
     source.write_text(
-        "Функция не изменяет файлы {path} и не обращается к сетю.\n", encoding="utf-8"
+        "Функция не изменяет файлы {path} и не обращается к сетю.\n\nВторой абзац.\n",
+        encoding="utf-8",
     )
     config = _config(
         tmp_path,
@@ -337,6 +339,116 @@ def test_llm_response_failures_are_not_clean_results(
     assert run["statistics"]["units_failed"] == 1
     assert report["documents"][0]["status"] == "unavailable"
     assert "Движок llm: error" in stderr
+
+
+_VALID = _llm_finding("t1", "текст", "текст.", category="style")
+
+
+@pytest.mark.parametrize("provider", ["llama_cpp", "ollama"])
+@pytest.mark.parametrize(
+    "findings",
+    [
+        pytest.param([{"item": "t1"}], id="missing-fields"),
+        pytest.param([{**_VALID, "severity": "high"}], id="extra-field"),
+        pytest.param([{**_VALID, "excerpt": 5}], id="wrong-type"),
+        pytest.param([{**_VALID, "replacement": ["текст"]}], id="wrong-replacement-type"),
+        pytest.param([{**_VALID, "excerpt": ""}], id="empty-excerpt"),
+        pytest.param([{**_VALID, "category": "poetry"}], id="unknown-category"),
+        pytest.param([{**_VALID, "confidence": "certain"}], id="unknown-confidence"),
+        pytest.param(["текст"], id="non-object-item"),
+        # Один элемент — предел четыре замечания (`maxItems` пакета).
+        pytest.param(
+            [{**_VALID, "explanation": f"Замечание {index}."} for index in range(5)],
+            id="too-many-findings",
+        ),
+        pytest.param([_VALID, {**_VALID, "confidence": 1}], id="valid-and-invalid"),
+    ],
+)
+def test_llm_schema_violation_in_any_finding_fails_the_batch(
+    tmp_path: Path,
+    isolated_appdata: Path,
+    json_server: JsonServer,
+    provider: str,
+    findings: list[Any],
+) -> None:
+    content = json.dumps({"findings": findings}, ensure_ascii=False)
+
+    def respond(request: RecordedRequest) -> tuple[int, Any]:
+        if request.path == "/api/version":
+            return 200, {"version": "0.0-stub"}
+        if request.path == "/api/tags":
+            return 200, {"models": [{"name": "gemma4:e4b", "model": "gemma4:e4b"}]}
+        if request.path == "/api/chat":
+            return 200, {"message": {"content": content}, "done_reason": "stop"}
+        return llama_responder(content)(request)
+
+    json_server.responder = respond
+    source = tmp_path / "notes.txt"
+    source.write_text("Корректный текст\n", encoding="utf-8")
+    config = _config(
+        tmp_path,
+        f"""[check]
+engines = ["llm"]
+[check.llm]
+provider = "{provider}"
+[check.llm.llama_cpp]
+endpoint = "{json_server.url}"
+[check.llm.ollama]
+endpoint = "{json_server.url}"
+""",
+    )
+
+    code, report, stderr = _report(source, config, isolated_appdata)
+
+    assert code == 5
+    assert report["status"] == "unavailable"
+    [run] = report["engines"]
+    assert run["status"] == "error"
+    assert "llm_schema_violation" in run["diagnostics"]
+    assert run["statistics"]["units_failed"] == 1
+    assert run["statistics"]["request_failures"] == 1
+    document = report["documents"][0]
+    assert document["status"] == "unavailable"
+    assert document["fragments"][0]["checks"]["llm"] == {
+        "status": "failed",
+        "reason": "llm_schema_violation",
+    }
+    # Корректная часть ответа с нарушением не публикуется как находка.
+    assert document["findings"] == [] and document["rejected"] == []
+    assert "Движок llm: error" in stderr
+
+
+def test_llm_structurally_valid_semantic_rejections_keep_unit_checked(
+    tmp_path: Path, isolated_appdata: Path, json_server: JsonServer
+) -> None:
+    json_server.responder = llama_responder(
+        _findings(
+            _llm_finding("t7", "текст", None),
+            _llm_finding("t1", "абзац", None),
+            _llm_finding("t1", "текст", None, explanation="   "),
+            _llm_finding("t1", "текст", "текст"),
+        )
+    )
+    source = tmp_path / "notes.txt"
+    source.write_text("Корректный текст\n", encoding="utf-8")
+    config = _config(
+        tmp_path,
+        f'[check]\nengines = ["llm"]\n[check.llm.llama_cpp]\nendpoint = "{json_server.url}"\n',
+    )
+
+    code, report, _stderr = _report(source, config, isolated_appdata)
+
+    assert code == 0
+    assert report["status"] == "clean"
+    assert report["engines"][0]["status"] == "ok"
+    document = report["documents"][0]
+    assert document["fragments"][0]["checks"]["llm"] == {"status": "checked", "reason": None}
+    assert sorted(item["reason"] for item in document["rejected"]) == [
+        "excerpt_not_found",
+        "replacement_identical",
+        "unknown_item",
+        "value_out_of_bounds",
+    ]
 
 
 def test_clean_text_and_both_llm_providers_share_prompt_and_schema(
@@ -424,6 +536,217 @@ model = "other-model"
     assert result.status == "unavailable"
     assert result.engines[0].diagnostics[0] == "model_not_found"
     assert not any(item.path == "/v1/chat/completions" for item in json_server.requests)
+
+
+WINDOWS_GGUF = r"C:\Users\someone\AppData\Local\models\gemma-4-E4B-it-Q4_K_M.gguf"
+POSIX_GGUF = "/home/someone/models/gemma-4-E4B-it-Q4_K_M.gguf"
+
+
+def _llama_models(entries: list[dict[str, Any]], findings: str) -> Any:
+    base = llama_responder(findings)
+
+    def respond(request: RecordedRequest) -> tuple[int, Any]:
+        if request.path == "/v1/models":
+            return 200, {"data": entries}
+        return base(request)
+
+    return respond
+
+
+@pytest.mark.parametrize(
+    ("model_id", "configured", "public"),
+    [
+        (WINDOWS_GGUF, None, "gemma-4-E4B-it-Q4_K_M.gguf"),
+        (POSIX_GGUF, None, "gemma-4-E4B-it-Q4_K_M.gguf"),
+        (WINDOWS_GGUF, WINDOWS_GGUF, "gemma-4-E4B-it-Q4_K_M.gguf"),
+        ("gemma-4-e4b", None, "gemma-4-e4b"),
+    ],
+)
+def test_llama_cpp_model_path_is_sent_but_not_published(
+    tmp_path: Path,
+    isolated_appdata: Path,
+    json_server: JsonServer,
+    model_id: str,
+    configured: str | None,
+    public: str,
+) -> None:
+    entries = [{"id": model_id, "meta": {"n_ctx": 8192}}]
+    if configured is not None:
+        entries.append({"id": "other-model"})
+    json_server.responder = _llama_models(entries, _findings(_llm_finding("t1", "фаил", "файл")))
+    source = tmp_path / "notes.txt"
+    source.write_text("Сохраните фаил.\n", encoding="utf-8")
+    model_line = "" if configured is None else f"model = {json.dumps(configured)}\n"
+    config = _config(
+        tmp_path,
+        f'[check]\nengines = ["llm"]\n[check.llm.llama_cpp]\nendpoint = "{json_server.url}"\n'
+        + model_line,
+    )
+
+    code, report, stderr = _report(source, config, isolated_appdata)
+    human = _run(["--config", str(config), "check", str(source)], isolated_appdata)
+
+    assert code == 1
+    [run] = report["engines"]
+    assert run["details"]["model"] == public
+    assert run["details"]["n_ctx"] == 8192
+    requests = [item for item in json_server.requests if item.path == "/v1/chat/completions"]
+    assert requests and {item.body["model"] for item in requests} == {model_id}
+    assert f"модель {public}" in human.stdout
+    for text in (json.dumps(report, ensure_ascii=False), stderr, human.stdout, human.stderr):
+        assert "someone" not in text and "models" not in text
+
+
+def test_llama_cpp_model_selection_errors_do_not_publish_paths(
+    tmp_path: Path, isolated_appdata: Path, json_server: JsonServer
+) -> None:
+    findings = '{"findings": []}'
+    source = tmp_path / "notes.txt"
+    source.write_text("Текст.\n", encoding="utf-8")
+    endpoint = (
+        f'[check]\nengines = ["llm"]\n[check.llm.llama_cpp]\nendpoint = "{json_server.url}"\n'
+    )
+
+    json_server.responder = _llama_models([{"id": WINDOWS_GGUF}, {"id": POSIX_GGUF}], findings)
+    code, report, stderr = _report(source, _config(tmp_path, endpoint), isolated_appdata)
+    assert code == 5
+    assert "model_not_selected" in report["engines"][0]["diagnostics"]
+    assert report["engines"][0]["details"]["model"] is None
+
+    json_server.responder = _llama_models([{"id": "gemma-4-e4b"}], findings)
+    missing = endpoint + f"model = {json.dumps(POSIX_GGUF)}\n"
+    code, missing_report, missing_stderr = _report(
+        source, _config(tmp_path, missing), isolated_appdata
+    )
+    assert code == 5
+    [run] = missing_report["engines"]
+    assert "model_not_found" in run["diagnostics"]
+    assert run["details"]["model"] == "gemma-4-E4B-it-Q4_K_M.gguf"
+    assert "gemma-4-E4B-it-Q4_K_M.gguf" in run["message"]
+    for text in (json.dumps([report, missing_report]), stderr, missing_stderr):
+        assert "someone" not in text
+    assert not any(item.path == "/v1/chat/completions" for item in json_server.requests)
+
+
+def test_document_configuration_reports_effective_profile_and_cli_settings(
+    tmp_path: Path, isolated_appdata: Path, json_server: JsonServer
+) -> None:
+    lt = languagetool_responder({"фаил": ["файл"]})
+
+    def llm(items: list[dict[str, Any]]) -> str:
+        return _findings(
+            *(
+                _llm_finding(item["id"], "фаил", "файл", category="style")
+                for item in items
+                if "фаил" in item["text"]
+            )
+        )
+
+    llama = llama_responder(llm)
+
+    def respond(request: RecordedRequest) -> tuple[int, Any]:
+        return lt(request) if request.path.startswith("/v2/") else llama(request)
+
+    json_server.responder = respond
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    (root / "docs" / "guide.md").write_text("Сохраните фаил.\n", encoding="utf-8")
+    (root / "notes.txt").write_text("Откройте фаил.\n", encoding="utf-8")
+    config = _config(
+        tmp_path,
+        f"""[check]
+engines = ["languagetool", "llm"]
+categories = ["spelling", "style"]
+terms = {{ "фреймворк" = "каркас" }}
+[check.languagetool]
+endpoint = "{json_server.url}"
+[check.llm.llama_cpp]
+endpoint = "{json_server.url}"
+[profiles.docs]
+match_paths = ["docs/**"]
+[profiles.docs.check]
+engines = ["llm"]
+categories = ["spelling"]
+terms = {{ "апдейт" = "обновление" }}
+""",
+    )
+
+    code, report, _stderr = _report(root, config, isolated_appdata)
+
+    assert code == 1
+    assert report["configuration"]["engines"] == ["languagetool", "llm"]
+    assert report["configuration"]["categories"] == ["spelling", "style"]
+    documents = {item["path"]: item for item in report["documents"]}
+    docs, notes = documents["docs/guide.md"], documents["notes.txt"]
+    assert docs["profile"] == "docs" and notes["profile"] is None
+    assert docs["configuration"] == {
+        "engines": ["llm"],
+        "categories": ["spelling"],
+        "terms_count": 2,
+        "sources": {
+            "engines": "профиль docs",
+            "categories": "профиль docs",
+            "terms": "файл конфигурации; профиль docs",
+        },
+    }
+    assert notes["configuration"] == {
+        "engines": ["languagetool", "llm"],
+        "categories": ["spelling", "style"],
+        "terms_count": 1,
+        "sources": {
+            "engines": "файл конфигурации",
+            "categories": "файл конфигурации",
+            "terms": "файл конфигурации",
+        },
+    }
+    # Отражённые настройки совпадают с примененными: замечание style отфильтровано
+    # только в профиле docs, LanguageTool не проверял документ профиля.
+    assert set(docs["fragments"][0]["checks"]) == {"llm"}
+    assert docs["findings"] == []
+    assert sorted(item["category"] for item in notes["findings"]) == ["spelling", "style"]
+    llm_run = next(item for item in report["engines"] if item["name"] == "llm")
+    assert llm_run["statistics"]["filtered"] == 1
+    prompts = {}
+    for item in json_server.requests:
+        if item.path == "/v1/chat/completions":
+            system, user = item.body["messages"]
+            prompts[json.loads(user["content"])["items"][0]["text"]] = system["content"]
+    assert "апдейт" in prompts["Сохраните фаил."] and "апдейт" not in prompts["Откройте фаил."]
+    assert "апдейт" not in json.dumps(report, ensure_ascii=False)
+    _assert_no_local_path(report, tmp_path)
+
+    _cli_code, overridden, _ = _report(
+        root, config, isolated_appdata, "--engine", "llm", "--category", "style"
+    )
+    for document in overridden["documents"]:
+        assert document["configuration"]["engines"] == ["llm"]
+        assert document["configuration"]["categories"] == ["style"]
+        assert document["configuration"]["sources"]["categories"] == "аргумент командной строки"
+    assert overridden["configuration"]["categories"] == ["style"]
+
+
+def test_document_configuration_without_profile_matches_base(
+    tmp_path: Path, isolated_appdata: Path, json_server: JsonServer
+) -> None:
+    json_server.responder = languagetool_responder({})
+    source = tmp_path / "notes.txt"
+    source.write_text("Текст.\n", encoding="utf-8")
+
+    _code, report, _ = _report(
+        source, _languagetool_config(tmp_path, json_server.url), isolated_appdata
+    )
+
+    [document] = report["documents"]
+    assert document["configuration"] == {
+        "engines": report["configuration"]["engines"],
+        "categories": report["configuration"]["categories"],
+        "terms_count": 0,
+        "sources": {
+            "engines": "файл конфигурации",
+            "categories": "по умолчанию",
+            "terms": "по умолчанию",
+        },
+    }
 
 
 def test_partial_extraction_keeps_findings_but_reports_incompleteness(

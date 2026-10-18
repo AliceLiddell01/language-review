@@ -244,6 +244,11 @@ terms = { "апдейт" = "обновление" }
         ('[check]\nterms = { "юзер" = "" }\n', "непустые строки"),
         ('[profiles.docs.check.languagetool]\nlanguage = "en"\n', "только engines"),
         ('[check.llm.ollama]\nendpoint = "http://10.0.0.5:11434"\n', "allow_remote_endpoints"),
+        ('[check.languagetool]\nendpoint = "http://[::1"\n', "неверный адрес узла"),
+        ('[check.llm.llama_cpp]\nendpoint = "http://[xx]:8080"\n', "неверный адрес узла"),
+        ('[check.llm.ollama]\nendpoint = "http://[::1]:99999"\n', "неверный порт"),
+        ('[check.languagetool]\nendpoint = "http://127.0.0.1:abc"\n', "неверный порт"),
+        ('[doctor.http_services]\nlocal = "http://[::1/health"\n', "неверный адрес узла"),
     ],
 )
 def test_invalid_check_settings_fail(
@@ -251,6 +256,25 @@ def test_invalid_check_settings_fail(
 ) -> None:
     with pytest.raises(ConfigurationError, match=message):
         load_config(_write(tmp_path / "bad.toml", text))
+
+
+def test_loopback_ipv4_and_ipv6_endpoints_are_accepted(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    config = load_config(
+        _write(
+            tmp_path / "loopback.toml",
+            '[check.llm.llama_cpp]\nendpoint = "http://[::1]:8080"\n'
+            '[check.languagetool]\nendpoint = "http://127.0.0.1:8081"\n'
+            '[doctor.http_services]\nlocal = "http://[::1]:8080/health"\n',
+        )
+    )
+
+    assert config.check.llm_llama_cpp_endpoint == "http://[::1]:8080"
+    assert config.check.languagetool_endpoint == "http://127.0.0.1:8081"
+    mapping = config.as_mapping()
+    assert mapping["check"]["llm.llama_cpp.endpoint"]["value"] == "http://[::1]:8080"
+    assert mapping["doctor"]["http_services"] == {"local": "http://[::1]:8080/health"}
 
 
 def test_remote_endpoint_check_runs_after_merging_all_files(

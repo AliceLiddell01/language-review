@@ -7,6 +7,7 @@ import json
 import re
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Protocol
 
 from language_review.check_models import (
@@ -147,6 +148,11 @@ def system_prompt(terms: dict[str, str]) -> str:
 
 
 def prompt_fingerprint() -> str:
+    """Отпечаток базового шаблона: `SYSTEM_PROMPT` и структура схемы ответа.
+
+    Не равен хешу отправленного запроса: термины профиля (`system_prompt`) и фактический
+    `maxItems` пакета в него не входят.
+    """
     payload = json.dumps(
         {"system": SYSTEM_PROMPT, "schema": response_schema(1)}, ensure_ascii=False, sort_keys=True
     )
@@ -187,6 +193,26 @@ class Provider(Protocol):
 
 def _probe_timeout(settings: CheckSettings) -> float:
     return min(settings.llm_timeout_seconds, 10.0)
+
+
+def public_model_name(model: str | None) -> str | None:
+    """Обозначение модели для отчёта: от локального пути к файлу остаётся только имя файла.
+
+    llama-server без `--alias` возвращает в `/v1/models` путь из `-m`; в запросы уходит
+    исходный идентификатор, а в отчёт — только его последняя часть.
+    """
+    if model is None:
+        return None
+    windows = PureWindowsPath(model)
+    if (
+        windows.is_absolute()
+        or windows.drive
+        or PurePosixPath(model).is_absolute()
+        or model.startswith("~")
+        or model.casefold().endswith(".gguf")
+    ):
+        return windows.name or None
+    return model
 
 
 class LlamaCppProvider:
@@ -242,9 +268,9 @@ class LlamaCppProvider:
             return ProbeResult(
                 "unavailable",
                 diagnostics=["model_not_found"],
-                message=f"модель {self.model} не загружена в llama-server",
+                message=f"модель {public_model_name(self.model)} не загружена в llama-server",
             )
-        details: dict[str, Any] = {"model": self.model}
+        details: dict[str, Any] = {"model": public_model_name(self.model)}
         meta = identifiers[self.model].get("meta")
         if isinstance(meta, dict):
             for key in ("n_ctx", "n_params"):
@@ -405,10 +431,33 @@ def split_text(text: str, limit: int) -> list[tuple[int, str]]:
     return [(offset, chunk) for offset, chunk in chunks if chunk.strip()]
 
 
+def _matches_finding_schema(finding: Any) -> bool:
+    """Элемент `findings` соответствует `response_schema` (ключи, типы, перечисления)."""
+    if not isinstance(finding, dict) or set(finding) != set(FINDING_KEYS):
+        return False
+    replacement = finding["replacement"]
+    return (
+        isinstance(finding["item"], str)
+        and finding["category"] in LLM_CATEGORIES
+        and isinstance(finding["excerpt"], str)
+        and bool(finding["excerpt"])
+        and (replacement is None or isinstance(replacement, str))
+        and isinstance(finding["explanation"], str)
+        and bool(finding["explanation"])
+        and finding["confidence"] in CONFIDENCE_LEVELS
+    )
+
+
 def parse_response(
-    content: str, items: Sequence[LlmItem]
+    content: str, items: Sequence[LlmItem], max_findings: int
 ) -> tuple[list[tuple[LlmItem, dict[str, Any]]], list[tuple[LlmItem | None, str, dict[str, Any]]]]:
-    """Разобрать ответ модели; структурная ошибка всего ответа — LlmResponseError."""
+    """Разобрать ответ модели.
+
+    Любое нарушение запрошенной схемы, в том числе в одном элементе или в длине `findings`, —
+    LlmResponseError для всего ответа. Отбраковываются по отдельности только структурно
+    корректные замечания с семантическими ошибками: неизвестный `item`, превышение границ
+    длины, повтор.
+    """
     try:
         document = json.loads(content)
     except json.JSONDecodeError as exc:
@@ -416,36 +465,25 @@ def parse_response(
     if not isinstance(document, dict) or set(document) != {"findings"}:
         raise LlmResponseError("schema_violation")
     findings = document["findings"]
-    if not isinstance(findings, list):
+    if (
+        not isinstance(findings, list)
+        or len(findings) > max_findings
+        or not all(_matches_finding_schema(finding) for finding in findings)
+    ):
         raise LlmResponseError("schema_violation")
     by_id = {item.id: item for item in items}
     accepted: list[tuple[LlmItem, dict[str, Any]]] = []
     rejected: list[tuple[LlmItem | None, str, dict[str, Any]]] = []
     seen: set[tuple[str, str, str, str | None]] = set()
     for finding in findings:
-        if not isinstance(finding, dict) or set(finding) != set(FINDING_KEYS):
-            rejected.append(
-                (None, "schema_violation", finding if isinstance(finding, dict) else {})
-            )
-            continue
-        item = by_id.get(finding["item"]) if isinstance(finding["item"], str) else None
+        item = by_id.get(finding["item"])
         if item is None:
             rejected.append((None, "unknown_item", finding))
             continue
         excerpt, replacement = finding["excerpt"], finding["replacement"]
         explanation = finding["explanation"]
         if (
-            finding["category"] not in LLM_CATEGORIES
-            or finding["confidence"] not in CONFIDENCE_LEVELS
-            or not isinstance(excerpt, str)
-            or not isinstance(explanation, str)
-            or not (replacement is None or isinstance(replacement, str))
-        ):
-            rejected.append((item, "schema_violation", finding))
-            continue
-        if (
-            not excerpt
-            or len(excerpt) > MAX_EXCERPT_CHARS
+            len(excerpt) > MAX_EXCERPT_CHARS
             or not explanation.strip()
             or len(explanation) > MAX_EXPLANATION_CHARS
             or (replacement is not None and len(replacement) > MAX_REPLACEMENT_CHARS)
@@ -473,9 +511,9 @@ class LlmEngine:
             "provider": self.provider.name,
             "endpoint": safe_endpoint(self.provider.endpoint),
             "endpoint_origin": endpoint_origin(self.provider.endpoint),
-            "model": self.provider.model,
+            "model": public_model_name(self.provider.model),
             "prompt_version": PROMPT_VERSION,
-            "prompt_sha256": prompt_fingerprint(),
+            "prompt_template_sha256": prompt_fingerprint(),
             "thinking": self.settings.llm_thinking,
             "seed": self.settings.llm_seed,
             "batch_chars": self.settings.llm_batch_chars,
@@ -552,7 +590,8 @@ class LlmEngine:
             },
             ensure_ascii=False,
         )
-        schema = response_schema(min(64, 4 * len(batch)))
+        max_findings = min(64, 4 * len(batch))
+        schema = response_schema(max_findings)
         run.requests += 1
         try:
             reply = self.provider.complete(system_prompt(terms), user, schema)
@@ -568,7 +607,7 @@ class LlmEngine:
             run.request_failures += 1
             return "llm_truncated_response"
         try:
-            accepted, rejected = parse_response(reply.content, batch)
+            accepted, rejected = parse_response(reply.content, batch, max_findings)
         except LlmResponseError as exc:
             run.request_failures += 1
             return f"llm_{exc.code}"
@@ -579,14 +618,8 @@ class LlmEngine:
                     self.name,
                     target.unit.index,
                     reason,
-                    excerpt=finding.get("excerpt")
-                    if isinstance(finding.get("excerpt"), str)
-                    else None,
-                    message=(
-                        finding.get("explanation")
-                        if isinstance(finding.get("explanation"), str)
-                        else None
-                    ),
+                    excerpt=finding["excerpt"],
+                    message=finding["explanation"],
                 )
             )
         for item, finding in accepted:

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://language-review.invalid/schemas/check-report-1.0.json",
-  "title": "Language Review check report",
+  "title": "Отчёт языковой проверки Language Review",
   "description": "Результат языковой проверки извлечённых фрагментов. Предложения не применяются к исходникам.",
   "type": "object",
   "additionalProperties": false,
@@ -47,6 +47,7 @@
       }
     },
     "configuration": {
+      "description": "Базовые параметры запуска: раздел [check] и аргументы командной строки без профилей. Фактически применённые к документу движки, категории и термины — в documents[].configuration.",
       "type": "object",
       "additionalProperties": false,
       "required": ["engines", "categories", "llm_provider", "sources"],
@@ -160,6 +161,30 @@
       }
     },
     "fragment_id": {"type": "string", "pattern": "^frag-[0-9a-f]{24}$"},
+    "document_configuration": {
+      "description": "Параметры, фактически применённые к документу: база, профиль документа и затем аргументы командной строки. Пустой список categories — фильтр не задан.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engines", "categories", "terms_count", "sources"],
+      "properties": {
+        "engines": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/engine_name"}},
+        "categories": {"type": "array", "items": {"$ref": "#/$defs/category"}},
+        "terms_count": {
+          "description": "Число терминов проекта, переданных Vale и LLM; сами термины не публикуются.",
+          "$ref": "#/$defs/count"
+        },
+        "sources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["engines", "categories", "terms"],
+          "properties": {
+            "engines": {"type": "string"},
+            "categories": {"type": "string"},
+            "terms": {"type": "string"}
+          }
+        }
+      }
+    },
     "engine_run": {
       "type": "object",
       "additionalProperties": false,
@@ -186,9 +211,16 @@
             "endpoint": {"type": "string"},
             "endpoint_origin": {"enum": ["loopback", "remote"]},
             "provider": {"enum": ["llama_cpp", "ollama"]},
-            "model": {"type": ["string", "null"]},
+            "model": {
+              "description": "Публичное обозначение модели; для локального пути к файлу модели — только имя файла.",
+              "type": ["string", "null"]
+            },
             "prompt_version": {"type": "string"},
-            "prompt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "prompt_template_sha256": {
+              "description": "SHA-256 базового шаблона: системного промпта и структуры схемы ответа. Термины профиля и предел числа замечаний пакета в него не входят.",
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
             "version": {"type": ["string", "null"]},
             "configuration": {"enum": ["bundled", "custom"]}
           }
@@ -408,7 +440,7 @@
         "source_sha256",
         "encoding",
         "bom",
-        "engines",
+        "configuration",
         "diagnostics",
         "fragments",
         "findings",
@@ -439,7 +471,7 @@
         "source_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
         "encoding": {"type": ["string", "null"]},
         "bom": {"type": ["string", "null"]},
-        "engines": {"type": "array", "items": {"$ref": "#/$defs/engine_name"}},
+        "configuration": {"$ref": "#/$defs/document_configuration"},
         "diagnostics": {"type": "array", "items": {"type": "string"}},
         "fragments": {"type": "array", "items": {"$ref": "#/$defs/fragment"}},
         "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},

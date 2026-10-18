@@ -106,6 +106,19 @@ def public_source(label: str) -> str:
     return "; ".join(dict.fromkeys(parts))
 
 
+def public_configuration(settings: CheckSettings, sources: dict[str, str]) -> dict[str, Any]:
+    """Применённые фильтры проверки и их происхождение; сами термины в отчёт не попадают."""
+    return {
+        "engines": list(settings.engines),
+        "categories": list(settings.categories),
+        "terms_count": len(settings.terms),
+        "sources": {
+            key: public_source(sources.get(key, "по умолчанию"))
+            for key in ("engines", "categories", "terms")
+        },
+    }
+
+
 def _sentence_start(context: str) -> bool:
     return context in _SENTENCE_CONTEXTS or bool(re.fullmatch(r"markdown:h[1-6]", context))
 
@@ -470,13 +483,19 @@ def check_paths(
     extract = extract_paths(
         paths, config, requested_profile=requested_profile, cli_overrides=cli_overrides
     )
-    settings = [
-        config.check_settings_for_profile(document.profile, check_overrides)[0]
+    effective = [
+        config.check_settings_for_profile(document.profile, check_overrides)
         for document in extract.documents
     ]
+    settings = [item[0] for item in effective]
     units = build_units(extract.documents, settings)
     documents = [
-        CheckDocument(extract=document, status="", engines=settings[index].engines)
+        CheckDocument(
+            extract=document,
+            status="",
+            engines=settings[index].engines,
+            configuration=public_configuration(*effective[index]),
+        )
         for index, document in enumerate(extract.documents)
     ]
     for unit in units:

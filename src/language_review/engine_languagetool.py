@@ -166,7 +166,7 @@ class LanguageToolEngine:
                     RejectedOutput(self.name, unit.index, "schema_violation", rule_id, message)
                 )
                 continue
-            # LanguageTool считает позиции в UTF-16 code units, а не в code points.
+            # LanguageTool считает позиции в кодовых единицах UTF-16, а не в кодовых точках.
             start = view.utf16_index(offset)
             end = view.utf16_index(offset + length)
             if start is None or end is None:

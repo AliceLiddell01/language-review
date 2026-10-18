@@ -22,12 +22,21 @@
   "documents": [
     {
       "bom": "utf-8",
+      "configuration": {
+        "categories": [],
+        "engines": [
+          "languagetool",
+          "vale"
+        ],
+        "sources": {
+          "categories": "по умолчанию",
+          "engines": "файл конфигурации",
+          "terms": "по умолчанию"
+        },
+        "terms_count": 0
+      },
       "diagnostics": [],
       "encoding": "utf-8",
-      "engines": [
-        "languagetool",
-        "vale"
-      ],
       "extraction_reason": null,
       "extraction_status": "extracted",
       "findings": [
@@ -375,12 +384,21 @@
     },
     {
       "bom": null,
+      "configuration": {
+        "categories": [],
+        "engines": [
+          "languagetool",
+          "vale"
+        ],
+        "sources": {
+          "categories": "по умолчанию",
+          "engines": "файл конфигурации",
+          "terms": "по умолчанию"
+        },
+        "terms_count": 0
+      },
       "diagnostics": [],
       "encoding": "utf-8",
-      "engines": [
-        "languagetool",
-        "vale"
-      ],
       "extraction_reason": null,
       "extraction_status": "extracted",
       "findings": [

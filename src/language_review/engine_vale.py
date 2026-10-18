@@ -252,7 +252,7 @@ class ValeEngine:
         check = str(alert.get("Check") or "")
         message = str(alert.get("Message") or "")
         line, span, match = alert.get("Line"), alert.get("Span"), alert.get("Match")
-        # Vale: строка от 1, Span — [начало, конец] в code points от 1, конец включительно.
+        # Vale: строка от 1, Span — [начало, конец] в кодовых точках от 1, конец включительно.
         valid = (
             isinstance(line, int)
             and isinstance(span, list)

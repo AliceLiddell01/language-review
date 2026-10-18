@@ -193,7 +193,7 @@ class EngineView:
         return True
 
     def utf16_index(self, offset: int) -> int | None:
-        """Перевести смещение UTF-16 в индекс code point; None — середина суррогатной пары."""
+        """Перевести смещение UTF-16 в индекс кодовой точки; None — середина суррогатной пары."""
         units = 0
         for index, character in enumerate(self.text):
             if units == offset:

@@ -7,6 +7,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+import pytest
+
 
 def _project_version() -> str:
     pyproject = Path(__file__).parents[1] / "pyproject.toml"
@@ -99,6 +101,28 @@ def test_report_cannot_overwrite_input_and_config_errors_are_clear(
     assert invalid.returncode == 2
     assert invalid.stdout == ""
     assert "Ошибка конфигурации" in invalid.stderr
+
+
+@pytest.mark.parametrize(
+    "endpoint", ["http://[::1", "http://[xx]:8081", "http://127.0.0.1:70000", "http://[::1]:x"]
+)
+@pytest.mark.parametrize("command", [["check"], ["config", "show"]])
+def test_invalid_service_url_is_configuration_error_not_traceback(
+    tmp_path: Path, isolated_appdata: Path, endpoint: str, command: list[str]
+) -> None:
+    source = tmp_path / "notes.txt"
+    source.write_text("Текст.\n", encoding="utf-8")
+    config = tmp_path / "bad-url.toml"
+    config.write_text(f'[check.languagetool]\nendpoint = "{endpoint}"\n', encoding="utf-8")
+
+    paths = [str(source)] if command == ["check"] else []
+    process = _run(["--config", str(config), *command, *paths], isolated_appdata)
+
+    assert process.returncode == 2
+    assert process.stdout == ""
+    assert "Ошибка конфигурации" in process.stderr
+    assert "Traceback" not in process.stderr
+    assert source.read_text(encoding="utf-8") == "Текст.\n"
 
 
 def test_version_module_entrypoint_and_config_show(tmp_path: Path, isolated_appdata: Path) -> None:

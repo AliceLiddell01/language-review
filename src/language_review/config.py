@@ -582,7 +582,11 @@ def is_loopback_host(hostname: str | None) -> bool:
 
 
 def _validate_service_url(name: str, url: str, *, require_loopback: bool) -> str:
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except ValueError as exc:
+        # urlsplit отклоняет незакрытые скобки и неверный IPv6-литерал в адресе узла.
+        raise ConfigurationError(f"URL сервиса {name!r} содержит неверный адрес узла.") from exc
     if parts.scheme not in {"http", "https"} or not parts.hostname:
         raise ConfigurationError(f"URL сервиса {name!r} должен использовать HTTP или HTTPS.")
     if require_loopback and not is_loopback_host(parts.hostname):

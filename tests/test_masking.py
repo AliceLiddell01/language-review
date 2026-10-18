@@ -41,7 +41,7 @@ def test_languagetool_utf16_offsets_after_non_bmp_characters() -> None:
     fragment = ViewFragment(0, 13, "😀 и праверить", ())
     view = build_view([fragment], "plain")
 
-    # «праверить» начинается с code point 4, но в UTF-16 — с 5: emoji занимает пару.
+    # «праверить» начинается с кодовой точки 4, но в UTF-16 — с 5: эмодзи занимает пару.
     assert view.utf16_index(5) == 4
     assert view.utf16_index(1) is None
     assert view.source_range(4, 13) == (4, 13)

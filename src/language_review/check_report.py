@@ -178,7 +178,7 @@ def _document_mapping(document: CheckDocument) -> dict[str, Any]:
         "source_sha256": extract.source_sha256,
         "encoding": extract.encoding,
         "bom": extract.bom,
-        "engines": list(document.engines),
+        "configuration": document.configuration,
         "diagnostics": list(document.diagnostics),
         "fragments": _fragment_checks(document),
         "findings": [_finding_mapping(finding) for finding in document.findings],

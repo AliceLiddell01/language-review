@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import codecs
 import fnmatch
+import hashlib
 import os
 import stat
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,9 @@ FILE_TYPES = {
     ".hpp": "cpp_header",
     ".hh": "cpp_header",
     ".hxx": "cpp_header",
+    ".ps1": "powershell_source",
+    ".psm1": "powershell_source",
+    ".psd1": "powershell_data",
     ".md": "markdown",
     ".markdown": "markdown",
     ".txt": "plain_text",
@@ -51,6 +55,7 @@ class FileRecord:
     line_endings: str | None = None
     profile: str | None = None
     error: str | None = None
+    _source_sha256: str | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -440,6 +445,7 @@ def _decode_record(
             encoding=encoding,
             bom=bom,
             profile=profile_name,
+            _source_sha256=hashlib.sha256(data).hexdigest(),
         )
     if text is None:
         return FileRecord(
@@ -451,6 +457,7 @@ def _decode_record(
             size_bytes=len(data),
             readable=False,
             profile=profile_name,
+            _source_sha256=hashlib.sha256(data).hexdigest(),
         )
     return FileRecord(
         root=root_path,
@@ -463,6 +470,7 @@ def _decode_record(
         bom=bom,
         line_endings=_line_endings(text),
         profile=profile_name,
+        _source_sha256=hashlib.sha256(data).hexdigest(),
     )
 
 

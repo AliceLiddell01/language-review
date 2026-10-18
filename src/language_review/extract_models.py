@@ -1,0 +1,87 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from language_review.scanner import ScanResult
+
+
+@dataclass(frozen=True)
+class ProtectedSpan:
+    start_char: int
+    end_char: int
+    reason: str
+
+
+@dataclass(frozen=True)
+class FragmentDraft:
+    kind: str
+    context: str
+    text: str
+    start_char: int
+    end_char: int
+    protected: tuple[ProtectedSpan, ...] = ()
+    status: str = "extracted"
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class ResolvedFragment:
+    """Фрагмент с координатами, вычисленными до освобождения карты исходника."""
+
+    draft: FragmentDraft
+    range: dict[str, dict[str, int]]
+    protected_ranges: tuple[tuple[str, dict[str, dict[str, int]]], ...]
+
+    @property
+    def text(self) -> str:
+        return self.draft.text
+
+    @property
+    def start_char(self) -> int:
+        return self.draft.start_char
+
+    @property
+    def end_char(self) -> int:
+        return self.draft.end_char
+
+
+@dataclass
+class ExtractDocument:
+    id: str
+    root: str
+    path: str
+    language: str | None
+    format: str | None
+    profile: str | None
+    status: str
+    reason: str | None = None
+    source_sha256: str | None = None
+    encoding: str | None = None
+    bom: str | None = None
+    fragments: list[ResolvedFragment] = field(default_factory=list)
+    diagnostics: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ExtractResult:
+    roots: list[dict[str, Any]]
+    documents: list[ExtractDocument]
+    scan_result: ScanResult
+
+    @property
+    def error_count(self) -> int:
+        return sum(document.status in {"error", "partial"} for document in self.documents)
+
+    @property
+    def skipped_count(self) -> int:
+        return sum(document.status == "skipped" for document in self.documents)
+
+    @property
+    def unsupported_count(self) -> int:
+        return sum(document.status == "unsupported" for document in self.documents)
+
+    @property
+    def extracted_count(self) -> int:
+        return sum(document.status == "extracted" for document in self.documents)

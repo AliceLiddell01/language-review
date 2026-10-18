@@ -1,0 +1,6 @@
+[scan]
+extensions = [".json"]
+respect_gitignore = false
+
+[extract.selectors]
+".json" = ["$.ui.message"]

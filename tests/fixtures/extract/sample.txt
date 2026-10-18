@@ -1,0 +1,4 @@
+Обычная строка для проверки.
+https://example.test/path
+CONFIG_KEY
+Путь C:\Users\Example Name\file.txt следует сохранить.

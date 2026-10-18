@@ -4,6 +4,14 @@ $python = (& uv python find 3.15).Trim()
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $python -PathType Leaf)) {
     throw 'Не удалось найти Python 3.15 через uv.'
 }
+$pyprojectPath = Join-Path $projectRoot 'pyproject.toml'
+$expectedVersion = (
+    & $python -I -c "import sys, tomllib; print(tomllib.load(open(sys.argv[1], 'rb'))['project']['version'])" $pyprojectPath
+).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $expectedVersion) {
+    throw 'Не удалось прочитать каноническую версию пакета из pyproject.toml.'
+}
+$expectedVersionOutput = "language-review $expectedVersion"
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('language-review-smoke-' + [guid]::NewGuid().ToString('N'))
 $tempRoot = [IO.Path]::GetFullPath($tempRoot)
 $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
@@ -38,7 +46,7 @@ try {
     $sampleHash = (Get-FileHash -LiteralPath $sampleFile -Algorithm SHA256).Hash
     $artifacts = @(
         Get-ChildItem -LiteralPath $distributionDirectory -File |
-            Where-Object { $_.Name -like 'language_review-0.1.0*' } |
+            Where-Object { $_.Name -like "language_review-$expectedVersion*" } |
             Sort-Object Name
     )
     if ($artifacts.Count -ne 2) {
@@ -56,12 +64,18 @@ try {
 
         $launcher = Join-Path $environment 'Scripts\language-review.exe'
         $version = (& $launcher --version) -join ''
-        if ($LASTEXITCODE -ne 0 -or $version.Trim() -ne 'language-review 0.1.0') {
+        if ($LASTEXITCODE -ne 0 -or $version.Trim() -ne $expectedVersionOutput) {
             throw "Установленная команда $kind --version не прошла smoke-проверку."
         }
         $moduleVersion = (& $environmentPython -m language_review --version) -join ''
-        if ($LASTEXITCODE -ne 0 -or $moduleVersion.Trim() -ne 'language-review 0.1.0') {
+        if ($LASTEXITCODE -ne 0 -or $moduleVersion.Trim() -ne $expectedVersionOutput) {
             throw "Установленный модуль $kind не прошёл smoke-проверку."
+        }
+        $installedVersion = (
+            & $environmentPython -I -c "import importlib.metadata as m; print(m.version('language-review'))"
+        ).Trim()
+        if ($LASTEXITCODE -ne 0 -or $installedVersion -ne $expectedVersion) {
+            throw "Метаданные установленного $kind не совпадают с версией pyproject.toml."
         }
         $jsonOutput = (& $launcher scan $sample --format json) -join [Environment]::NewLine
         if ($LASTEXITCODE -ne 0) { throw "Установленная команда $kind scan завершилась ошибкой." }

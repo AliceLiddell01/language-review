@@ -77,7 +77,7 @@ extensions = [".rs", ".cs", ".md", ".json", ".yaml"]
 
 [extract]
 header_language = "auto" # auto, c или cpp для неоднозначных .h
-message_calls = ["MyLogger.ShowMessage"]
+message_calls = ["MyLogger.ShowMessage", "logger->Notify"]
 
 [extract.selectors]
 ".json" = ["$.ui.message", "$.errors[*].description"]

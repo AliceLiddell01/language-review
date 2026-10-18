@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from language_review.coordinates import SourceMap
-
 if TYPE_CHECKING:
     from language_review.scanner import ScanResult
 
@@ -28,6 +26,27 @@ class FragmentDraft:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class ResolvedFragment:
+    """Фрагмент с координатами, вычисленными до освобождения карты исходника."""
+
+    draft: FragmentDraft
+    range: dict[str, dict[str, int]]
+    protected_ranges: tuple[tuple[str, dict[str, dict[str, int]]], ...]
+
+    @property
+    def text(self) -> str:
+        return self.draft.text
+
+    @property
+    def start_char(self) -> int:
+        return self.draft.start_char
+
+    @property
+    def end_char(self) -> int:
+        return self.draft.end_char
+
+
 @dataclass
 class ExtractDocument:
     id: str
@@ -41,9 +60,8 @@ class ExtractDocument:
     source_sha256: str | None = None
     encoding: str | None = None
     bom: str | None = None
-    fragments: list[FragmentDraft] = field(default_factory=list)
+    fragments: list[ResolvedFragment] = field(default_factory=list)
     diagnostics: list[str] = field(default_factory=list)
-    source_map: SourceMap | None = field(default=None, repr=False)
 
 
 @dataclass

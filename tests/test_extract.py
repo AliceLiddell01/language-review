@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
+import weakref
 from dataclasses import replace
 from pathlib import Path
 
@@ -12,10 +15,11 @@ import pytest
 
 from language_review.config import ExtractSettings, load_config
 from language_review.coordinates import SourceMap
+from language_review.errors import ConfigurationError
 from language_review.extract_code import extract_code
 from language_review.extract_docs import extract_markdown, extract_markup_text, extract_plain_text
 from language_review.extract_models import FragmentDraft
-from language_review.extract_report import extract_document, extract_json
+from language_review.extract_report import extract_document, extract_human, extract_json
 from language_review.extract_structured import extract_structured
 from language_review.extraction import extract_paths
 from language_review.scanner import scan_paths
@@ -980,3 +984,245 @@ def test_extract_cli_json_output_errors_and_report_protection(
     )
     assert missing.returncode == 2
     assert json.loads(missing.stdout)["status"] == "input_error"
+
+
+def test_extract_paths_releases_source_maps_and_keeps_report_ranges(
+    tmp_path: Path, isolated_appdata: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    filler = "x" * 200_000
+    for index in range(12):
+        (root / f"doc-{index:02d}.md").write_text(
+            f"# Заголовок {index}\n\n```\n{filler}\n```\n\nЁжик {index} 😀 текст.\n",
+            encoding="utf-8",
+        )
+    original_create = SourceMap.create
+    created: list[weakref.ref[SourceMap]] = []
+    alive_before_create: list[int] = []
+
+    def tracking_create(raw: bytes, encoding: str, bom: str | None) -> SourceMap:
+        alive_before_create.append(sum(item() is not None for item in created))
+        source = original_create(raw, encoding, bom)
+        created.append(weakref.ref(source))
+        return source
+
+    monkeypatch.setattr(SourceMap, "create", staticmethod(tracking_create))
+
+    result = extract_paths([str(root)], load_config())
+    gc.collect()
+
+    assert len(created) == 12
+    assert max(alive_before_create) <= 1
+    assert all(item() is None for item in created)
+    report = extract_document(result)
+    human = extract_human(result)
+    for document in report["documents"]:
+        raw = (root / document["path"]).read_bytes()
+        source = original_create(raw, "utf-8", None)
+        assert document["fragments"][-1]["text"].endswith("😀 текст.")
+        for fragment in document["fragments"]:
+            start = fragment["range"]["start"]["byte_offset"]
+            end = fragment["range"]["end"]["byte_offset"]
+            assert raw[start:end].decode("utf-8") == fragment["source_text"] == fragment["text"]
+            char_start = source.text.index(fragment["text"])
+            assert fragment["range"]["start"] == source.position(char_start).as_dict()
+        last = document["fragments"][-1]
+        assert last["range"]["end"]["utf16_column"] == last["range"]["end"]["column"] + 1
+        assert f"  {last['range']['start']['line']}:1 markdown_prose" in human
+
+
+@pytest.mark.parametrize(
+    ("output_format", "unused_builder"), (("json", "extract_human"), ("human", "extract_document"))
+)
+def test_cli_builds_only_the_requested_extract_format(
+    tmp_path: Path,
+    isolated_appdata: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    output_format: str,
+    unused_builder: str,
+) -> None:
+    from language_review import cli
+
+    source = tmp_path / "message.md"
+    source.write_text("Точный текст.\n", encoding="utf-8")
+
+    def unexpected(_result: object) -> object:
+        raise AssertionError(f"{unused_builder} не должен вызываться")
+
+    monkeypatch.setattr(cli, unused_builder, unexpected)
+
+    assert cli.main(["extract", str(source), "--format", output_format]) == 0
+    output = capsys.readouterr().out
+    if output_format == "json":
+        assert json.loads(output)["documents"][0]["fragments"][0]["text"] == "Точный текст."
+    else:
+        assert "1:1 markdown_prose (markdown:prose): Точный текст." in output
+
+
+def test_asciidoc_literal_paragraphs_are_not_prose() -> None:
+    raw = (
+        "= Заголовок\n"
+        "\n"
+        "Обычный абзац перед кодом.\n"
+        "\n"
+        '  Console.WriteLine("Не изменять этот код");\n'
+        "  var second = 1;\n"
+        "\n"
+        "Абзац после литерального блока.\n"
+        "продолжение абзаца.\n"
+        "\n"
+        "* Пункт списка.\n"
+        "  Продолжение пункта списка.\n"
+        "  * Вложенный пункт.\n"
+        "\n"
+        "[literal]\n"
+        "Литерал без отступа и разделителей.\n"
+        "\n"
+        "[source,csharp]\n"
+        "----\n"
+        "Внутри делимитированного блока.\n"
+        "----\n"
+        "\n"
+        "Финальный абзац.\n"
+    )
+    source = SourceMap.create(raw.encode(), "utf-8", None)
+
+    fragments, diagnostics = extract_markup_text(source, "adoc")
+
+    assert diagnostics == []
+    assert [(item.context, item.text) for item in fragments] == [
+        ("asciidoc:heading", "Заголовок"),
+        ("asciidoc:prose", "Обычный абзац перед кодом."),
+        ("asciidoc:prose", "Абзац после литерального блока."),
+        ("asciidoc:prose", "продолжение абзаца."),
+        ("asciidoc:prose", "Пункт списка."),
+        ("asciidoc:prose", "Продолжение пункта списка."),
+        ("asciidoc:prose", "Вложенный пункт."),
+        ("asciidoc:prose", "Финальный абзац."),
+    ]
+    for fragment in fragments:
+        assert source.text[fragment.start_char : fragment.end_char] == fragment.text
+
+
+def test_markdown_protects_bare_urls_without_surrounding_prose(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    raw = (
+        "Откройте https://example.org/help для получения справки.\n"
+        "\n"
+        "Адрес в конце предложения: https://example.org/a_(b).\n"
+        "\n"
+        "Ссылка [справка](https://example.org/link), код `https://example.org/code` и \\*.\n"
+        "\n"
+        "Используйте чтение/запись и read/write.\n"
+    )
+    path = tmp_path / "help.md"
+    path.write_bytes(raw.encode())
+    source = SourceMap.create(raw.encode(), "utf-8", None)
+
+    fragments, diagnostics = extract_markdown(source)
+
+    assert diagnostics == []
+    protected = {
+        fragment.text: [
+            (source.text[span.start_char : span.end_char], span.reason)
+            for span in fragment.protected
+        ]
+        for fragment in fragments
+    }
+    assert protected["Откройте https://example.org/help для получения справки."] == [
+        ("https://example.org/help", "URL")
+    ]
+    assert protected["Адрес в конце предложения: https://example.org/a_(b)."] == [
+        ("https://example.org/a_(b)", "URL; маркер выделения Markdown")
+    ]
+    link_line = protected[
+        "Ссылка [справка](https://example.org/link), код `https://example.org/code` и \\*."
+    ]
+    assert [item[0] for item in link_line] == [
+        "[",
+        "](https://example.org/link)",
+        "`https://example.org/code`",
+        "\\*",
+    ]
+    assert protected["Используйте чтение/запись и read/write."] == []
+    _protection_texts(source, fragments)
+
+    report = extract_document(extract_paths([str(path)], load_config()))
+    first = report["documents"][0]["fragments"][0]
+    (url_range,) = first["protected_ranges"]
+    start = url_range["range"]["start"]["byte_offset"]
+    end = url_range["range"]["end"]["byte_offset"]
+    assert raw.encode()[start:end] == b"https://example.org/help"
+    assert path.read_bytes() == raw.encode()
+
+
+def test_configured_cpp_pointer_message_call_is_extracted(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[extract]\nmessage_calls = ["logger->Notify"]\n', encoding="utf-8")
+    source = tmp_path / "notify.cpp"
+    source.write_text(
+        "void Run(Logger* logger, Other* other) {\n"
+        '    logger->Notify("Операция выполнена");\n'
+        '    logger -> Notify("Операция с пробелами");\n'
+        '    logger->error("Известный вызов");\n'
+        '    other->Notify("Не настроенный объект");\n'
+        "}\n",
+        encoding="utf-8",
+    )
+
+    result = extract_paths([str(source)], load_config(str(config_path)))
+
+    (document,) = result.documents
+    assert document.status == "extracted"
+    assert [(item.draft.context, item.text) for item in document.fragments] == [
+        ("call:Notify", "Операция выполнена"),
+        ("call:Notify", "Операция с пробелами"),
+        ("call:error", "Известный вызов"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "value", ("logger->Notify", "std::fprintf", "MyLogger.ShowMessage", "Write-Error", "info!")
+)
+def test_message_calls_accept_supported_call_syntax(
+    tmp_path: Path, isolated_appdata: Path, value: str
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f'[extract]\nmessage_calls = ["{value}"]\n', encoding="utf-8")
+
+    assert load_config(str(config_path)).extract.message_calls == (value,)
+
+
+@pytest.mark.parametrize("value", ("logger->", "->Notify", "a-->b", "a- >b", "a!b", "a b", "1x"))
+def test_message_calls_reject_invalid_call_syntax(
+    tmp_path: Path, isolated_appdata: Path, value: str
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f'[extract]\nmessage_calls = ["{value}"]\n', encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="message_calls"):
+        load_config(str(config_path))
+
+
+def test_protected_range_reasons_and_coordinate_notes_are_russian(
+    isolated_appdata: Path,
+) -> None:
+    report = extract_document(extract_paths([str(FIXTURES)], load_config()))
+
+    reasons = {
+        part
+        for document in report["documents"]
+        for fragment in document["fragments"]
+        for item in fragment["protected_ranges"]
+        for part in item["reason"].split("; ")
+    }
+    assert reasons
+    assert all(reason == "URL" or re.search("[а-яё]", reason) for reason in reasons)
+    notes = report["coordinate_system"]
+    assert all(re.search("[а-яё]", notes[key]) for key in notes if key != "end")
+    assert notes["end"] == "exclusive"

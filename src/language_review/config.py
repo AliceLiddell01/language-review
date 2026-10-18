@@ -62,6 +62,12 @@ ROOT_KEYS = {"scan", "extract", "default_profile", "profiles", "doctor"}
 PROFILE_KEYS = {"priority", "project_markers", "match_paths", "scan", "extract"}
 DOCTOR_KEYS = {"programs", "http_services"}
 PROFILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+# Сегменты имени вызова разделяются как в поддерживаемых языках: `.`, `::` и C++ `->`;
+# дефис допустим внутри имени команды PowerShell, `!` — только в конце макроса Rust.
+_CALL_SEGMENT = r"[A-Za-z_$][A-Za-z0-9_$]*(?:-[A-Za-z0-9_$]+)*"
+MESSAGE_CALL_NAME = re.compile(
+    rf"[A-Za-z_][A-Za-z0-9_$]*(?:-[A-Za-z0-9_$]+)*(?:(?:\.|::|->){_CALL_SEGMENT})*!?"
+)
 
 
 @dataclass(frozen=True)
@@ -398,7 +404,7 @@ def _validate_extract(raw: Any, label: str, *, partial: bool) -> dict[str, Any]:
         checked["header_language"] = value
     if "message_calls" in raw:
         calls = _as_string_list(raw["message_calls"], f"{label}.message_calls")
-        if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.$:!-]*", name) for name in calls):
+        if any(not MESSAGE_CALL_NAME.fullmatch(name) for name in calls):
             raise ConfigurationError(f"{label}.message_calls содержит некорректное имя вызова.")
         checked["message_calls"] = tuple(dict.fromkeys(calls))
     if "selectors" in raw:

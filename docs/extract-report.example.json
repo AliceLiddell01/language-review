@@ -1,10 +1,10 @@
 {
   "coordinate_system": {
-    "byte_offset": "zero-based offset in original file bytes, including BOM",
-    "column": "one-based Unicode code point column; a tab counts as one code point",
+    "byte_offset": "смещение в байтах исходного файла от нуля, включая BOM",
+    "column": "столбец в Unicode code points от единицы; табуляция — один code point",
     "end": "exclusive",
-    "line": "one-based physical line number",
-    "utf16_column": "one-based UTF-16 code unit column"
+    "line": "номер физической строки от единицы",
+    "utf16_column": "столбец в UTF-16 code units от единицы"
   },
   "documents": [
     {

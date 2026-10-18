@@ -232,7 +232,11 @@ def _escape_protection(text: str, start: int, dialect: str) -> list[ProtectedSpa
     if dialect == "powershell":
         while index < len(text):
             if text[index] == chr(96) and index + 1 < len(text):
-                spans.append(ProtectedSpan(start + index, start + index + 2, "escape PowerShell"))
+                spans.append(
+                    ProtectedSpan(
+                        start + index, start + index + 2, "escape-последовательность PowerShell"
+                    )
+                )
                 index += 2
             elif text[index] == "'" and index + 1 < len(text) and text[index + 1] == "'":
                 spans.append(ProtectedSpan(start + index, start + index + 2, "кавычка PowerShell"))
@@ -258,7 +262,7 @@ def _escape_protection(text: str, start: int, dialect: str) -> list[ProtectedSpa
         else:
             index += 1
             continue
-        spans.append(ProtectedSpan(start + index, start + end, "escape sequence"))
+        spans.append(ProtectedSpan(start + index, start + end, "escape-последовательность"))
         index = end
     return spans
 
@@ -289,7 +293,7 @@ def _printf_protection(text: str, start: int) -> list[ProtectedSpan]:
         while cursor < len(text) and text[cursor] in "hlLjzt":
             cursor += 1
         if cursor < len(text) and text[cursor] in "diuoxXfFeEgGaAcspn":
-            spans.append(ProtectedSpan(start + index, start + cursor + 1, "printf format"))
+            spans.append(ProtectedSpan(start + index, start + cursor + 1, "формат printf"))
             index = cursor + 1
         else:
             index += 1
@@ -354,7 +358,7 @@ def _inline_protection(text: str, start: int, dialect: str) -> tuple[ProtectedSp
                         character.isalnum() or character in "#xX" for character in entity
                     ):
                         spans.append(
-                            ProtectedSpan(start + index, start + end + 1, "entity reference")
+                            ProtectedSpan(start + index, start + end + 1, "ссылка на сущность")
                         )
                         index = end + 1
                         continue
@@ -364,7 +368,7 @@ def _inline_protection(text: str, start: int, dialect: str) -> tuple[ProtectedSp
                     width += 1
                 close = text.find(chr(96) * width, index + width)
                 if close >= 0:
-                    spans.append(ProtectedSpan(start + index, start + close + width, "inline code"))
+                    spans.append(ProtectedSpan(start + index, start + close + width, "inline-код"))
                     index = close + width
                     continue
             index += 1
@@ -688,11 +692,11 @@ def _call_name(call: Node, language: str) -> str:
 
 
 def _call_leaf(name: str) -> str:
-    return re.split(r"::|->|[.:!]+", name)[-1].rstrip("!") or "unknown"
+    return re.split(r"::|->|[.:!]+", re.sub(r"\s+", "", name))[-1].rstrip("!") or "unknown"
 
 
 def _call_matches(name: str, custom_calls: Sequence[str]) -> bool:
-    normalized = name.lower().rstrip("!")
+    normalized = re.sub(r"\s+", "", name).lower().rstrip("!")
     if _call_leaf(normalized) in MESSAGE_CALLS:
         return True
     configured = {value.lower().rstrip("!") for value in custom_calls}

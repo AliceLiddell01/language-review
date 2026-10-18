@@ -23,7 +23,7 @@ class SourcePosition:
 
 @dataclass(frozen=True)
 class MappedText:
-    """Text whose characters map back to contiguous source character spans."""
+    """Текст, каждый символ которого отображается на непрерывный диапазон исходника."""
 
     text: str
     source_spans: tuple[tuple[int, int], ...]
@@ -153,7 +153,7 @@ class SourceMap:
         return self.text[start:end]
 
     def line_bounds(self, line_number: int) -> tuple[int, int, int]:
-        """Return zero-based line start, content end, and end including its newline."""
+        """Вернуть начало строки, конец содержимого и конец с переводом строки (от нуля)."""
         if line_number < 0 or line_number >= len(self._line_starts):
             raise ValueError("Номер строки вне исходного файла.")
         start = self._line_starts[line_number]

@@ -5,7 +5,13 @@ import json
 from typing import Any
 
 from language_review import __version__
-from language_review.extract_models import ExtractDocument, ExtractResult, FragmentDraft
+from language_review.coordinates import SourceMap
+from language_review.extract_models import (
+    ExtractDocument,
+    ExtractResult,
+    FragmentDraft,
+    ResolvedFragment,
+)
 
 
 def _fragment_id(document_id: str, fragment: FragmentDraft) -> str:
@@ -22,31 +28,44 @@ def _fragment_id(document_id: str, fragment: FragmentDraft) -> str:
     return "frag-" + hashlib.sha256(payload).hexdigest()[:24]
 
 
-def _document_mapping(document: ExtractDocument) -> dict[str, Any]:
-    source = document.source_map
-    fragments: list[dict[str, Any]] = []
-    for fragment in document.fragments:
-        if source is None:
-            continue
-        source_text = source.source_text(fragment.start_char, fragment.end_char)
-        if fragment.text != source_text:
+def resolve_fragments(source: SourceMap, fragments: list[FragmentDraft]) -> list[ResolvedFragment]:
+    """Проверить точные цитаты и вычислить координаты, пока карта исходника доступна."""
+    resolved: list[ResolvedFragment] = []
+    for fragment in fragments:
+        if not 0 <= fragment.start_char <= fragment.end_char <= len(source.text):
+            raise ValueError("Диапазон фрагмента вне исходного файла.")
+        if fragment.text != source.source_text(fragment.start_char, fragment.end_char):
             raise ValueError("Текст фрагмента не совпадает с точной цитатой исходника.")
+        resolved.append(
+            ResolvedFragment(
+                draft=fragment,
+                range=source.range_dict(fragment.start_char, fragment.end_char),
+                protected_ranges=tuple(
+                    (span.reason, source.range_dict(span.start_char, span.end_char))
+                    for span in fragment.protected
+                ),
+            )
+        )
+    return resolved
+
+
+def _document_mapping(document: ExtractDocument) -> dict[str, Any]:
+    fragments: list[dict[str, Any]] = []
+    for resolved in document.fragments:
+        fragment = resolved.draft
         fragments.append(
             {
                 "id": _fragment_id(document.id, fragment),
                 "kind": fragment.kind,
                 "context": fragment.context,
                 "text": fragment.text,
-                "source_text": source_text,
+                "source_text": fragment.text,
                 "status": fragment.status,
                 "reason": fragment.reason,
-                "range": source.range_dict(fragment.start_char, fragment.end_char),
+                "range": resolved.range,
                 "protected_ranges": [
-                    {
-                        "reason": span.reason,
-                        "range": source.range_dict(span.start_char, span.end_char),
-                    }
-                    for span in fragment.protected
+                    {"reason": reason, "range": span_range}
+                    for reason, span_range in resolved.protected_ranges
                 ],
             }
         )
@@ -85,10 +104,10 @@ def extract_document(result: ExtractResult) -> dict[str, Any]:
         "tool": {"name": "language-review", "version": __version__},
         "status": status,
         "coordinate_system": {
-            "byte_offset": "zero-based offset in original file bytes, including BOM",
-            "line": "one-based physical line number",
-            "column": "one-based Unicode code point column; a tab counts as one code point",
-            "utf16_column": "one-based UTF-16 code unit column",
+            "byte_offset": "смещение в байтах исходного файла от нуля, включая BOM",
+            "line": "номер физической строки от единицы",
+            "column": "столбец в Unicode code points от единицы; табуляция — один code point",
+            "utf16_column": "столбец в UTF-16 code units от единицы",
             "end": "exclusive",
         },
         "roots": result.roots,
@@ -125,13 +144,11 @@ def extract_human(result: ExtractResult) -> str:
     lines = ["Структурное извлечение текста"]
     lines.extend(_document_label(document) for document in result.documents)
     for document in result.documents:
-        source = document.source_map
-        if source is None:
-            continue
-        for fragment in document.fragments:
-            position = source.position(fragment.start_char)
+        for resolved in document.fragments:
+            fragment = resolved.draft
+            start = resolved.range["start"]
             lines.append(
-                f"  {position.line}:{position.column} {fragment.kind} ({fragment.context}): "
+                f"  {start['line']}:{start['column']} {fragment.kind} ({fragment.context}): "
                 f"{fragment.text}"
             )
     lines.append(

@@ -10,6 +10,8 @@ from language_review.coordinates import MappedText, SourceMap
 from language_review.extract_code import _inline_protection, _is_machine_literal, _merge_spans
 from language_review.extract_models import FragmentDraft, ProtectedSpan
 
+_BARE_URL = re.compile(r"https?://[^\s<>\[\]\"'`]+", re.IGNORECASE)
+
 
 def _mapped_inline_lines(
     source: SourceMap, token: Token, line_cursors: dict[int, int]
@@ -43,12 +45,12 @@ def _mapped_inline_lines(
 def _markdown_protected(text: str, source_start: int) -> tuple[ProtectedSpan, ...]:
     spans = list(_inline_protection(text, source_start, "markdown"))
     patterns = (
-        (r"!\[[^\]]*\]\([^)]*\)", "image syntax and destination"),
-        (r"\[|\]", "link syntax marker"),
-        (r"\]\([^)]*\)", "link destination"),
-        (r"(?<=\])\[[^\]]*\]", "reference destination"),
-        (r"<[^>]+>", "HTML markup or autolink"),
-        (r"(?<!\*)\*{1,3}|\*{1,3}(?!\*)|_{1,3}|~{2}", "Markdown emphasis marker"),
+        (r"!\[[^\]]*\]\([^)]*\)", "синтаксис и адрес изображения"),
+        (r"\[|\]", "маркер синтаксиса ссылки"),
+        (r"\]\([^)]*\)", "адрес ссылки"),
+        (r"(?<=\])\[[^\]]*\]", "метка ссылки"),
+        (r"<[^>]+>", "HTML-разметка или автоссылка"),
+        (r"(?<!\*)\*{1,3}|\*{1,3}(?!\*)|_{1,3}|~{2}", "маркер выделения Markdown"),
     )
     for pattern, reason in patterns:
         spans.extend(
@@ -56,10 +58,33 @@ def _markdown_protected(text: str, source_start: int) -> tuple[ProtectedSpan, ..
             for match in re.finditer(pattern, text)
         )
     spans.extend(
-        ProtectedSpan(source_start + match.start(), source_start + match.end(), "Markdown escape")
+        ProtectedSpan(
+            source_start + match.start(), source_start + match.end(), "экранирование Markdown"
+        )
         for match in re.finditer(r"\\[^\w\s]", text)
     )
+    spans.extend(
+        ProtectedSpan(source_start + start, source_start + end, "URL")
+        for start, end in _bare_urls(text)
+    )
     return _merge_spans(spans)
+
+
+def _bare_urls(text: str) -> Iterable[tuple[int, int]]:
+    """Найти адреса HTTP(S) в обычном тексте без завершающей пунктуации предложения."""
+    for match in _BARE_URL.finditer(text):
+        end = match.end()
+        while end > match.start():
+            last = text[end - 1]
+            if last in ".,;:!?":
+                end -= 1
+            elif last == ")" and text.count("(", match.start(), end) < text.count(
+                ")", match.start(), end
+            ):
+                end -= 1
+            else:
+                break
+        yield match.start(), end
 
 
 def _visible_line(text: str, source_start: int) -> str:
@@ -161,44 +186,48 @@ _RST_DIRECTIVE = re.compile(r"^\s*\.\.\s+(?:[A-Za-z][\w-]*::|_[^:]+:|\[[^]]+\])"
 _RST_LITERAL = re.compile(r"^\s*\.\.\s+(?:code-block|sourcecode|literalinclude)::")
 _ADOC_ATTRIBUTE = re.compile(r"^\s*:[A-Za-z0-9_-]+:")
 _ADOC_BLOCK = {"----", "....", "++++", "////", "____"}
+_ADOC_LIST_ITEM = re.compile(r"\s*(?:\*+|\.+|-|\d+\.)\s+")
+_ADOC_VERBATIM_STYLE = re.compile(r"^\[(?:source|literal|listing)\b")
 
 
 def _markup_protected(text: str, start: int, dialect: str) -> tuple[ProtectedSpan, ...]:
     spans = list(_inline_protection(text, start, "comment"))
     patterns: tuple[tuple[str, str], ...]
     if dialect == "rst":
-        patterns = ((r"``[^`]*``", "reStructuredText inline literal"),)
+        patterns = ((r"``[^`]*``", "inline-литерал reStructuredText"),)
         for match in re.finditer(r"`([^`<>]+)\s*(<[^>]+>)`_?", text):
             spans.extend(
                 (
-                    ProtectedSpan(start + match.start(), start + match.start(1), "RST link marker"),
-                    ProtectedSpan(start + match.start(2), start + match.end(2), "RST link target"),
-                    ProtectedSpan(start + match.end(2), start + match.end(), "RST link marker"),
+                    ProtectedSpan(
+                        start + match.start(), start + match.start(1), "маркер ссылки RST"
+                    ),
+                    ProtectedSpan(start + match.start(2), start + match.end(2), "цель ссылки RST"),
+                    ProtectedSpan(start + match.end(2), start + match.end(), "маркер ссылки RST"),
                 )
             )
         for match in re.finditer(r":(?:[A-Za-z][\w-]*:)?`([^`]+)`", text):
             label_start, label_end = match.span(1)
             spans.extend(
                 (
-                    ProtectedSpan(start + match.start(), start + label_start, "RST role marker"),
-                    ProtectedSpan(start + label_end, start + match.end(), "RST role marker"),
+                    ProtectedSpan(start + match.start(), start + label_start, "маркер роли RST"),
+                    ProtectedSpan(start + label_end, start + match.end(), "маркер роли RST"),
                 )
             )
     else:
         patterns = (
-            (r"`[^`]+`", "AsciiDoc monospace"),
-            (r"\+[^+]+\+", "AsciiDoc literal"),
+            (r"`[^`]+`", "моноширинный текст AsciiDoc"),
+            (r"\+[^+]+\+", "литерал AsciiDoc"),
             (r"(?:https?://|mailto:)[^\s\])>]+", "URL"),
-            (r"\[\[[^]]+\]\]|\[#[-\w.]+\]", "AsciiDoc anchor"),
+            (r"\[\[[^]]+\]\]|\[#[-\w.]+\]", "якорь AsciiDoc"),
         )
         for match in re.finditer(r"(?:link|xref):[^\[]+\[([^]]*)\]", text):
             label_start, label_end = match.span(1)
             spans.extend(
                 (
                     ProtectedSpan(
-                        start + match.start(), start + label_start, "AsciiDoc link target"
+                        start + match.start(), start + label_start, "цель ссылки AsciiDoc"
                     ),
-                    ProtectedSpan(start + label_end, start + match.end(), "AsciiDoc link marker"),
+                    ProtectedSpan(start + label_end, start + match.end(), "маркер ссылки AsciiDoc"),
                 )
             )
     for pattern, reason in patterns:
@@ -215,6 +244,11 @@ def extract_markup_text(source: SourceMap, dialect: str) -> tuple[list[FragmentD
     in_block = False
     block_marker: str | None = None
     literal_indent: int | None = None
+    # AsciiDoc: абзац с отступом в первой строке или со стилем source/literal/listing
+    # является буквальным текстом до пустой строки и не попадает в прозу.
+    adoc_literal = False
+    adoc_literal_next = False
+    adoc_in_paragraph = False
     lines = source.text.splitlines(keepends=True)
     char_start = 0
     for full_line in lines:
@@ -225,6 +259,7 @@ def extract_markup_text(source: SourceMap, dialect: str) -> tuple[list[FragmentD
                 in_block, block_marker = True, marker
             elif marker == block_marker:
                 in_block, block_marker = False, None
+            adoc_literal = adoc_literal_next = adoc_in_paragraph = False
             char_start += len(full_line)
             continue
         if in_block:
@@ -249,7 +284,26 @@ def extract_markup_text(source: SourceMap, dialect: str) -> tuple[list[FragmentD
                 char_start += len(full_line)
                 continue
         else:
+            if not content.strip():
+                adoc_literal = adoc_in_paragraph = False
+            elif (
+                adoc_literal
+                or adoc_literal_next
+                or (
+                    not adoc_in_paragraph
+                    and content[:1] in {" ", "\t"}
+                    and not _ADOC_LIST_ITEM.match(content)
+                )
+            ):
+                adoc_literal, adoc_literal_next = True, False
+                char_start += len(full_line)
+                continue
+            if _ADOC_VERBATIM_STYLE.match(content.strip()):
+                adoc_literal_next, adoc_in_paragraph = True, False
+                char_start += len(full_line)
+                continue
             if _ADOC_ATTRIBUTE.match(content) or content.startswith("//"):
+                adoc_in_paragraph = False
                 char_start += len(full_line)
                 continue
             if content.lstrip().startswith("=") and re.match(r"^\s*={1,6}\s", content):
@@ -275,6 +329,7 @@ def extract_markup_text(source: SourceMap, dialect: str) -> tuple[list[FragmentD
                                 protected,
                             )
                         )
+                adoc_in_paragraph = False
                 char_start += len(full_line)
                 continue
         stripped = content.strip()
@@ -285,11 +340,13 @@ def extract_markup_text(source: SourceMap, dialect: str) -> tuple[list[FragmentD
             char_start += len(full_line)
             continue
         if dialect == "adoc" and stripped.startswith("[") and stripped.endswith("]"):
+            adoc_in_paragraph = False
             char_start += len(full_line)
             continue
+        adoc_in_paragraph = True
         prefix_length = len(content) - len(content.lstrip())
         if dialect == "adoc":
-            bullet = re.match(r"\s*(?:\*+|\.+|-|\d+\.)\s+", content)
+            bullet = _ADOC_LIST_ITEM.match(content)
             if bullet:
                 prefix_length = bullet.end()
         text = content[prefix_length:]

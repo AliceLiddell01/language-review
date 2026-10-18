@@ -12,6 +12,7 @@ from language_review.errors import InputError
 from language_review.extract_code import extract_code
 from language_review.extract_docs import extract_markdown, extract_markup_text, extract_plain_text
 from language_review.extract_models import ExtractDocument, ExtractResult, FragmentDraft
+from language_review.extract_report import resolve_fragments
 from language_review.extract_structured import STRUCTURED_GRAMMARS, extract_structured
 from language_review.scanner import FileRecord, ScanResult, scan_paths
 
@@ -234,13 +235,9 @@ def extract_paths(
             document.diagnostics.append(document.reason)
             documents.append(document)
             continue
-        if any(
-            fragment.start_char < 0
-            or fragment.start_char > fragment.end_char
-            or fragment.end_char > len(source.text)
-            or fragment.text != source.source_text(fragment.start_char, fragment.end_char)
-            for fragment in fragments
-        ):
+        try:
+            resolved = resolve_fragments(source, fragments)
+        except ValueError:
             document.status = "error"
             document.reason = "fragment_source_mismatch"
             document.diagnostics.append(document.reason)
@@ -248,20 +245,19 @@ def extract_paths(
             continue
         document.language = language
         document.format = file_format
-        document.source_map = source
         document.diagnostics.extend(diagnostics)
         if unsupported:
             document.status = "unsupported"
             document.reason = diagnostics[0] if diagnostics else "unsupported_file_format"
-            document.fragments = fragments
+            document.fragments = resolved
         elif partial:
             document.status = "partial"
             document.reason = "incomplete_parse_or_mapping"
-            document.fragments = fragments
+            document.fragments = resolved
         else:
             document.status = "extracted"
             document.reason = None
-            document.fragments = fragments
+            document.fragments = resolved
         documents.append(document)
     documents.sort(key=lambda item: (item.root, item.path.casefold(), item.path, item.id))
     return ExtractResult(roots=roots, documents=documents, scan_result=scan)

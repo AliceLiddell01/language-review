@@ -132,7 +132,9 @@ def _protected(source: SourceMap, start: int, end: int, language: str) -> tuple[
         )
     if language == "yaml":
         spans.extend(
-            ProtectedSpan(start + match.start(), start + match.end(), "escape YAML")
+            ProtectedSpan(
+                start + match.start(), start + match.end(), "escape-последовательность YAML"
+            )
             for match in re.finditer(
                 r"\\(?:[0abtnvfre \"/\\N_LP]|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})|''",
                 text,
@@ -140,7 +142,9 @@ def _protected(source: SourceMap, start: int, end: int, language: str) -> tuple[
         )
     if language == "toml":
         spans.extend(
-            ProtectedSpan(start + match.start(), start + match.end(), "escape TOML")
+            ProtectedSpan(
+                start + match.start(), start + match.end(), "escape-последовательность TOML"
+            )
             for match in re.finditer(
                 r"\\(?:\r?\n[ \t]*|[btnfr\"\\]|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})", text
             )

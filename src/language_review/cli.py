@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -55,7 +55,9 @@ def _add_selection_arguments(command: argparse.ArgumentParser) -> None:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="language-review",
-        description="Read-only инвентаризация текстовых файлов перед языковым ревью.",
+        description=(
+            "Инвентаризация текстовых файлов перед языковым ревью без изменения исходников."
+        ),
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument(
@@ -173,10 +175,11 @@ def _config_human(mapping: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _emit(document: Any, human: str, output_format: str) -> str:
+def _emit(document: Callable[[], Any], human: Callable[[], str], output_format: str) -> str:
+    """Построить только запрошенный формат вывода."""
     if output_format == "json":
-        return json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True)
-    return human
+        return json.dumps(document(), ensure_ascii=False, indent=2, sort_keys=True)
+    return human()
 
 
 def _run(arguments: argparse.Namespace) -> int:
@@ -188,7 +191,9 @@ def _run(arguments: argparse.Namespace) -> int:
             requested_profile=arguments.profile,
             cli_overrides=_cli_overrides(arguments),
         )
-        content = _emit(scan_document(scan_result), scan_human(scan_result), arguments.format)
+        content = _emit(
+            lambda: scan_document(scan_result), lambda: scan_human(scan_result), arguments.format
+        )
         if arguments.output is None:
             print(content)
         else:
@@ -205,7 +210,9 @@ def _run(arguments: argparse.Namespace) -> int:
             requested_profile=arguments.profile,
             cli_overrides=_cli_overrides(arguments),
         )
-        content = _emit(extract_document(result), extract_human(result), arguments.format)
+        content = _emit(
+            lambda: extract_document(result), lambda: extract_human(result), arguments.format
+        )
         if arguments.output is None:
             print(content)
         else:
@@ -227,12 +234,14 @@ def _run(arguments: argparse.Namespace) -> int:
 
     if arguments.command == "doctor":
         doctor_result = run_doctor(config, arguments.paths)
-        print(_emit(doctor_result, doctor_human(doctor_result), arguments.format))
+        print(_emit(lambda: doctor_result, lambda: doctor_human(doctor_result), arguments.format))
         return doctor_exit_code(doctor_result)
 
     if arguments.command == "config" and arguments.config_command == "show":
         config_mapping = config.as_mapping(arguments.profile)
-        print(_emit(config_mapping, _config_human(config_mapping), arguments.format))
+        print(
+            _emit(lambda: config_mapping, lambda: _config_human(config_mapping), arguments.format)
+        )
         return 0
 
     raise AssertionError(f"Неизвестная команда: {arguments.command}")

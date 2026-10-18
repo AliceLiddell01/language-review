@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.error
 import urllib.parse
@@ -99,6 +100,8 @@ def request_json(
         if isinstance(exc.reason, TimeoutError):
             raise EngineHttpError("timeout", "превышено время ожидания ответа") from exc
         raise EngineHttpError("connection_failed", "сервис недоступен") from exc
+    except http.client.HTTPException as exc:
+        raise EngineHttpError("protocol_error", "ответ не соответствует протоколу HTTP") from exc
     except (OSError, ValueError) as exc:
         raise EngineHttpError("connection_failed", "сервис недоступен") from exc
     if status not in accept_statuses:

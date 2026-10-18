@@ -404,7 +404,7 @@ def _engine_status(run: EngineRun) -> str:
         return "unavailable"
     if run.units_failed == 0 and run.units_skipped == 0:
         return "ok"
-    if run.units_checked == 0:
+    if run.units_checked == 0 and run.units_failed > 0:
         return "error"
     return "partial"
 
@@ -426,7 +426,13 @@ def _document_status(document: CheckDocument) -> str:
         for unit in eligible
         for engine in document.engines
     )
-    if eligible and incomplete and not checked_any:
+    failed_any = any(
+        document.unit_status.get((unit.index, engine), ("missing", None))[0]
+        not in {"checked", "skipped"}
+        for unit in eligible
+        for engine in document.engines
+    )
+    if eligible and failed_any and not checked_any:
         return "unavailable"
     if incomplete or extract_status in {"partial", "unsupported"}:
         return "partial"

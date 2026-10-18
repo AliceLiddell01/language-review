@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,7 @@ from conftest import JsonServer, RecordedRequest
 
 from language_review.check import check_paths
 from language_review.config import load_config
+from language_review.engine_http import EngineHttpError, request_json
 from language_review.engine_llm import SYSTEM_PROMPT, response_schema
 from language_review.errors import ConfigurationError
 
@@ -651,3 +654,79 @@ endpoint = "{json_server.url}"
     ]
     assert all(len(entry["text"]) <= 400 for items in sent for entry in items)
     assert all("Слово Слово" not in entry["text"] for items in sent for entry in items)
+
+
+def test_only_skipped_units_are_partial_not_unavailable(
+    tmp_path: Path, isolated_appdata: Path, json_server: JsonServer
+) -> None:
+    json_server.responder = llama_responder('{"findings": []}')
+    source = tmp_path / "notes.txt"
+    source.write_text(("Слово " * 120).strip() + ".\n", encoding="utf-8")
+    config = _config(
+        tmp_path,
+        f"""[check]
+engines = ["llm"]
+[check.llm]
+batch_chars = 200
+[check.llm.llama_cpp]
+endpoint = "{json_server.url}"
+""",
+    )
+
+    code, report, _stderr = _report(source, config, isolated_appdata)
+
+    assert code == 4
+    assert report["status"] == "partial"
+    assert report["documents"][0]["status"] == "partial"
+    assert report["engines"][0]["status"] == "partial"
+    assert not any(item.path == "/v1/chat/completions" for item in json_server.requests)
+
+
+def test_llama_server_without_models_reports_model_not_found(
+    tmp_path: Path, isolated_appdata: Path, json_server: JsonServer
+) -> None:
+    def respond(request: RecordedRequest) -> tuple[int, Any]:
+        if request.path == "/health":
+            return 200, {"status": "ok"}
+        assert request.path == "/v1/models"
+        return 200, {"data": []}
+
+    json_server.responder = respond
+    config = _config(
+        tmp_path,
+        f"""[check]
+engines = ["llm"]
+[check.llm.llama_cpp]
+endpoint = "{json_server.url}"
+""",
+    )
+    result = check_paths([str(tmp_path / "config.toml")], load_config(config))
+
+    assert result.status == "unavailable"
+    assert result.engines[0].diagnostics[0] == "model_not_found"
+
+
+def test_truncated_chunked_response_is_a_controlled_protocol_error() -> None:
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+
+    def serve() -> None:
+        connection, _address = listener.accept()
+        with connection:
+            connection.recv(65536)
+            connection.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                b'Transfer-Encoding: chunked\r\n\r\n10\r\n{"a"\r\n'
+            )
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        with pytest.raises(EngineHttpError) as raised:
+            request_json(f"http://127.0.0.1:{listener.getsockname()[1]}/", timeout=5)
+    finally:
+        listener.close()
+        thread.join(timeout=5)
+
+    assert raised.value.code == "protocol_error"

@@ -223,6 +223,12 @@ class LlamaCppProvider:
                     identifiers[alias] = entry
         if self.model is None:
             distinct = {id(entry) for entry in identifiers.values()}
+            if not distinct:
+                return ProbeResult(
+                    "unavailable",
+                    diagnostics=["model_not_found"],
+                    message="llama-server не предоставляет ни одной модели",
+                )
             if len(distinct) != 1:
                 return ProbeResult(
                     "unavailable",

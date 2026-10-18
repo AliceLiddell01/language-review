@@ -1,0 +1,266 @@
+{
+  "label": "before",
+  "corpus_head": "565c878ee97c852ebf728e3d989ccc1c0fab1229",
+  "labels_sha256": "63eebb809fe4fc16e41553d559689268322f8bdfa76bb862785da1f1c8b68373",
+  "docs_fast": {
+    "engines_requested": [
+      "languagetool",
+      "vale"
+    ],
+    "exit_code": 1,
+    "wall_s": 264.3,
+    "coverage": {
+      "status": "findings",
+      "documents": 19,
+      "documents_by_status": {
+        "clean": 1,
+        "findings": 18,
+        "partial": 0,
+        "unavailable": 0,
+        "error": 0
+      },
+      "fragments": 2994,
+      "units": 1930,
+      "units_without_russian_text": 50,
+      "fragments_english_checked_by_llm": 0,
+      "not_checked_fragment_engine_pairs": {
+        "languagetool:skipped:no_russian_text": 50,
+        "vale:skipped:no_russian_text": 50
+      },
+      "findings": 220,
+      "rejected": 771
+    },
+    "engines": [
+      {
+        "name": "languagetool",
+        "status": "ok",
+        "elapsed_s": 262.0,
+        "statistics": {
+          "filtered": 0,
+          "findings": 195,
+          "fragments_checked": 2944,
+          "rejected": 756,
+          "request_failures": 0,
+          "requests": 1880,
+          "units_checked": 1880,
+          "units_failed": 0,
+          "units_skipped": 0,
+          "units_total": 1880
+        },
+        "tokens": {},
+        "diagnostics": [],
+        "details": {
+          "version": "6.6",
+          "level": "default",
+          "language": "ru-RU"
+        }
+      },
+      {
+        "name": "vale",
+        "status": "ok",
+        "elapsed_s": 1.2,
+        "statistics": {
+          "filtered": 0,
+          "findings": 27,
+          "fragments_checked": 2944,
+          "rejected": 15,
+          "request_failures": 0,
+          "requests": 19,
+          "units_checked": 1880,
+          "units_failed": 0,
+          "units_skipped": 0,
+          "units_total": 1880
+        },
+        "tokens": {},
+        "diagnostics": [],
+        "details": {
+          "version": "3.24.0",
+          "program": "vale",
+          "style": "LanguageReview"
+        }
+      }
+    ]
+  },
+  "sample_all_engines": {
+    "engines_requested": [
+      "languagetool",
+      "vale",
+      "llm"
+    ],
+    "exit_code": 4,
+    "wall_s": 546.6,
+    "coverage": {
+      "status": "partial",
+      "documents": 12,
+      "documents_by_status": {
+        "clean": 0,
+        "findings": 11,
+        "partial": 1,
+        "unavailable": 0,
+        "error": 0
+      },
+      "fragments": 553,
+      "units": 379,
+      "units_without_russian_text": 3,
+      "fragments_english_checked_by_llm": 0,
+      "not_checked_fragment_engine_pairs": {
+        "languagetool:skipped:no_russian_text": 3,
+        "llm:skipped:no_russian_text": 3,
+        "vale:skipped:no_russian_text": 3
+      },
+      "findings": 299,
+      "rejected": 171
+    },
+    "engines": [
+      {
+        "name": "languagetool",
+        "status": "ok",
+        "elapsed_s": 52.4,
+        "statistics": {
+          "filtered": 0,
+          "findings": 51,
+          "fragments_checked": 550,
+          "rejected": 57,
+          "request_failures": 0,
+          "requests": 376,
+          "units_checked": 376,
+          "units_failed": 0,
+          "units_skipped": 0,
+          "units_total": 376
+        },
+        "tokens": {},
+        "diagnostics": [],
+        "details": {
+          "version": "6.6",
+          "level": "default",
+          "language": "ru-RU"
+        }
+      },
+      {
+        "name": "vale",
+        "status": "ok",
+        "elapsed_s": 0.7,
+        "statistics": {
+          "filtered": 0,
+          "findings": 15,
+          "fragments_checked": 550,
+          "rejected": 1,
+          "request_failures": 0,
+          "requests": 12,
+          "units_checked": 376,
+          "units_failed": 0,
+          "units_skipped": 0,
+          "units_total": 376
+        },
+        "tokens": {},
+        "diagnostics": [],
+        "details": {
+          "version": "3.24.0",
+          "program": "vale",
+          "style": "LanguageReview"
+        }
+      },
+      {
+        "name": "llm",
+        "status": "ok",
+        "elapsed_s": 492.6,
+        "statistics": {
+          "filtered": 0,
+          "findings": 244,
+          "fragments_checked": 550,
+          "rejected": 113,
+          "request_failures": 0,
+          "requests": 58,
+          "units_checked": 376,
+          "units_failed": 0,
+          "units_skipped": 0,
+          "units_total": 376
+        },
+        "tokens": {
+          "completion": 34529,
+          "prompt": 59511
+        },
+        "diagnostics": [],
+        "details": {
+          "model": "gemma-4-e4b",
+          "quantization": "Q4_K - Medium",
+          "n_ctx": 8192,
+          "n_params": 7518069290,
+          "server_build": "b10299-e40bf8864",
+          "provider": "llama_cpp",
+          "prompt_version": "ru-technical-review/1",
+          "prompt_template_sha256": "749e0bb8effba64ba3704c6d8126eb3e09420cbaf748a63ccb9beeb11facee50",
+          "thinking": false,
+          "seed": 0,
+          "batch_chars": 1500,
+          "batch_items": 8,
+          "max_output_tokens": 2048
+        }
+      }
+    ],
+    "score": {
+      "languagetool": {
+        "tp": 0,
+        "fp": 18,
+        "fn": 1,
+        "debatable_hits": 0,
+        "precision": 0.0,
+        "recall": null,
+        "f1": null,
+        "sources_in_scope": 18,
+        "location_hits_other_essence": 1,
+        "fp_kinds": {
+          "spelling/MORFOLOGIK_RULE_RU_RU/кириллица": 11,
+          "typography/WHITESPACE_RULE/латиница": 5,
+          "grammar/Pravopisanie_po-prezhnemu/кириллица": 1,
+          "spelling/UPPERCASE_SENTENCE_START/латиница": 1
+        }
+      },
+      "llm": {
+        "tp": 0,
+        "fp": 159,
+        "fn": 1,
+        "debatable_hits": 4,
+        "precision": 0.0,
+        "recall": null,
+        "f1": null,
+        "sources_in_scope": 163,
+        "location_hits_other_essence": 1,
+        "fp_kinds": {
+          "terminology/ru-technical-review/1:terminology/латиница": 46,
+          "style/ru-technical-review/1:style/кириллица": 45,
+          "terminology/ru-technical-review/1:terminology/кириллица": 39,
+          "untranslated_english/ru-technical-review/1:untranslated_english/латиница": 9,
+          "punctuation/ru-technical-review/1:punctuation/кириллица": 8,
+          "grammar/ru-technical-review/1:grammar/кириллица": 6,
+          "untranslated_english/ru-technical-review/1:untranslated_english/кириллица": 2,
+          "punctuation/ru-technical-review/1:punctuation/латиница": 2
+        }
+      },
+      "vale": {
+        "tp": 0,
+        "fp": 8,
+        "fn": 1,
+        "debatable_hits": 0,
+        "precision": 0.0,
+        "recall": null,
+        "f1": null,
+        "sources_in_scope": 8,
+        "location_hits_other_essence": 0,
+        "fp_kinds": {
+          "typography/LanguageReview.Dash/латиница": 8
+        }
+      },
+      "union": {
+        "tp": 0,
+        "fp": 181,
+        "fn": 1,
+        "debatable_hits": 4,
+        "precision": 0.0,
+        "recall": null,
+        "f1": null,
+        "findings_in_scope": 185
+      }
+    }
+  }
+}

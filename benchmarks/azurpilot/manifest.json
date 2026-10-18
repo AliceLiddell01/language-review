@@ -1,0 +1,46 @@
+{
+  "corpus": {
+    "repository": "AzurPilotRu",
+    "head": "565c878ee97c852ebf728e3d989ccc1c0fab1229",
+    "export": "git archive <head>; хеши считаются по содержимому с LF"
+  },
+  "docs": {
+    "files": {
+      "docs/README.md": "9b8d5ac398fffe5c3e144e034c8bdc1e7c3d3891730b1ba5b2639cba48748b90",
+      "docs/architecture/android-game-lifecycle.md": "bd2814a32a37883b0b8039e11ca2aed933e6907a590475bbf84158f2d68e2240",
+      "docs/architecture/game-ui.md": "2b7175589c3ebc38e4f8502dd97d5091fc53a2c1bbe72468a84418ab9c12b7c9",
+      "docs/architecture/mumu-lifecycle.md": "4cc5dcbd967183322e6faedca14d635b7ba7c9e0b6f48bde74e7ce4f53f98b37",
+      "docs/architecture/native-frame-ownership.md": "d3ef171c646ed8989ca0404a95a9fe198377e57ad348890441488fcf7643cae0",
+      "docs/architecture/operator-tui.md": "79a0599016abb10b07aebf2148064337db00ed8f0d07e2519d106a88fae0772a",
+      "docs/architecture/overview.md": "bd06c0e769e8ce23c99389858dca2a7354de1a84cf89c23a62d73a60c47c5c65",
+      "docs/architecture/screenshot-diagnostics.md": "ec9490fc2139575d65cef4550ec7a222aea0aefc9a4836de54121c31cf897972",
+      "docs/getting-started.md": "c57054b976a1907f5a70c3f0ce6ed2c6d4e5f2c4b261e29ae6c5860df0649688",
+      "docs/operations/runtime-diagnostics.md": "68b54604c265d6728fac3b539663442bc5eba73aeca89ec6e3606a327adc456f",
+      "docs/reference/agent-cli.md": "b12a9623c0186a84cfc899dd34e3f08769dd11f2be1411c30a8c95a40b6c5a16",
+      "docs/reference/application-configuration.md": "a3684ad06966175be6c93e26032ae441bdb35c40f435b8fa241033b1dd9a915c",
+      "docs/reference/application-failures.md": "12e142aafddffa3b7af3b7cf31e2d8b22b8f02ba87f50cb88dc8d9329a95fe67",
+      "docs/testing/android-acceptance.md": "5ea7e47239a5eaf5cfa379f55fe66b3d799050553640212bd51ba97ec9ba0cc1",
+      "docs/testing/game-ui.md": "171389f04868fc8a1309da7db72e24691ffd64fa6b48174dad0f6b741dff7df6",
+      "docs/testing/operator-tui-acceptance.md": "2ca69bd21874cfb37f58c6610aa9e3c205773bda4fb58f863ad1a7508cbd1e1c",
+      "docs/testing/screenshot-acceptance.md": "0fe3625bfc8c3df9bb882f3e70048e69cd4d40338ed08311086e32a7051c7d4e",
+      "docs/testing/tui-harness.md": "3be4457d6eef08b92834c8c2e9562852d8fb7bd3b7fb69ce693d58bc3aaadb5a",
+      "docs/testing/verification.md": "72edaa4ec902c806b4649f114d4788b0946b459ad939ff707014c0dc883f4eb3"
+    }
+  },
+  "sample": {
+    "files": {
+      "docs/README.md": "9b8d5ac398fffe5c3e144e034c8bdc1e7c3d3891730b1ba5b2639cba48748b90",
+      "docs/architecture/native-frame-ownership.md": "d3ef171c646ed8989ca0404a95a9fe198377e57ad348890441488fcf7643cae0",
+      "docs/architecture/screenshot-diagnostics.md": "ec9490fc2139575d65cef4550ec7a222aea0aefc9a4836de54121c31cf897972",
+      "docs/testing/android-acceptance.md": "5ea7e47239a5eaf5cfa379f55fe66b3d799050553640212bd51ba97ec9ba0cc1",
+      "native/include/azurpilot_native_abi.h": "9483e4636925efc185e107019a18460427c7de608fc517187692889532ce6d1e",
+      "src/AzurPilot.App/Agent/AgentRunner.cs": "d0e6b5f7167c8cb1684478785ca89e7d7fffe66254cebd994e2079a259e591c8",
+      "src/AzurPilot.App/Program.cs": "e85616eea7afd2a088e56918cd39a24a103de28b224831c61c9409d075cf4e44",
+      "src/AzurPilot.Core/Android/AndroidEndpoint.cs": "c2e3ba9b3e1c134a227cf94265008275ae5c77f22f0931a6def54cd63a21b4d8",
+      "src/AzurPilot.Core/Failures/ApplicationResult.cs": "955b5db92354831fb2252aede5134cb9ce967c0c01c8aa02e05d78959b6b0c4a",
+      "src/AzurPilot.Windows/NativeFrame.cs": "758e1efc182425c0bdae11459a36e88751e0750580928238cda07d064d530eea",
+      "src/AzurPilot.Windows/Processes/WindowsProcessRunner.cs": "d560e8938a175361a2b3f6755ef285ebe9f09ac55e9fcf5e6e1bc7038caa73cf",
+      "tools/AzurPilot.TuiHarness/HarnessProtocol.cs": "27127520590dcf4fe54e2a42e1d641c85e46e670bc54c1a86f583ca486f1df24"
+    }
+  }
+}

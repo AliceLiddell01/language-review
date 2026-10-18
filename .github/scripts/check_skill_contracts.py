@@ -61,6 +61,20 @@ def local_target(destination: str) -> str | None:
     return unquote(parsed.path)
 
 
+def validate_markdown_links(path: Path, body: str, skill_root: Path) -> list[str]:
+    """Проверяет локальные Markdown-ссылки, не разрешая выход за каталог skill."""
+    errors: list[str] = []
+    root = skill_root.resolve()
+    for destination in markdown_link_destinations(body):
+        target = local_target(destination)
+        if target is None:
+            continue
+        resolved = (path.parent / target).resolve()
+        if not resolved.is_relative_to(root) or not resolved.is_file():
+            errors.append(f"{path}: несуществующая или выходящая за skill ссылка: {target}")
+    return errors
+
+
 def validate_skill(path: Path) -> list[str]:
     """Проверяет SKILL.md по типам и ограничениям спецификации Agent Skills."""
     errors: list[str] = []
@@ -127,13 +141,7 @@ def validate_skill(path: Path) -> list[str]:
 
     skill_root = path.parent.resolve()
     body = "\n".join(lines[end + 1 :])
-    for destination in markdown_link_destinations(body):
-        target = local_target(destination)
-        if target is None:
-            continue
-        resolved = (skill_root / target).resolve()
-        if not resolved.is_relative_to(skill_root) or not resolved.is_file():
-            errors.append(f"{path}: несуществующая или выходящая за skill ссылка: {target}")
+    errors.extend(validate_markdown_links(path, body, skill_root))
     return errors
 
 
@@ -150,9 +158,25 @@ def validate_tree(root: Path) -> list[str]:
         for directory in directories
         if not (directory / "SKILL.md").is_file()
     ]
-    return missing + [
+    errors = missing + [
         error for skill in sorted(base.glob("*/SKILL.md")) for error in validate_skill(skill)
     ]
+    for directory in directories:
+        skill_root = directory.resolve()
+        for document in sorted(directory.rglob("*.md")):
+            if document == directory / "SKILL.md":
+                continue
+            resolved_document = document.resolve()
+            if not resolved_document.is_relative_to(skill_root):
+                errors.append(f"{document}: документ выходит за каталог skill")
+                continue
+            try:
+                source = document.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as error:
+                errors.append(f"{document}: не удалось прочитать: {error}")
+                continue
+            errors.extend(validate_markdown_links(document, source, skill_root))
+    return errors
 
 
 def main() -> int:

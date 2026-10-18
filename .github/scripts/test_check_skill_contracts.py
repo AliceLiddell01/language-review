@@ -43,6 +43,36 @@ class SkillContractTests(unittest.TestCase):
         self.write_skill()
         self.assertEqual(validate_tree(self.root), [])
 
+    def test_reference_document_links_resolve_from_document_parent(self):
+        references = self.folder / "references"
+        references.mkdir()
+        (references / "details.md").write_text("Сведения", encoding="utf-8")
+        (references / "procedure.md").write_text("См. [описание](details.md).", encoding="utf-8")
+        self.write_skill(body="Без ссылок.")
+        self.assertEqual(validate_tree(self.root), [])
+
+    def test_missing_link_in_reference_document_fails_tree_validation(self):
+        references = self.folder / "references"
+        references.mkdir()
+        document = references / "procedure.md"
+        document.write_text("См. [отсутствующее](missing.md).", encoding="utf-8")
+        self.write_skill(body="Без ссылок.")
+        errors = validate_tree(self.root)
+        self.assertTrue(any(str(document) in error and "ссылка" in error for error in errors))
+
+    def test_reference_document_link_cannot_escape_skill_directory(self):
+        references = self.folder / "references"
+        references.mkdir()
+        outside = self.root / "outside.md"
+        outside.write_text("Внешний файл", encoding="utf-8")
+        document = references / "procedure.md"
+        document.write_text("[внешний файл](../../../../outside.md)", encoding="utf-8")
+        self.write_skill(body="Без ссылок.")
+        errors = validate_tree(self.root)
+        self.assertTrue(
+            any(str(document) in error and "выходящая за skill" in error for error in errors)
+        )
+
     def test_quoted_name_and_description_are_valid_strings(self):
         self.write_skill(
             '---\nname: "sample-skill"\ndescription: "Описание навыка."\n---\n',

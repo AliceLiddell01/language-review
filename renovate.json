@@ -1,0 +1,67 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "timezone": "UTC",
+  "labels": [
+    "dependencies"
+  ],
+  "dependencyDashboard": true,
+  "automerge": false,
+  "ignoreUnstable": true,
+  "respectLatest": true,
+  "prConcurrentLimit": 4,
+  "prHourlyLimit": 2,
+  "separateMajorMinor": true,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "before 6am on monday"
+    ]
+  },
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "dependencyDashboardApproval": false,
+    "prConcurrentLimit": 1
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Обновлять закреплённую версию Renovate CLI для проверки конфигурации",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/renovate-config\\.yml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+RENOVATE_VERSION: (?<currentValue>\\S+)"
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Зависимости Python из pyproject.toml и uv.lock",
+      "matchManagers": [
+        "pep621"
+      ],
+      "rangeStrategy": "bump"
+    },
+    {
+      "description": "Группировать обновления GitHub Actions, закреплённых по SHA",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "GitHub Actions",
+      "pinDigests": true
+    },
+    {
+      "description": "Мажорные обновления требуют отдельного ревью",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "labels": [
+        "dependencies",
+        "major-update"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+name: Проверка структуры PR
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pr-body:
+    name: Проверить разделы PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Получить содержимое PR
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Получить доверенную базу
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted-base
+          persist-credentials: false
+      - name: Проверить фактическое описание PR
+        run: |
+          checker=trusted-base/.github/scripts/check_pr_body.py
+          if [[ ! -f "$checker" ]]; then
+            echo "::warning::В базовом коммите ещё нет валидатора описания PR; используется валидатор из этого PR."
+            checker=.github/scripts/check_pr_body.py
+          fi
+          python3 "$checker" --event-path "$GITHUB_EVENT_PATH"

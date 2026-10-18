@@ -21,6 +21,42 @@ class SourcePosition:
         }
 
 
+def position_within(
+    start: dict[str, int], end: dict[str, int], text: str, encoding: str, offset: int
+) -> dict[str, int]:
+    """Позиция символа `offset` внутри точной цитаты исходника `text`.
+
+    `start`/`end` — координаты начала и конца цитаты, уже вычисленные по карте исходника.
+    Используется после освобождения SourceMap: цитата совпадает с исходным текстом, поэтому
+    байты, строки и колонки восстанавливаются по ней без повторного чтения файла.
+    """
+    if offset < 0 or offset > len(text):
+        raise ValueError("Смещение вне цитаты исходника.")
+    if offset == len(text):
+        return dict(end)
+    byte_offset = start["byte_offset"]
+    line = start["line"]
+    column = start["column"]
+    utf16_column = start["utf16_column"]
+    for index in range(offset):
+        character = text[index]
+        byte_offset += len(character.encode(encoding))
+        crlf_head = character == "\r" and index + 1 < len(text) and text[index + 1] == "\n"
+        if character == "\n" or (character == "\r" and not crlf_head):
+            line += 1
+            column = 1
+            utf16_column = 1
+            continue
+        column += 1
+        utf16_column += 2 if ord(character) > 0xFFFF else 1
+    return {
+        "byte_offset": byte_offset,
+        "line": line,
+        "column": column,
+        "utf16_column": utf16_column,
+    }
+
+
 @dataclass(frozen=True)
 class MappedText:
     """Текст, каждый символ которого отображается на непрерывный диапазон исходника."""

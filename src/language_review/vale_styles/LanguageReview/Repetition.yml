@@ -1,0 +1,8 @@
+# Повтор одного и того же русского слова подряд («в в», «не не»).
+extends: repetition
+message: "Повтор слова «%s»."
+level: error
+alpha: true
+ignorecase: true
+tokens:
+  - '[а-яА-ЯёЁ]+'

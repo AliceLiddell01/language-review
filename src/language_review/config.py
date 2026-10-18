@@ -58,9 +58,53 @@ SCAN_KEYS = {
 }
 EXTRACT_KEYS = {"header_language", "message_calls", "selectors"}
 SELECTOR_EXTENSIONS = {".json", ".yaml", ".yml", ".toml", ".xml"}
-ROOT_KEYS = {"scan", "extract", "default_profile", "profiles", "doctor"}
-PROFILE_KEYS = {"priority", "project_markers", "match_paths", "scan", "extract"}
+ROOT_KEYS = {"scan", "extract", "check", "default_profile", "profiles", "doctor"}
+PROFILE_KEYS = {"priority", "project_markers", "match_paths", "scan", "extract", "check"}
 DOCTOR_KEYS = {"programs", "http_services"}
+CHECK_ENGINES = ("languagetool", "llm", "vale")
+CHECK_CATEGORIES = (
+    "spelling",
+    "grammar",
+    "punctuation",
+    "style",
+    "bureaucratese",
+    "terminology",
+    "untranslated_english",
+    "typography",
+    "other",
+)
+LLM_PROVIDERS = ("llama_cpp", "ollama")
+LANGUAGETOOL_LEVELS = ("default", "picky")
+# Ключи `[check]` в точечной записи TOML; атрибут CheckSettings получается заменой точек на `_`.
+CHECK_KEYS = {
+    "engines",
+    "categories",
+    "terms",
+    "allow_remote_endpoints",
+    "llm.provider",
+    "llm.timeout_seconds",
+    "llm.batch_chars",
+    "llm.batch_items",
+    "llm.max_output_tokens",
+    "llm.context_tokens",
+    "llm.seed",
+    "llm.thinking",
+    "llm.llama_cpp.endpoint",
+    "llm.llama_cpp.model",
+    "llm.ollama.endpoint",
+    "llm.ollama.model",
+    "languagetool.endpoint",
+    "languagetool.language",
+    "languagetool.level",
+    "languagetool.disabled_rules",
+    "languagetool.timeout_seconds",
+    "vale.program",
+    "vale.config",
+    "vale.timeout_seconds",
+}
+CHECK_TABLES = {"llm", "llm.llama_cpp", "llm.ollama", "languagetool", "vale"}
+CHECK_ENDPOINT_KEYS = ("llm.llama_cpp.endpoint", "llm.ollama.endpoint", "languagetool.endpoint")
+PROFILE_CHECK_KEYS = {"engines", "categories", "terms"}
 PROFILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 # Сегменты имени вызова разделяются как в поддерживаемых языках: `.`, `::` и C++ `->`;
 # дефис допустим внутри имени команды PowerShell, `!` — только в конце макроса Rust.
@@ -91,6 +135,37 @@ class ExtractSettings:
 
 
 @dataclass(frozen=True)
+class CheckSettings:
+    engines: tuple[str, ...] = CHECK_ENGINES
+    categories: tuple[str, ...] = ()
+    terms: dict[str, str] = field(default_factory=dict)
+    allow_remote_endpoints: bool = False
+    llm_provider: str = "llama_cpp"
+    llm_timeout_seconds: float = 180.0
+    llm_batch_chars: int = 1500
+    llm_batch_items: int = 8
+    llm_max_output_tokens: int = 2048
+    llm_context_tokens: int = 8192
+    llm_seed: int = 0
+    llm_thinking: bool = False
+    llm_llama_cpp_endpoint: str = "http://127.0.0.1:8080"
+    llm_llama_cpp_model: str = ""
+    llm_ollama_endpoint: str = "http://127.0.0.1:11434"
+    llm_ollama_model: str = "gemma4:e4b"
+    languagetool_endpoint: str = "http://127.0.0.1:8081"
+    languagetool_language: str = "ru-RU"
+    languagetool_level: str = "default"
+    languagetool_disabled_rules: tuple[str, ...] = ()
+    languagetool_timeout_seconds: float = 30.0
+    vale_program: str = "vale"
+    vale_config: str = ""
+    vale_timeout_seconds: float = 60.0
+
+    def value(self, key: str) -> Any:
+        return getattr(self, key.replace(".", "_"))
+
+
+@dataclass(frozen=True)
 class Profile:
     name: str
     priority: int
@@ -98,6 +173,7 @@ class Profile:
     match_paths: tuple[str, ...]
     scan_overrides: dict[str, Any]
     extract_overrides: dict[str, Any]
+    check_overrides: dict[str, Any] = field(default_factory=dict)
 
 
 def _combine_sources(*sources: str | None) -> str:
@@ -117,6 +193,8 @@ class LoadedConfig:
     extract: ExtractSettings
     sources: dict[str, str]
     extract_sources: dict[str, str]
+    check: CheckSettings
+    check_sources: dict[str, str]
     profiles: dict[str, Profile]
     profile_sources: dict[str, dict[str, str]]
     default_profile: str | None
@@ -184,6 +262,35 @@ class LoadedConfig:
                 sources[key] = profile_sources.get(f"extract.{key}", f"профиль: {profile_name}")
         return settings, sources
 
+    def check_settings_for_profile(
+        self, profile_name: str | None, cli_overrides: dict[str, Any] | None = None
+    ) -> tuple[CheckSettings, dict[str, str]]:
+        """Вернуть параметры языковой проверки: база, профиль и затем аргументы CLI."""
+        settings = self.check
+        sources = dict(self.check_sources)
+        if profile_name is not None:
+            profile = self.profiles.get(profile_name)
+            if profile is None:
+                raise ConfigurationError(f"Профиль «{profile_name}» не найден.")
+            overrides = dict(profile.check_overrides)
+            if "terms" in overrides:
+                overrides["terms"] = {**settings.terms, **overrides["terms"]}
+            settings = replace(settings, **overrides)
+            profile_sources = self.profile_sources.get(profile_name, {})
+            for key in profile.check_overrides:
+                profile_source = profile_sources.get(f"check.{key}", f"профиль: {profile_name}")
+                sources[key] = (
+                    _combine_sources(sources.get(key) if self.check.terms else None, profile_source)
+                    if key == "terms"
+                    else profile_source
+                )
+        for key, value in (cli_overrides or {}).items():
+            if value is None:
+                continue
+            settings = replace(settings, **{key.replace(".", "_"): value})
+            sources[key] = "аргумент командной строки"
+        return settings, sources
+
     def as_mapping(self, profile_name: str | None = None) -> dict[str, Any]:
         settings, sources = self.settings_for_profile(profile_name)
         scan_values = asdict(settings)
@@ -205,6 +312,14 @@ class LoadedConfig:
                 }
                 for extension, patterns in sorted(extract_settings.selector_map().items())
             },
+        }
+        check_settings, check_sources = self.check_settings_for_profile(profile_name)
+        check = {
+            key: {
+                "value": _check_display_value(key, check_settings.value(key)),
+                "source": check_sources.get(key, "по умолчанию"),
+            }
+            for key in sorted(CHECK_KEYS)
         }
         profiles: dict[str, Any] = {}
         for name, profile in sorted(self.profiles.items()):
@@ -258,6 +373,15 @@ class LoadedConfig:
                     for key, value in sorted(profile.scan_overrides.items())
                 },
                 "extract": profile_extract,
+                "check": {
+                    key: {
+                        "value": _check_display_value(key, value),
+                        "source": self.profile_sources.get(name, {}).get(
+                            f"check.{key}", f"профиль: {name}"
+                        ),
+                    }
+                    for key, value in sorted(profile.check_overrides.items())
+                },
             }
         return {
             "schema_version": "1.0",
@@ -277,6 +401,7 @@ class LoadedConfig:
             },
             "scan": scan,
             "extract": extract,
+            "check": check,
             "profiles": profiles,
             "doctor": {
                 "programs": list(self.doctor_programs),
@@ -435,6 +560,158 @@ def _validate_extract(raw: Any, label: str, *, partial: bool) -> dict[str, Any]:
     return checked
 
 
+def _check_display_value(key: str, value: Any) -> Any:
+    if key in CHECK_ENDPOINT_KEYS:
+        return redact_url(str(value))
+    if isinstance(value, tuple):
+        return list(value)
+    if isinstance(value, dict):
+        return dict(sorted(value.items()))
+    return value
+
+
+def is_loopback_host(hostname: str | None) -> bool:
+    if not hostname:
+        return False
+    if hostname.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _validate_service_url(name: str, url: str, *, require_loopback: bool) -> str:
+    parts = urlsplit(url)
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        raise ConfigurationError(f"URL сервиса {name!r} должен использовать HTTP или HTTPS.")
+    if require_loopback and not is_loopback_host(parts.hostname):
+        raise ConfigurationError(f"Сервис {name!r} должен быть адресован loopback-интерфейсу.")
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise ConfigurationError(f"В URL сервиса {name!r} указан неверный порт.") from exc
+    if port == 0:
+        raise ConfigurationError(f"В URL сервиса {name!r} указан неверный порт.")
+    if parts.fragment:
+        raise ConfigurationError(f"URL сервиса {name!r} не должен содержать fragment.")
+    return url
+
+
+def _flatten_check(raw: Any, label: str, prefix: str = "") -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ConfigurationError(f"Раздел {label} должен быть таблицей TOML.")
+    flat: dict[str, Any] = {}
+    for key, value in raw.items():
+        dotted = f"{prefix}{key}"
+        if dotted in CHECK_TABLES:
+            flat.update(_flatten_check(value, f"{label}.{key}", f"{dotted}."))
+        elif dotted in CHECK_KEYS:
+            flat[dotted] = value
+        else:
+            raise ConfigurationError(f"Неизвестный параметр {label}.{key}.")
+    return flat
+
+
+def _choice_list(value: Any, key: str, choices: tuple[str, ...]) -> tuple[str, ...]:
+    items = tuple(dict.fromkeys(_as_string_list(value, key)))
+    unknown = [item for item in items if item not in choices]
+    if unknown:
+        raise ConfigurationError(
+            f"{key} содержит неизвестные значения: {', '.join(unknown)}; "
+            f"допустимо: {', '.join(choices)}."
+        )
+    return items
+
+
+def validate_check_value(key: str, value: Any, label: str, base: Path | None = None) -> Any:
+    """Проверить одно значение `[check]`; относительные пути разрешаются от каталога конфига."""
+    name = f"{label}.{key}"
+    if key == "engines":
+        engines = _choice_list(value, name, CHECK_ENGINES)
+        if not engines:
+            raise ConfigurationError(f"{name} должен содержать хотя бы один движок.")
+        return engines
+    if key == "categories":
+        return _choice_list(value, name, CHECK_CATEGORIES)
+    if key == "terms":
+        if not isinstance(value, dict):
+            raise ConfigurationError(f"{name} должен быть таблицей «термин = замена».")
+        terms: dict[str, str] = {}
+        for term, replacement in value.items():
+            if (
+                not isinstance(term, str)
+                or not isinstance(replacement, str)
+                or not term.strip()
+                or not replacement.strip()
+                or any(char in term + replacement for char in "\r\n\x00")
+            ):
+                raise ConfigurationError(f"{name} должен сопоставлять непустые строки.")
+            terms[term.strip()] = replacement.strip()
+        return terms
+    if key in {"allow_remote_endpoints", "llm.thinking"}:
+        if not isinstance(value, bool):
+            raise ConfigurationError(f"{name} должен быть логическим значением.")
+        return value
+    if key == "llm.provider":
+        if value not in LLM_PROVIDERS:
+            raise ConfigurationError(f"{name} должен быть одним из: {', '.join(LLM_PROVIDERS)}.")
+        return value
+    if key == "languagetool.level":
+        if value not in LANGUAGETOOL_LEVELS:
+            raise ConfigurationError(f"{name} должен быть default или picky.")
+        return value
+    if key.endswith("timeout_seconds"):
+        if isinstance(value, bool) or not isinstance(value, int | float) or not 0 < value <= 3600:
+            raise ConfigurationError(f"{name} должен быть числом секунд от 0 до 3600.")
+        return float(value)
+    limits = {
+        "llm.batch_chars": (200, 50_000),
+        "llm.batch_items": (1, 64),
+        "llm.max_output_tokens": (64, 32_768),
+        "llm.context_tokens": (512, 1_048_576),
+        "llm.seed": (0, 2**31 - 1),
+    }
+    if key in limits:
+        low, high = limits[key]
+        if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+            raise ConfigurationError(f"{name} должен быть целым числом от {low} до {high}.")
+        return value
+    if key == "languagetool.disabled_rules":
+        rules = tuple(dict.fromkeys(_as_string_list(value, name)))
+        if any(not re.fullmatch(r"[A-Za-z0-9_]+", rule) for rule in rules):
+            raise ConfigurationError(f"{name} содержит некорректный идентификатор правила.")
+        return rules
+    if not isinstance(value, str) or "\x00" in value or "\n" in value:
+        raise ConfigurationError(f"{name} должен быть строкой.")
+    value = value.strip()
+    if key in CHECK_ENDPOINT_KEYS:
+        return _validate_service_url(key, value, require_loopback=False)
+    if key in {"llm.ollama.model", "languagetool.language", "vale.program"} and not value:
+        raise ConfigurationError(f"{name} не может быть пустым.")
+    if key in {"vale.config", "vale.program"} and value and base is not None:
+        candidate = Path(value).expanduser()
+        if key == "vale.config" or len(candidate.parts) > 1:
+            if not candidate.is_absolute():
+                candidate = base / candidate
+            return str(candidate.resolve())
+    return value
+
+
+def _validate_check(
+    raw: Any, label: str, *, base: Path | None, profile: bool = False
+) -> dict[str, Any]:
+    flat = _flatten_check(raw, label)
+    if profile:
+        unknown = set(flat) - PROFILE_CHECK_KEYS
+        if unknown:
+            raise ConfigurationError(
+                f"Профиль может переопределять в {label} только engines, categories и terms; "
+                f"найдено: {', '.join(sorted(unknown))}."
+            )
+    return {key: validate_check_value(key, value, label, base) for key, value in flat.items()}
+
+
 def _validate_doctor(raw: Any, label: str) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ConfigurationError(f"Раздел {label} должен быть таблицей TOML.")
@@ -457,30 +734,7 @@ def _validate_doctor(raw: Any, label: str) -> dict[str, Any]:
         for name, url in services.items():
             if not name.strip():
                 raise ConfigurationError(f"{label}.http_services содержит пустое имя.")
-            parts = urlsplit(url)
-            if parts.scheme not in {"http", "https"} or not parts.hostname:
-                raise ConfigurationError(
-                    f"URL сервиса {name!r} должен использовать HTTP или HTTPS."
-                )
-            if parts.hostname.lower() != "localhost":
-                try:
-                    if not ipaddress.ip_address(parts.hostname).is_loopback:
-                        raise ConfigurationError(
-                            f"Сервис {name!r} должен быть адресован loopback-интерфейсу."
-                        )
-                except ValueError as exc:
-                    raise ConfigurationError(
-                        f"Сервис {name!r} должен быть адресован loopback-интерфейсу."
-                    ) from exc
-            try:
-                port = parts.port
-            except ValueError as exc:
-                raise ConfigurationError(f"В URL сервиса {name!r} указан неверный порт.") from exc
-            if port == 0:
-                raise ConfigurationError(f"В URL сервиса {name!r} указан неверный порт.")
-            if parts.fragment:
-                raise ConfigurationError(f"URL сервиса {name!r} не должен содержать fragment.")
-            validated[name] = url
+            validated[name] = _validate_service_url(name, url, require_loopback=True)
         checked["http_services"] = validated
     return checked
 
@@ -522,6 +776,10 @@ def _profile_definitions(
                 f"Неизвестные параметры профиля {name!r}: {', '.join(sorted(unknown))}."
             )
         definition: dict[str, Any] = {}
+        if "check" in value:
+            definition["check"] = _validate_check(
+                value["check"], f"profiles.{name}.check", base=path.parent, profile=True
+            )
         sources[name] = {
             key: f"профиль {name} из {path}"
             for key in ("priority", "project_markers", "match_paths")
@@ -541,6 +799,9 @@ def _profile_definitions(
                     )
                 else:
                     sources[name][f"extract.{key}"] = f"профиль {name} из {path}"
+        sources[name].update(
+            {f"check.{key}": f"профиль {name} из {path}" for key in definition.get("check", {})}
+        )
         if "priority" in value:
             priority = value["priority"]
             if not isinstance(priority, int) or isinstance(priority, bool):
@@ -566,6 +827,8 @@ def _merge_file(
     scan_sources: dict[str, str],
     extract: dict[str, Any],
     extract_sources: dict[str, str],
+    check: dict[str, Any],
+    check_sources: dict[str, str],
     profiles: dict[str, dict[str, Any]],
     profile_sources: dict[str, dict[str, str]],
     doctor: dict[str, Any],
@@ -588,6 +851,16 @@ def _merge_file(
             else:
                 extract[key] = value
                 extract_sources[key] = label
+    if "check" in document:
+        values = _validate_check(document["check"], f"{label}.check", base=path.parent)
+        for key, value in values.items():
+            if key == "terms":
+                check[key] = {**check.get(key, {}), **value}
+            else:
+                check[key] = value
+            check_sources[key] = (
+                _combine_sources(check_sources.get(key), label) if key == "terms" else label
+            )
     if "default_profile" in document:
         profile_name = document["default_profile"]
         if not isinstance(profile_name, str) or not PROFILE_NAME.fullmatch(profile_name):
@@ -599,13 +872,24 @@ def _merge_file(
         for name, incoming in new_profiles.items():
             target = profiles.setdefault(name, {})
             target.update(
-                {key: value for key, value in incoming.items() if key not in {"scan", "extract"}}
+                {
+                    key: value
+                    for key, value in incoming.items()
+                    if key not in {"scan", "extract", "check"}
+                }
             )
             target.setdefault("priority", 0)
             target.setdefault("project_markers", ())
             target.setdefault("match_paths", ())
             if "scan" in incoming:
                 target.setdefault("scan", {}).update(incoming["scan"])
+            if "check" in incoming:
+                check_target = target.setdefault("check", {})
+                for key, value in incoming["check"].items():
+                    if key == "terms":
+                        check_target[key] = {**check_target.get(key, {}), **value}
+                    else:
+                        check_target[key] = value
             if "extract" in incoming:
                 extract_target = target.setdefault("extract", {})
                 for key, value in incoming["extract"].items():
@@ -619,7 +903,7 @@ def _merge_file(
                         extract_target[key] = value
             source_target = profile_sources.setdefault(name, {})
             for key, source in new_sources.get(name, {}).items():
-                if key == "extract.message_calls":
+                if key in {"extract.message_calls", "check.terms"}:
                     source_target[key] = _combine_sources(source_target.get(key), source)
                 else:
                     source_target[key] = source
@@ -639,6 +923,8 @@ def load_config(explicit_path: str | Path | None = None) -> LoadedConfig:
         "header_language": "по умолчанию",
         "message_calls": "по умолчанию",
     }
+    check: dict[str, Any] = {}
+    check_sources = {key: "по умолчанию" for key in CHECK_KEYS}
     profiles: dict[str, dict[str, Any]] = {}
     profile_sources: dict[str, dict[str, str]] = {}
     doctor: dict[str, Any] = {"programs": (), "http_services": {}}
@@ -656,6 +942,8 @@ def load_config(explicit_path: str | Path | None = None) -> LoadedConfig:
             scan_sources,
             extract,
             extract_sources,
+            check,
+            check_sources,
             profiles,
             profile_sources,
             doctor,
@@ -678,6 +966,8 @@ def load_config(explicit_path: str | Path | None = None) -> LoadedConfig:
             scan_sources,
             extract,
             extract_sources,
+            check,
+            check_sources,
             profiles,
             profile_sources,
             doctor,
@@ -690,6 +980,17 @@ def load_config(explicit_path: str | Path | None = None) -> LoadedConfig:
         raise ConfigurationError(
             f"Профиль по умолчанию {default_profile!r} не определён ни в одном конфиге."
         )
+    check_settings = replace(
+        CheckSettings(), **{key.replace(".", "_"): value for key, value in check.items()}
+    )
+    if not check_settings.allow_remote_endpoints:
+        for key in CHECK_ENDPOINT_KEYS:
+            if not is_loopback_host(urlsplit(check_settings.value(key)).hostname):
+                raise ConfigurationError(
+                    f"check.{key} указывает на нелокальный адрес; удалённые сервисы получают "
+                    "тексты исходников и включаются только явным "
+                    "check.allow_remote_endpoints = true."
+                )
     compiled_profiles: dict[str, Profile] = {}
     for name, raw in profiles.items():
         compiled_profiles[name] = Profile(
@@ -699,6 +1000,7 @@ def load_config(explicit_path: str | Path | None = None) -> LoadedConfig:
             match_paths=raw["match_paths"],
             scan_overrides=dict(raw.get("scan", {})),
             extract_overrides=dict(raw.get("extract", {})),
+            check_overrides=dict(raw.get("check", {})),
         )
 
     return LoadedConfig(
@@ -706,6 +1008,8 @@ def load_config(explicit_path: str | Path | None = None) -> LoadedConfig:
         extract=ExtractSettings(**extract),
         sources=scan_sources,
         extract_sources=extract_sources,
+        check=check_settings,
+        check_sources=check_sources,
         profiles=compiled_profiles,
         profile_sources=profile_sources,
         default_profile=default_profile,

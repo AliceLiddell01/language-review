@@ -8,7 +8,15 @@ from pathlib import Path
 from typing import Any
 
 from language_review import __version__
-from language_review.config import LoadedConfig, load_config
+from language_review.check import check_paths
+from language_review.check_report import check_document, check_exit_code, check_human
+from language_review.config import (
+    CHECK_CATEGORIES,
+    CHECK_ENGINES,
+    LLM_PROVIDERS,
+    LoadedConfig,
+    load_config,
+)
 from language_review.doctor import doctor_exit_code, doctor_human, run_doctor
 from language_review.errors import ConfigurationError, InputError, OutputError
 from language_review.extract_report import extract_document, extract_human
@@ -74,6 +82,32 @@ def _parser() -> argparse.ArgumentParser:
         "extract", help="извлечь человекочитаемые фрагменты с точными диапазонами исходника"
     )
     _add_selection_arguments(extract)
+
+    check = commands.add_parser(
+        "check",
+        help="проверить русский текст извлечённых фрагментов выбранными языковыми движками",
+    )
+    _add_selection_arguments(check)
+    check.add_argument(
+        "--engine",
+        action="append",
+        choices=CHECK_ENGINES,
+        default=None,
+        help="использовать только указанный движок; параметр можно повторять",
+    )
+    check.add_argument(
+        "--category",
+        action="append",
+        choices=CHECK_CATEGORIES,
+        default=None,
+        help="оставить только указанную категорию замечаний; параметр можно повторять",
+    )
+    check.add_argument(
+        "--llm-provider",
+        choices=LLM_PROVIDERS,
+        default=None,
+        help="транспорт LLM: llama_cpp (по умолчанию) или ollama",
+    )
 
     doctor = commands.add_parser("doctor", help="проверить пакет, конфигурацию и заданные сервисы")
     doctor.add_argument("paths", nargs="*", metavar="ПУТЬ")
@@ -143,6 +177,9 @@ def _config_human(mapping: dict[str, Any]) -> str:
                 )
         else:
             lines.append(f"  {key}: {item['value']} (источник: {item['source']})")
+    lines.append("Параметры языковой проверки:")
+    for key, item in sorted(mapping["check"].items()):
+        lines.append(f"  {key}: {item['value']} (источник: {item['source']})")
     lines.append("Профили:")
     if not mapping["profiles"]:
         lines.append("  не настроены")
@@ -163,6 +200,8 @@ def _config_human(mapping: dict[str, Any]) -> str:
                     )
             else:
                 lines.append(f"    extract.{key}: {item['value']} (источник: {item['source']})")
+        for key, item in sorted(profile["check"].items()):
+            lines.append(f"    check.{key}: {item['value']} (источник: {item['source']})")
     lines.append("Диагностика:")
     lines.append(
         f"  programs: {mapping['doctor']['programs']} "
@@ -231,6 +270,43 @@ def _run(arguments: argparse.Namespace) -> int:
         ):
             return 3
         return 0
+
+    if arguments.command == "check":
+        check_result = check_paths(
+            arguments.paths,
+            config,
+            requested_profile=arguments.profile,
+            cli_overrides=_cli_overrides(arguments),
+            check_overrides={
+                "engines": tuple(dict.fromkeys(arguments.engine)) if arguments.engine else None,
+                "categories": (
+                    tuple(dict.fromkeys(arguments.category)) if arguments.category else None
+                ),
+                "llm.provider": arguments.llm_provider,
+            },
+        )
+        content = _emit(
+            lambda: check_document(check_result),
+            lambda: check_human(check_result),
+            arguments.format,
+        )
+        if arguments.output is None:
+            print(content)
+        else:
+            target = write_report(arguments.output, content, check_result.extract.scan_result)
+            print(f"Отчёт сохранён: {target}", file=sys.stderr)
+        for run in check_result.engines:
+            if run.status != "ok":
+                detail = f" — {run.message}" if run.message else ""
+                print(f"Движок {run.name}: {run.status}{detail}", file=sys.stderr)
+        for checked in check_result.documents:
+            if checked.status in {"partial", "error", "unavailable", "unsupported"}:
+                print(
+                    f"Неполная проверка {checked.extract.root} :: {checked.extract.path}: "
+                    f"{checked.status}",
+                    file=sys.stderr,
+                )
+        return check_exit_code(check_result)
 
     if arguments.command == "doctor":
         doctor_result = run_doctor(config, arguments.paths)

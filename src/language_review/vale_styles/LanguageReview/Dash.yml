@@ -1,0 +1,11 @@
+# Дефис, окружённый пробелами, вместо тире.
+extends: existence
+message: "Типографика: между словами нужно тире «—», а не дефис."
+level: suggestion
+nonword: true
+action:
+  name: replace
+  params:
+    - " — "
+tokens:
+  - '\s-\s'

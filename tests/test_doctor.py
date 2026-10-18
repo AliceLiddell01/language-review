@@ -58,3 +58,30 @@ def test_doctor_missing_path_has_input_exit_code(tmp_path: Path, isolated_appdat
     assert result["paths"][0]["status"] == "missing"
     assert result["input_errors"] is True
     assert doctor_exit_code(result) == 2
+
+
+def test_doctor_reports_selected_engines_without_secrets(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    config_path = tmp_path / "doctor.toml"
+    config_path.write_text(
+        """
+[check]
+engines = ["languagetool", "vale"]
+[check.languagetool]
+endpoint = "http://127.0.0.1:9/?token=secret"
+[check.vale]
+program = "definitely-missing-vale-binary"
+""",
+        encoding="utf-8",
+    )
+
+    result = run_doctor(load_config(config_path), [])
+
+    assert [engine["name"] for engine in result["engines"]] == ["languagetool", "vale"]
+    assert {engine["status"] for engine in result["engines"]} == {"unavailable"}
+    assert result["engines"][0]["details"]["endpoint_origin"] == "loopback"
+    assert result["engines"][1]["diagnostics"] == ["program_not_found"]
+    assert result["check"]["engines"] == ["languagetool", "vale"]
+    assert "secret" not in json.dumps(result, ensure_ascii=False)
+    assert doctor_exit_code(result) == 3

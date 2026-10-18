@@ -198,6 +198,21 @@ def test_cpp_doxygen_printf_raw_and_machine_literals() -> None:
     assert {"%s", "%d"}.issubset(protected)
 
 
+def test_cpp_raw_string_backslashes_are_text_not_escape_sequences() -> None:
+    source = SourceMap.create(
+        'void run() { puts(R"(Нажмите \\Up для перехода, \\n не перенос, {name}.)"); }'.encode(),
+        "utf-8",
+        None,
+    )
+
+    result = extract_code(source, ".cpp", ExtractSettings())
+
+    assert [fragment.text for fragment in result.fragments] == [
+        "Нажмите \\Up для перехода, \\n не перенос, {name}."
+    ]
+    assert _protection_texts(source, result.fragments) == {"{name}"}
+
+
 def test_c_source_comments_messages_and_non_user_literals() -> None:
     source = SourceMap.create(
         (

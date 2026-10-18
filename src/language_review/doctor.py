@@ -7,10 +7,13 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from language_review import __version__
 from language_review.config import LoadedConfig, redact_url
+
+if TYPE_CHECKING:
+    from language_review.check import EngineFactory
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -95,7 +98,49 @@ def _check_http(name: str, url: str) -> dict[str, Any]:
     }
 
 
-def run_doctor(config: LoadedConfig, paths: list[str]) -> dict[str, Any]:
+def _check_engines(
+    config: LoadedConfig, engine_factory: EngineFactory | None
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    from language_review.check import ENGINE_ORDER, default_engine_factory
+
+    factory = engine_factory or default_engine_factory
+    settings, sources = config.check_settings_for_profile(None)
+    engines: list[dict[str, Any]] = []
+    for name in ENGINE_ORDER:
+        if name not in settings.engines:
+            continue
+        engine = factory(name, settings)
+        try:
+            details = engine.describe()
+            probe = engine.probe()
+        finally:
+            engine.close()
+        details.update(probe.details)
+        engines.append(
+            {
+                "name": name,
+                "status": probe.status,
+                "details": dict(sorted(details.items())),
+                "diagnostics": list(probe.diagnostics),
+                "message": probe.message,
+            }
+        )
+    check = {
+        "engines": list(settings.engines),
+        "categories": list(settings.categories),
+        "llm_provider": settings.llm_provider,
+        "allow_remote_endpoints": settings.allow_remote_endpoints,
+        "sources": {
+            key: sources.get(key, "по умолчанию")
+            for key in ("engines", "categories", "llm.provider", "allow_remote_endpoints")
+        },
+    }
+    return check, engines
+
+
+def run_doctor(
+    config: LoadedConfig, paths: list[str], *, engine_factory: EngineFactory | None = None
+) -> dict[str, Any]:
     try:
         package_version = importlib.metadata.version("language-review")
     except importlib.metadata.PackageNotFoundError:
@@ -109,8 +154,11 @@ def run_doctor(config: LoadedConfig, paths: list[str]) -> dict[str, Any]:
     http_checks = [
         _check_http(name, url) for name, url in sorted(config.doctor_http_services.items())
     ]
-    failures = any(check["status"] != "available" for check in program_checks) or any(
-        check["status"] in {"unavailable", "unhealthy"} for check in http_checks
+    check_settings, engine_checks = _check_engines(config, engine_factory)
+    failures = (
+        any(check["status"] != "available" for check in program_checks)
+        or any(check["status"] in {"unavailable", "unhealthy"} for check in http_checks)
+        or any(check["status"] != "available" for check in engine_checks)
     )
     input_errors = any(check["status"] != "available" for check in path_checks)
     return {
@@ -132,6 +180,8 @@ def run_doctor(config: LoadedConfig, paths: list[str]) -> dict[str, Any]:
         "paths": path_checks,
         "programs": program_checks,
         "http_services": http_checks,
+        "check": check_settings,
+        "engines": engine_checks,
         "input_errors": input_errors,
         "external_failures": failures,
     }
@@ -159,6 +209,25 @@ def doctor_human(result: dict[str, Any]) -> str:
         detail = check.get("http_status", check.get("error", ""))
         lines.append(
             f"HTTP-сервис: {check['name']} — {check['status']}" + (f" ({detail})" if detail else "")
+        )
+    check = result["check"]
+    lines.append(
+        f"Языковая проверка: движки {', '.join(check['engines'])}; "
+        f"LLM-провайдер {check['llm_provider']}"
+    )
+    for engine in result["engines"]:
+        details = engine["details"]
+        version = (
+            details.get("version") or details.get("server_build") or details.get("server_version")
+        )
+        parts = [
+            str(value)
+            for value in (version, details.get("model"), details.get("endpoint"), engine["message"])
+            if value
+        ]
+        lines.append(
+            f"Движок: {engine['name']} — {engine['status']}"
+            + (f" ({'; '.join(parts)})" if parts else "")
         )
     return "\n".join(lines)
 

@@ -220,8 +220,10 @@ def _escape_protection(text: str, start: int, dialect: str) -> list[ProtectedSpa
             ProtectedSpan(start + match.start(), start + match.end(), "кавычка C# verbatim")
             for match in re.finditer(r'""', text)
         ]
+    # В raw-строках обратная косая черта — обычный символ текста, а не начало escape.
     if dialect in {
         "cpp_raw",
+        "cpp_raw_format",
         "rust_raw",
         "rust_raw_format",
         "csharp_raw_format",

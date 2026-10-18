@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from language_review.config import load_config
+from language_review.config import CheckSettings, load_config
 from language_review.errors import ConfigurationError
 
 
@@ -169,3 +169,85 @@ remote = "https://example.com/health"
         assert "loopback" in str(exc)
     else:
         raise AssertionError("Внешний HTTP-сервис должен отклоняться")
+
+
+def test_check_settings_defaults_precedence_profiles_and_cli(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    user_path = isolated_appdata / "language-review" / "config.toml"
+    user_path.parent.mkdir(parents=True)
+    _write(
+        user_path,
+        """
+[check]
+terms = { "юзер" = "пользователь" }
+[check.llm.llama_cpp]
+endpoint = "http://127.0.0.1:18080/?api_key=secret"
+""",
+    )
+    explicit = _write(
+        tmp_path / "explicit.toml",
+        """
+[check]
+engines = ["languagetool", "vale"]
+terms = { "фича" = "функция" }
+[check.vale]
+config = "styles/.vale.ini"
+
+[profiles.docs.check]
+engines = ["vale"]
+categories = ["terminology"]
+terms = { "апдейт" = "обновление" }
+""",
+    )
+
+    defaults = CheckSettings()
+    config = load_config(explicit)
+    base, base_sources = config.check_settings_for_profile(None)
+    profile, profile_sources = config.check_settings_for_profile(
+        "docs", {"llm.provider": "ollama", "engines": None}
+    )
+    mapping = config.as_mapping("docs")
+
+    assert defaults.engines == ("languagetool", "llm", "vale")
+    assert defaults.llm_provider == "llama_cpp"
+    assert defaults.llm_llama_cpp_endpoint == "http://127.0.0.1:8080"
+    assert defaults.languagetool_language == "ru-RU"
+    assert base.engines == ("languagetool", "vale")
+    assert base.terms == {"юзер": "пользователь", "фича": "функция"}
+    assert base.vale_config == str((tmp_path / "styles" / ".vale.ini").resolve())
+    assert str(user_path) in base_sources["terms"] and str(explicit) in base_sources["terms"]
+    assert profile.engines == ("vale",)
+    assert profile.categories == ("terminology",)
+    assert profile.terms == {"юзер": "пользователь", "фича": "функция", "апдейт": "обновление"}
+    assert profile.llm_provider == "ollama"
+    assert profile_sources["llm.provider"] == "аргумент командной строки"
+    assert profile_sources["engines"].startswith("профиль docs из")
+    assert mapping["check"]["engines"]["value"] == ["vale"]
+    assert mapping["profiles"]["docs"]["check"]["categories"]["value"] == ["terminology"]
+    assert "secret" not in json.dumps(mapping, ensure_ascii=False)
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ('[check]\nengines = ["spellcheck"]\n', "неизвестные значения"),
+        ("[check]\nengines = []\n", "хотя бы один движок"),
+        ('[check]\ncategories = ["poetry"]\n', "неизвестные значения"),
+        ('[check.llm]\nprovider = "openai"\n', "llama_cpp, ollama"),
+        ("[check.llm]\nbatch_items = 0\n", "от 1 до 64"),
+        ("[check.languagetool]\ntimeout_seconds = 0\n", "от 0 до 3600"),
+        ('[check.languagetool]\nendpoint = "ftp://127.0.0.1"\n', "HTTP или HTTPS"),
+        ('[check.languagetool]\ndisabled_rules = ["BAD RULE"]\n', "идентификатор правила"),
+        ("[check]\nunknown = 1\n", "Неизвестный параметр"),
+        ('[check.vale]\nmodel = "x"\n', "Неизвестный параметр"),
+        ('[check]\nterms = { "юзер" = "" }\n', "непустые строки"),
+        ('[profiles.docs.check.languagetool]\nlanguage = "en"\n', "только engines"),
+        ('[check.llm.ollama]\nendpoint = "http://10.0.0.5:11434"\n', "allow_remote_endpoints"),
+    ],
+)
+def test_invalid_check_settings_fail(
+    tmp_path: Path, isolated_appdata: Path, text: str, message: str
+) -> None:
+    with pytest.raises(ConfigurationError, match=message):
+        load_config(_write(tmp_path / "bad.toml", text))

@@ -138,12 +138,20 @@ class LanguageToolEngine:
         if not isinstance(body, dict) or not isinstance(body.get("matches"), list):
             return UnitOutcome(unit.index, "failed", "languagetool_protocol_error")
         outcome = UnitOutcome(unit.index, "checked")
+
+        def fail(reason: str) -> None:
+            # Структурно недостоверный ответ — неполная проверка единицы, а не «чисто»;
+            # корректные замечания остаются, первая причина сохраняется.
+            if outcome.status == "checked":
+                outcome.status, outcome.reason = "failed", reason
+
         warnings = body.get("warnings")
         if isinstance(warnings, dict) and warnings.get("incompleteResults") is True:
             outcome.status = "failed"
             outcome.reason = "languagetool_incomplete_results"
         for match in body["matches"]:
             if not isinstance(match, dict):
+                fail("languagetool_schema_violation")
                 outcome.rejected.append(RejectedOutput(self.name, unit.index, "schema_violation"))
                 continue
             rule = _mapping(match.get("rule"))
@@ -162,6 +170,7 @@ class LanguageToolEngine:
                 or offset < 0
                 or length < 0
             ):
+                fail("languagetool_schema_violation")
                 outcome.rejected.append(
                     RejectedOutput(self.name, unit.index, "schema_violation", rule_id, message)
                 )
@@ -170,6 +179,7 @@ class LanguageToolEngine:
             start = view.utf16_index(offset)
             end = view.utf16_index(offset + length)
             if start is None or end is None:
+                fail("languagetool_schema_violation")
                 outcome.rejected.append(
                     RejectedOutput(self.name, unit.index, "position_out_of_range", rule_id, message)
                 )
@@ -200,6 +210,7 @@ class LanguageToolEngine:
                 category = CATEGORY_MAP.get(rule_category or "", "other")
             raw_replacements = match.get("replacements", [])
             if not isinstance(raw_replacements, list):
+                fail("languagetool_schema_violation")
                 outcome.rejected.append(
                     RejectedOutput(self.name, unit.index, "schema_violation", rule_id, message)
                 )

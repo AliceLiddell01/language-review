@@ -217,7 +217,7 @@ def check_document(result: CheckResult) -> dict[str, Any]:
             "fragments": sum(len(item.extract.fragments) for item in documents),
             "units": sum(len(item.units) for item in documents),
             "units_without_russian_text": sum(
-                unit.skip_reason == "no_russian_text" for item in documents for unit in item.units
+                not unit.has_russian for item in documents for unit in item.units
             ),
             "findings": sum(len(item.findings) for item in documents),
             "rejected": sum(len(item.rejected) for item in documents),

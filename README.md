@@ -14,6 +14,8 @@ Language Review — локальная CLI-утилита для инвента�
 
 Нужны Python 3.15 и uv 0.13.1 или новее. В репозитории выбрана последняя стабильная версия Python, доступная на момент подготовки этапа; пакет требует Python 3.15 или новее. Зависимости и версии инструментов разработки зафиксированы в `uv.lock`.
 
+На Windows с Python 3.15 текущая версия `tree-sitter` из `uv.lock` устанавливается из исходников: для `uv sync` требуется компилятор MSVC из Visual Studio Build Tools с компонентами C++.
+
 ~~~powershell
 uv sync --locked
 uv run --locked language-review --help

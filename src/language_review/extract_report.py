@@ -13,8 +13,16 @@ from language_review.extract_models import (
     ResolvedFragment,
 )
 
+COORDINATE_SYSTEM = {
+    "byte_offset": "смещение в байтах исходного файла от нуля, включая BOM",
+    "line": "номер физической строки от единицы",
+    "column": "столбец в Unicode code points от единицы; табуляция — один code point",
+    "utf16_column": "столбец в UTF-16 code units от единицы",
+    "end": "exclusive",
+}
 
-def _fragment_id(document_id: str, fragment: FragmentDraft) -> str:
+
+def fragment_id(document_id: str, fragment: FragmentDraft) -> str:
     payload = "\0".join(
         (
             document_id,
@@ -55,7 +63,7 @@ def _document_mapping(document: ExtractDocument) -> dict[str, Any]:
         fragment = resolved.draft
         fragments.append(
             {
-                "id": _fragment_id(document.id, fragment),
+                "id": fragment_id(document.id, fragment),
                 "kind": fragment.kind,
                 "context": fragment.context,
                 "text": fragment.text,
@@ -103,13 +111,7 @@ def extract_document(result: ExtractResult) -> dict[str, Any]:
         "operation": "extract",
         "tool": {"name": "language-review", "version": __version__},
         "status": status,
-        "coordinate_system": {
-            "byte_offset": "смещение в байтах исходного файла от нуля, включая BOM",
-            "line": "номер физической строки от единицы",
-            "column": "столбец в Unicode code points от единицы; табуляция — один code point",
-            "utf16_column": "столбец в UTF-16 code units от единицы",
-            "end": "exclusive",
-        },
+        "coordinate_system": COORDINATE_SYSTEM,
         "roots": result.roots,
         "summary": {
             "roots": len(result.roots),

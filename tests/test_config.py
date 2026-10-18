@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from language_review.config import load_config
+from language_review.config import CheckSettings, load_config
 from language_review.errors import ConfigurationError
 
 
@@ -169,3 +169,142 @@ remote = "https://example.com/health"
         assert "loopback" in str(exc)
     else:
         raise AssertionError("Внешний HTTP-сервис должен отклоняться")
+
+
+def test_check_settings_defaults_precedence_profiles_and_cli(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    user_path = isolated_appdata / "language-review" / "config.toml"
+    user_path.parent.mkdir(parents=True)
+    _write(
+        user_path,
+        """
+[check]
+terms = { "юзер" = "пользователь" }
+[check.llm.llama_cpp]
+endpoint = "http://127.0.0.1:18080/?api_key=secret"
+""",
+    )
+    explicit = _write(
+        tmp_path / "explicit.toml",
+        """
+[check]
+engines = ["languagetool", "vale"]
+terms = { "фича" = "функция" }
+[check.vale]
+config = "styles/.vale.ini"
+
+[profiles.docs.check]
+engines = ["vale"]
+categories = ["terminology"]
+terms = { "апдейт" = "обновление" }
+""",
+    )
+
+    defaults = CheckSettings()
+    config = load_config(explicit)
+    base, base_sources = config.check_settings_for_profile(None)
+    profile, profile_sources = config.check_settings_for_profile(
+        "docs", {"llm.provider": "ollama", "engines": None}
+    )
+    mapping = config.as_mapping("docs")
+
+    assert defaults.engines == ("languagetool", "llm", "vale")
+    assert defaults.llm_provider == "llama_cpp"
+    assert defaults.llm_llama_cpp_endpoint == "http://127.0.0.1:8080"
+    assert defaults.languagetool_language == "ru-RU"
+    assert base.engines == ("languagetool", "vale")
+    assert base.terms == {"юзер": "пользователь", "фича": "функция"}
+    assert base.vale_config == str((tmp_path / "styles" / ".vale.ini").resolve())
+    assert str(user_path) in base_sources["terms"] and str(explicit) in base_sources["terms"]
+    assert profile.engines == ("vale",)
+    assert profile.categories == ("terminology",)
+    assert profile.terms == {"юзер": "пользователь", "фича": "функция", "апдейт": "обновление"}
+    assert profile.llm_provider == "ollama"
+    assert profile_sources["llm.provider"] == "аргумент командной строки"
+    assert profile_sources["engines"].startswith("профиль docs из")
+    assert mapping["check"]["engines"]["value"] == ["vale"]
+    assert mapping["profiles"]["docs"]["check"]["categories"]["value"] == ["terminology"]
+    assert "secret" not in json.dumps(mapping, ensure_ascii=False)
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ('[check]\nengines = ["spellcheck"]\n', "неизвестные значения"),
+        ("[check]\nengines = []\n", "хотя бы один движок"),
+        ('[check]\ncategories = ["poetry"]\n', "неизвестные значения"),
+        ('[check.llm]\nprovider = "openai"\n', "llama_cpp, ollama"),
+        ("[check.llm]\nbatch_items = 0\n", "от 1 до 64"),
+        ("[check.languagetool]\ntimeout_seconds = 0\n", "от 0 до 3600"),
+        ('[check.languagetool]\nendpoint = "ftp://127.0.0.1"\n', "HTTP или HTTPS"),
+        ('[check.languagetool]\ndisabled_rules = ["BAD RULE"]\n', "идентификатор правила"),
+        ("[check]\nunknown = 1\n", "Неизвестный параметр"),
+        ('[check.vale]\nmodel = "x"\n', "Неизвестный параметр"),
+        ('[check]\nterms = { "юзер" = "" }\n', "непустые строки"),
+        ('[profiles.docs.check.languagetool]\nlanguage = "en"\n', "только engines"),
+        ('[check.llm.ollama]\nendpoint = "http://10.0.0.5:11434"\n', "allow_remote_endpoints"),
+        ('[check.languagetool]\nendpoint = "http://[::1"\n', "неверный адрес узла"),
+        ('[check.llm.llama_cpp]\nendpoint = "http://[xx]:8080"\n', "неверный адрес узла"),
+        ('[check.llm.ollama]\nendpoint = "http://[::1]:99999"\n', "неверный порт"),
+        ('[check.languagetool]\nendpoint = "http://127.0.0.1:abc"\n', "неверный порт"),
+        ('[doctor.http_services]\nlocal = "http://[::1/health"\n', "неверный адрес узла"),
+    ],
+)
+def test_invalid_check_settings_fail(
+    tmp_path: Path, isolated_appdata: Path, text: str, message: str
+) -> None:
+    with pytest.raises(ConfigurationError, match=message):
+        load_config(_write(tmp_path / "bad.toml", text))
+
+
+def test_loopback_ipv4_and_ipv6_endpoints_are_accepted(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    config = load_config(
+        _write(
+            tmp_path / "loopback.toml",
+            '[check.llm.llama_cpp]\nendpoint = "http://[::1]:8080"\n'
+            '[check.languagetool]\nendpoint = "http://127.0.0.1:8081"\n'
+            '[doctor.http_services]\nlocal = "http://[::1]:8080/health"\n',
+        )
+    )
+
+    assert config.check.llm_llama_cpp_endpoint == "http://[::1]:8080"
+    assert config.check.languagetool_endpoint == "http://127.0.0.1:8081"
+    mapping = config.as_mapping()
+    assert mapping["check"]["llm.llama_cpp.endpoint"]["value"] == "http://[::1]:8080"
+    assert mapping["doctor"]["http_services"] == {"local": "http://[::1]:8080/health"}
+
+
+def test_remote_endpoint_check_runs_after_merging_all_files(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    user_path = isolated_appdata / "language-review" / "config.toml"
+    user_path.parent.mkdir(parents=True)
+    _write(user_path, '[check.llm.ollama]\nendpoint = "http://10.0.0.5:11434/?token=secret"\n')
+    allow = _write(tmp_path / "allow.toml", "[check]\nallow_remote_endpoints = true\n")
+
+    config = load_config(allow)
+    settings, sources = config.check_settings_for_profile(None)
+
+    assert settings.llm_ollama_endpoint.startswith("http://10.0.0.5:11434")
+    assert str(allow) in sources["allow_remote_endpoints"]
+    assert "secret" not in json.dumps(config.as_mapping(), ensure_ascii=False)
+
+
+def test_explicit_config_can_forbid_remote_endpoints_allowed_by_user_config(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    user_path = isolated_appdata / "language-review" / "config.toml"
+    user_path.parent.mkdir(parents=True)
+    _write(
+        user_path,
+        "[check]\nallow_remote_endpoints = true\n"
+        '[check.llm.ollama]\nendpoint = "http://10.0.0.5:11434"\n',
+    )
+    deny = _write(tmp_path / "deny.toml", "[check]\nallow_remote_endpoints = false\n")
+
+    load_config()
+    with pytest.raises(ConfigurationError, match="allow_remote_endpoints"):
+        load_config(deny)

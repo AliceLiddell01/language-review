@@ -1,0 +1,914 @@
+{
+  "configuration": {
+    "categories": [],
+    "engines": [
+      "languagetool",
+      "vale"
+    ],
+    "llm_provider": "llama_cpp",
+    "sources": {
+      "categories": "по умолчанию",
+      "engines": "файл конфигурации",
+      "llm.provider": "по умолчанию"
+    }
+  },
+  "coordinate_system": {
+    "byte_offset": "смещение в байтах исходного файла от нуля, включая BOM",
+    "column": "столбец в Unicode code points от единицы; табуляция — один code point",
+    "end": "exclusive",
+    "line": "номер физической строки от единицы",
+    "utf16_column": "столбец в UTF-16 code units от единицы"
+  },
+  "documents": [
+    {
+      "bom": "utf-8",
+      "configuration": {
+        "categories": [],
+        "engines": [
+          "languagetool",
+          "vale"
+        ],
+        "sources": {
+          "categories": "по умолчанию",
+          "engines": "файл конфигурации",
+          "terms": "по умолчанию"
+        },
+        "terms_count": 0
+      },
+      "diagnostics": [],
+      "encoding": "utf-8",
+      "extraction_reason": null,
+      "extraction_status": "extracted",
+      "findings": [
+        {
+          "agreement": [
+            "languagetool"
+          ],
+          "categories": [
+            "spelling"
+          ],
+          "category": "spelling",
+          "conflicting_suggestions": false,
+          "excerpt": "ошыбок",
+          "excerpt_status": "verified",
+          "fragment_ids": [
+            "frag-d97ad56d14a42b3599e29417"
+          ],
+          "id": "find-b6ed36874fdc336634447b78",
+          "range": {
+            "end": {
+              "byte_offset": 109,
+              "column": 23,
+              "line": 4,
+              "utf16_column": 23
+            },
+            "start": {
+              "byte_offset": 97,
+              "column": 17,
+              "line": 4,
+              "utf16_column": 17
+            }
+          },
+          "sources": [
+            {
+              "category": "spelling",
+              "confidence": null,
+              "engine": "languagetool",
+              "engine_excerpt": "ошыбок",
+              "message": "Возможно найдена орфографическая ошибка.",
+              "range": {
+                "end": {
+                  "byte_offset": 109,
+                  "column": 23,
+                  "line": 4,
+                  "utf16_column": 23
+                },
+                "start": {
+                  "byte_offset": 97,
+                  "column": 17,
+                  "line": 4,
+                  "utf16_column": 17
+                }
+              },
+              "rule_category": "TYPOS",
+              "rule_id": "MORFOLOGIK_RULE_RU_RU",
+              "severity": null
+            }
+          ],
+          "suggestions": [
+            {
+              "edit": {
+                "original": "ошыбок",
+                "range": {
+                  "end": {
+                    "byte_offset": 109,
+                    "column": 23,
+                    "line": 4,
+                    "utf16_column": 23
+                  },
+                  "start": {
+                    "byte_offset": 97,
+                    "column": 17,
+                    "line": 4,
+                    "utf16_column": 17
+                  }
+                },
+                "text": "ошибок"
+              },
+              "engine_replacement": "ошибок",
+              "engines": [
+                "languagetool"
+              ],
+              "origin": "dictionary",
+              "reasons": [],
+              "status": "candidate"
+            }
+          ]
+        },
+        {
+          "agreement": [
+            "vale"
+          ],
+          "categories": [
+            "bureaucratese"
+          ],
+          "category": "bureaucratese",
+          "conflicting_suggestions": false,
+          "excerpt": "осуществляется",
+          "excerpt_status": "verified",
+          "fragment_ids": [
+            "frag-f552921cc137d2c0c8926621"
+          ],
+          "id": "find-1edd2738ccb5edf16b479bba",
+          "range": {
+            "end": {
+              "byte_offset": 229,
+              "column": 25,
+              "line": 6,
+              "utf16_column": 25
+            },
+            "start": {
+              "byte_offset": 201,
+              "column": 11,
+              "line": 6,
+              "utf16_column": 11
+            }
+          },
+          "sources": [
+            {
+              "category": "bureaucratese",
+              "confidence": null,
+              "engine": "vale",
+              "engine_excerpt": "осуществляется",
+              "message": "Канцелярит: «осуществляется» — попробуйте выразить проще.",
+              "range": {
+                "end": {
+                  "byte_offset": 229,
+                  "column": 25,
+                  "line": 6,
+                  "utf16_column": 25
+                },
+                "start": {
+                  "byte_offset": 201,
+                  "column": 11,
+                  "line": 6,
+                  "utf16_column": 11
+                }
+              },
+              "rule_category": "LanguageReview",
+              "rule_id": "LanguageReview.Bureaucratese",
+              "severity": "suggestion"
+            }
+          ],
+          "suggestions": []
+        },
+        {
+          "agreement": [
+            "vale"
+          ],
+          "categories": [
+            "bureaucratese"
+          ],
+          "category": "bureaucratese",
+          "conflicting_suggestions": false,
+          "excerpt": "посредством",
+          "excerpt_status": "verified",
+          "fragment_ids": [
+            "frag-f552921cc137d2c0c8926621"
+          ],
+          "id": "find-6dcc94d531a2bf5501f4e58c",
+          "range": {
+            "end": {
+              "byte_offset": 252,
+              "column": 37,
+              "line": 6,
+              "utf16_column": 37
+            },
+            "start": {
+              "byte_offset": 230,
+              "column": 26,
+              "line": 6,
+              "utf16_column": 26
+            }
+          },
+          "sources": [
+            {
+              "category": "bureaucratese",
+              "confidence": null,
+              "engine": "vale",
+              "engine_excerpt": "посредством",
+              "message": "Канцелярит: «посредством» — попробуйте выразить проще.",
+              "range": {
+                "end": {
+                  "byte_offset": 252,
+                  "column": 37,
+                  "line": 6,
+                  "utf16_column": 37
+                },
+                "start": {
+                  "byte_offset": 230,
+                  "column": 26,
+                  "line": 6,
+                  "utf16_column": 26
+                }
+              },
+              "rule_category": "LanguageReview",
+              "rule_id": "LanguageReview.Bureaucratese",
+              "severity": "suggestion"
+            }
+          ],
+          "suggestions": []
+        }
+      ],
+      "format": "markdown",
+      "fragments": [
+        {
+          "checks": {
+            "languagetool": {
+              "reason": null,
+              "status": "checked"
+            },
+            "vale": {
+              "reason": null,
+              "status": "checked"
+            }
+          },
+          "context": "markdown:h1",
+          "id": "frag-fcf0402d87d5fd7110c7078d",
+          "kind": "markdown_prose",
+          "range": {
+            "end": {
+              "byte_offset": 23,
+              "column": 12,
+              "line": 1,
+              "utf16_column": 12
+            },
+            "start": {
+              "byte_offset": 5,
+              "column": 3,
+              "line": 1,
+              "utf16_column": 3
+            }
+          },
+          "unit_fragment_ids": [
+            "frag-fcf0402d87d5fd7110c7078d"
+          ]
+        },
+        {
+          "checks": {
+            "languagetool": {
+              "reason": null,
+              "status": "checked"
+            },
+            "vale": {
+              "reason": null,
+              "status": "checked"
+            }
+          },
+          "context": "markdown:prose",
+          "id": "frag-c0c7861381151c41b8d38b0d",
+          "kind": "markdown_prose",
+          "range": {
+            "end": {
+              "byte_offset": 65,
+              "column": 21,
+              "line": 3,
+              "utf16_column": 21
+            },
+            "start": {
+              "byte_offset": 27,
+              "column": 1,
+              "line": 3,
+              "utf16_column": 1
+            }
+          },
+          "unit_fragment_ids": [
+            "frag-c0c7861381151c41b8d38b0d",
+            "frag-d97ad56d14a42b3599e29417"
+          ]
+        },
+        {
+          "checks": {
+            "languagetool": {
+              "reason": null,
+              "status": "checked"
+            },
+            "vale": {
+              "reason": null,
+              "status": "checked"
+            }
+          },
+          "context": "markdown:prose",
+          "id": "frag-d97ad56d14a42b3599e29417",
+          "kind": "markdown_prose",
+          "range": {
+            "end": {
+              "byte_offset": 178,
+              "column": 69,
+              "line": 4,
+              "utf16_column": 69
+            },
+            "start": {
+              "byte_offset": 67,
+              "column": 1,
+              "line": 4,
+              "utf16_column": 1
+            }
+          },
+          "unit_fragment_ids": [
+            "frag-c0c7861381151c41b8d38b0d",
+            "frag-d97ad56d14a42b3599e29417"
+          ]
+        },
+        {
+          "checks": {
+            "languagetool": {
+              "reason": null,
+              "status": "checked"
+            },
+            "vale": {
+              "reason": null,
+              "status": "checked"
+            }
+          },
+          "context": "markdown:prose",
+          "id": "frag-f552921cc137d2c0c8926621",
+          "kind": "markdown_prose",
+          "range": {
+            "end": {
+              "byte_offset": 278,
+              "column": 58,
+              "line": 6,
+              "utf16_column": 58
+            },
+            "start": {
+              "byte_offset": 182,
+              "column": 1,
+              "line": 6,
+              "utf16_column": 1
+            }
+          },
+          "unit_fragment_ids": [
+            "frag-f552921cc137d2c0c8926621"
+          ]
+        }
+      ],
+      "id": "doc-b2a1f516a601019342359844",
+      "language": "markdown",
+      "path": "sample.md",
+      "profile": null,
+      "rejected": [],
+      "root": "root-0001",
+      "source_sha256": "07d27649068637b57658940eac77b2ee771c4469fd24aaf7c90dba5d49a9d4f0",
+      "status": "findings"
+    },
+    {
+      "bom": null,
+      "configuration": {
+        "categories": [],
+        "engines": [
+          "languagetool",
+          "vale"
+        ],
+        "sources": {
+          "categories": "по умолчанию",
+          "engines": "файл конфигурации",
+          "terms": "по умолчанию"
+        },
+        "terms_count": 0
+      },
+      "diagnostics": [],
+      "encoding": "utf-8",
+      "extraction_reason": null,
+      "extraction_status": "extracted",
+      "findings": [
+        {
+          "agreement": [
+            "vale"
+          ],
+          "categories": [
+            "terminology"
+          ],
+          "category": "terminology",
+          "conflicting_suggestions": false,
+          "excerpt": "юзер",
+          "excerpt_status": "verified",
+          "fragment_ids": [
+            "frag-96651b0a15411653fde082fd"
+          ],
+          "id": "find-a54ff115a8396af158db3033",
+          "range": {
+            "end": {
+              "byte_offset": 68,
+              "column": 39,
+              "line": 1,
+              "utf16_column": 39
+            },
+            "start": {
+              "byte_offset": 60,
+              "column": 35,
+              "line": 1,
+              "utf16_column": 35
+            }
+          },
+          "sources": [
+            {
+              "category": "terminology",
+              "confidence": null,
+              "engine": "vale",
+              "engine_excerpt": "юзер",
+              "message": "Терминология: используйте 'пользователь' вместо «юзер».",
+              "range": {
+                "end": {
+                  "byte_offset": 68,
+                  "column": 39,
+                  "line": 1,
+                  "utf16_column": 39
+                },
+                "start": {
+                  "byte_offset": 60,
+                  "column": 35,
+                  "line": 1,
+                  "utf16_column": 35
+                }
+              },
+              "rule_category": "LanguageReview",
+              "rule_id": "LanguageReview.Terminology",
+              "severity": "warning"
+            }
+          ],
+          "suggestions": [
+            {
+              "edit": {
+                "original": "юзер",
+                "range": {
+                  "end": {
+                    "byte_offset": 68,
+                    "column": 39,
+                    "line": 1,
+                    "utf16_column": 39
+                  },
+                  "start": {
+                    "byte_offset": 60,
+                    "column": 35,
+                    "line": 1,
+                    "utf16_column": 35
+                  }
+                },
+                "text": "пользователь"
+              },
+              "engine_replacement": "пользователь",
+              "engines": [
+                "vale"
+              ],
+              "origin": "rule",
+              "reasons": [],
+              "status": "candidate"
+            }
+          ]
+        },
+        {
+          "agreement": [
+            "languagetool"
+          ],
+          "categories": [
+            "spelling"
+          ],
+          "category": "spelling",
+          "conflicting_suggestions": true,
+          "excerpt": "праверить",
+          "excerpt_status": "verified",
+          "fragment_ids": [
+            "frag-586fc19d1fd77d6c07317915"
+          ],
+          "id": "find-d25a212fbd0c7a75124230b8",
+          "range": {
+            "end": {
+              "byte_offset": 205,
+              "column": 44,
+              "line": 3,
+              "utf16_column": 45
+            },
+            "start": {
+              "byte_offset": 187,
+              "column": 35,
+              "line": 3,
+              "utf16_column": 36
+            }
+          },
+          "sources": [
+            {
+              "category": "spelling",
+              "confidence": null,
+              "engine": "languagetool",
+              "engine_excerpt": "праверить",
+              "message": "Возможно найдена орфографическая ошибка.",
+              "range": {
+                "end": {
+                  "byte_offset": 205,
+                  "column": 44,
+                  "line": 3,
+                  "utf16_column": 45
+                },
+                "start": {
+                  "byte_offset": 187,
+                  "column": 35,
+                  "line": 3,
+                  "utf16_column": 36
+                }
+              },
+              "rule_category": "TYPOS",
+              "rule_id": "MORFOLOGIK_RULE_RU_RU",
+              "severity": null
+            }
+          ],
+          "suggestions": [
+            {
+              "edit": {
+                "original": "праверить",
+                "range": {
+                  "end": {
+                    "byte_offset": 205,
+                    "column": 44,
+                    "line": 3,
+                    "utf16_column": 45
+                  },
+                  "start": {
+                    "byte_offset": 187,
+                    "column": 35,
+                    "line": 3,
+                    "utf16_column": 36
+                  }
+                },
+                "text": "проверить"
+              },
+              "engine_replacement": "проверить",
+              "engines": [
+                "languagetool"
+              ],
+              "origin": "dictionary",
+              "reasons": [],
+              "status": "candidate"
+            },
+            {
+              "edit": {
+                "original": "праверить",
+                "range": {
+                  "end": {
+                    "byte_offset": 205,
+                    "column": 44,
+                    "line": 3,
+                    "utf16_column": 45
+                  },
+                  "start": {
+                    "byte_offset": 187,
+                    "column": 35,
+                    "line": 3,
+                    "utf16_column": 36
+                  }
+                },
+                "text": "проверять"
+              },
+              "engine_replacement": "проверять",
+              "engines": [
+                "languagetool"
+              ],
+              "origin": "dictionary",
+              "reasons": [],
+              "status": "candidate"
+            },
+            {
+              "edit": {
+                "original": "праверить",
+                "range": {
+                  "end": {
+                    "byte_offset": 205,
+                    "column": 44,
+                    "line": 3,
+                    "utf16_column": 45
+                  },
+                  "start": {
+                    "byte_offset": 187,
+                    "column": 35,
+                    "line": 3,
+                    "utf16_column": 36
+                  }
+                },
+                "text": "протереть"
+              },
+              "engine_replacement": "протереть",
+              "engines": [
+                "languagetool"
+              ],
+              "origin": "dictionary",
+              "reasons": [],
+              "status": "candidate"
+            },
+            {
+              "edit": {
+                "original": "праверить",
+                "range": {
+                  "end": {
+                    "byte_offset": 205,
+                    "column": 44,
+                    "line": 3,
+                    "utf16_column": 45
+                  },
+                  "start": {
+                    "byte_offset": 187,
+                    "column": 35,
+                    "line": 3,
+                    "utf16_column": 36
+                  }
+                },
+                "text": "проветрить"
+              },
+              "engine_replacement": "проветрить",
+              "engines": [
+                "languagetool"
+              ],
+              "origin": "dictionary",
+              "reasons": [],
+              "status": "candidate"
+            },
+            {
+              "edit": {
+                "original": "праверить",
+                "range": {
+                  "end": {
+                    "byte_offset": 205,
+                    "column": 44,
+                    "line": 3,
+                    "utf16_column": 45
+                  },
+                  "start": {
+                    "byte_offset": 187,
+                    "column": 35,
+                    "line": 3,
+                    "utf16_column": 36
+                  }
+                },
+                "text": "провидеть"
+              },
+              "engine_replacement": "провидеть",
+              "engines": [
+                "languagetool"
+              ],
+              "origin": "dictionary",
+              "reasons": [],
+              "status": "candidate"
+            }
+          ]
+        }
+      ],
+      "format": "source_code",
+      "fragments": [
+        {
+          "checks": {
+            "languagetool": {
+              "reason": null,
+              "status": "checked"
+            },
+            "vale": {
+              "reason": null,
+              "status": "checked"
+            }
+          },
+          "context": "rust_documentation",
+          "id": "frag-96651b0a15411653fde082fd",
+          "kind": "documentation_comment",
+          "range": {
+            "end": {
+              "byte_offset": 106,
+              "column": 60,
+              "line": 1,
+              "utf16_column": 60
+            },
+            "start": {
+              "byte_offset": 4,
+              "column": 5,
+              "line": 1,
+              "utf16_column": 5
+            }
+          },
+          "unit_fragment_ids": [
+            "frag-96651b0a15411653fde082fd"
+          ]
+        },
+        {
+          "checks": {
+            "languagetool": {
+              "reason": null,
+              "status": "checked"
+            },
+            "vale": {
+              "reason": null,
+              "status": "checked"
+            }
+          },
+          "context": "rust_comment",
+          "id": "frag-586fc19d1fd77d6c07317915",
+          "kind": "comment",
+          "range": {
+            "end": {
+              "byte_offset": 225,
+              "column": 55,
+              "line": 3,
+              "utf16_column": 56
+            },
+            "start": {
+              "byte_offset": 148,
+              "column": 8,
+              "line": 3,
+              "utf16_column": 8
+            }
+          },
+          "unit_fragment_ids": [
+            "frag-586fc19d1fd77d6c07317915"
+          ]
+        },
+        {
+          "checks": {
+            "languagetool": {
+              "reason": null,
+              "status": "checked"
+            },
+            "vale": {
+              "reason": null,
+              "status": "checked"
+            }
+          },
+          "context": "call:println",
+          "id": "frag-c33370b808103fae9c6561d5",
+          "kind": "user_facing_string",
+          "range": {
+            "end": {
+              "byte_offset": 294,
+              "column": 49,
+              "line": 4,
+              "utf16_column": 49
+            },
+            "start": {
+              "byte_offset": 240,
+              "column": 15,
+              "line": 4,
+              "utf16_column": 15
+            }
+          },
+          "unit_fragment_ids": [
+            "frag-c33370b808103fae9c6561d5"
+          ]
+        },
+        {
+          "checks": {
+            "languagetool": {
+              "reason": null,
+              "status": "checked"
+            },
+            "vale": {
+              "reason": null,
+              "status": "checked"
+            }
+          },
+          "context": "rust_comment",
+          "id": "frag-8f3e6800afe3769d1c46747b",
+          "kind": "comment",
+          "range": {
+            "end": {
+              "byte_offset": 417,
+              "column": 66,
+              "line": 5,
+              "utf16_column": 66
+            },
+            "start": {
+              "byte_offset": 311,
+              "column": 8,
+              "line": 5,
+              "utf16_column": 8
+            }
+          },
+          "unit_fragment_ids": [
+            "frag-8f3e6800afe3769d1c46747b"
+          ]
+        }
+      ],
+      "id": "doc-7287a7baf0fa0999db251182",
+      "language": "rust",
+      "path": "sample.rs",
+      "profile": null,
+      "rejected": [],
+      "root": "root-0001",
+      "source_sha256": "3153b4543f6373bda4234d5560e92d5c0a9c7e36f06d9a239f9095403afe0cfb",
+      "status": "findings"
+    }
+  ],
+  "engines": [
+    {
+      "details": {
+        "disabled_rules": [],
+        "endpoint": "http://127.0.0.1:18081",
+        "endpoint_origin": "loopback",
+        "language": "ru-RU",
+        "level": "default",
+        "version": "6.6"
+      },
+      "diagnostics": [],
+      "elapsed_ms": 1045.0,
+      "message": null,
+      "name": "languagetool",
+      "statistics": {
+        "filtered": 0,
+        "findings": 2,
+        "fragments_checked": 8,
+        "rejected": 0,
+        "request_failures": 0,
+        "requests": 7,
+        "units_checked": 7,
+        "units_failed": 0,
+        "units_skipped": 0,
+        "units_total": 7
+      },
+      "status": "ok",
+      "tokens": {}
+    },
+    {
+      "details": {
+        "configuration": "bundled",
+        "program": "vale",
+        "style": "LanguageReview",
+        "version": "3.24.0"
+      },
+      "diagnostics": [],
+      "elapsed_ms": 183.1,
+      "message": null,
+      "name": "vale",
+      "statistics": {
+        "filtered": 0,
+        "findings": 3,
+        "fragments_checked": 8,
+        "rejected": 0,
+        "request_failures": 0,
+        "requests": 2,
+        "units_checked": 7,
+        "units_failed": 0,
+        "units_skipped": 0,
+        "units_total": 7
+      },
+      "status": "ok",
+      "tokens": {}
+    }
+  ],
+  "operation": "check",
+  "roots": [
+    {
+      "id": "root-0001",
+      "kind": "directory",
+      "profile": null,
+      "status": "ok"
+    }
+  ],
+  "schema": "language-review.check",
+  "schema_version": "1.0",
+  "status": "findings",
+  "suggestions_applied": false,
+  "summary": {
+    "clean": 0,
+    "documents": 2,
+    "errors": 0,
+    "findings": 5,
+    "fragments": 8,
+    "partial": 0,
+    "rejected": 0,
+    "roots": 1,
+    "skipped": 0,
+    "unavailable": 0,
+    "units": 7,
+    "units_without_russian_text": 0,
+    "unsupported": 0,
+    "with_findings": 2
+  },
+  "tool": {
+    "name": "language-review",
+    "version": "0.1.0"
+  }
+}

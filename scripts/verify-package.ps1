@@ -124,7 +124,34 @@ try {
         ) {
             throw "Установленный модуль $kind extract вернул неожиданный отчёт."
         }
-        Write-Output "${kind}: установка, entry point, python -m, scan и extract прошли."
+
+        # check без сервисов: Vale проверяется встроенными правилами из пакета, если программа
+        # установлена; иначе ожидается явный статус unavailable и код 5, а не успех.
+        $valeAvailable = $null -ne (Get-Command vale -ErrorAction SilentlyContinue)
+        $checkJsonOutput = (
+            & $launcher check $sampleFile --engine vale --format json
+        ) -join [Environment]::NewLine
+        $checkExitCode = $LASTEXITCODE
+        if ((Get-FileHash -LiteralPath $sampleFile -Algorithm SHA256).Hash -ne $sampleHash) {
+            throw "Установленный пакет $kind check изменил исходный файл."
+        }
+        $checkReport = $checkJsonOutput | ConvertFrom-Json
+        if ($checkReport.schema -ne 'language-review.check' -or $checkReport.suggestions_applied) {
+            throw "Установленная команда $kind check вернула неожиданный отчёт."
+        }
+        if ($valeAvailable) {
+            if ($checkExitCode -ne 0 -or $checkReport.status -ne 'clean' -or
+                $checkReport.engines[0].details.configuration -ne 'bundled' -or
+                $checkReport.engines[0].status -ne 'ok') {
+                throw "Установленная команда $kind check с Vale вернула код $checkExitCode."
+            }
+        }
+        elseif ($checkExitCode -ne 5 -or $checkReport.status -ne 'unavailable') {
+            throw "Установленная команда $kind check без Vale вернула код $checkExitCode."
+        }
+        # Ожидаемый код 5 проверен выше; он не должен стать кодом завершения всего скрипта.
+        $global:LASTEXITCODE = 0
+        Write-Output "${kind}: установка, точка входа, python -m, scan, extract и check прошли."
     }
 }
 finally {

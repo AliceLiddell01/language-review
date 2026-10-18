@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | Архитектура пакета / зависимости | [architecture.md](architecture.md) | `src/language_review/**`, `pyproject.toml` |
 | Выбор файлов, `scan`, JSON и границы пути | [scanner.md](scanner.md) | `scanner.py`, `report.py`, `tests/test_scanner.py` |
-| Структурное извлечение, координаты и схема отчёта | [extraction.md](extraction.md) | `extract_*.py`, `coordinates.py`, `tests/test_extract.py` |
+| Структурное извлечение, координаты и схема отчёта | [extraction.md](extraction.md) | `extraction.py`, `extract_*.py`, `coordinates.py`, `docs/extract-report.schema.json`, `docs/extract-report.example.json`, `tests/test_extract.py` |
 | Конфигурация, профили, `doctor` | [configuration.md](configuration.md) | `config.py`, `doctor.py`, `tests/test_config.py`, `tests/test_doctor.py` |
 | Проверки, приемка и инфраструктура | [verification.md](verification.md) | `pyproject.toml`, `scripts/verify-package.ps1`, `.github/workflows/**` |
 | Git/GitHub | — | `.agents/skills/language-review-git-workflow/SKILL.md` |

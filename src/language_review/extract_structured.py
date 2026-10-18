@@ -446,6 +446,7 @@ def _xml_walk_element(
     element_path: tuple[str | int, ...],
     selectors: Sequence[str],
     output: list[FragmentDraft],
+    diagnostics: list[str],
 ) -> None:
     name = _xml_name(
         source, next((item for item in element.named_children if item.type == "STag"), element)
@@ -488,6 +489,10 @@ def _xml_walk_element(
                     draft = _draft(source, "xml", element_path, _node_span(source, content))
                     if draft is not None:
                         output.append(draft)
+                elif content.type in {"CDSect", "CharRef", "EntityRef", "Reference"} and (
+                    _selector_matches(element_path, selectors)
+                ):
+                    diagnostics.append("unsupported_xml_content_node")
                 elif content.type == "element":
                     child_name = _xml_name(
                         source,
@@ -503,7 +508,7 @@ def _xml_walk_element(
                     child_path: tuple[str | int, ...] = (*element_path, child_name)
                     if child_names.count(child_name) > 1:
                         child_path = (*child_path, index)
-                    _xml_walk_element(source, content, child_path, selectors, output)
+                    _xml_walk_element(source, content, child_path, selectors, output, diagnostics)
 
 
 def extract_structured(
@@ -530,7 +535,7 @@ def extract_structured(
                     next((item for item in node.named_children if item.type == "STag"), node),
                 )
                 if name is not None:
-                    _xml_walk_element(source, node, (name,), selectors, output)
+                    _xml_walk_element(source, node, (name,), selectors, output, diagnostics)
     has_error = root.has_error
     if has_error:
         diagnostics.append("parser_error_or_missing_node")

@@ -80,6 +80,23 @@ def test_rust_documentation_with_generic_types_is_not_parsed_as_xml() -> None:
     assert [item.text for item in result.fragments] == ["Returns Vec<String> or Option<u8>."]
 
 
+def test_csharp_xml_documentation_skips_code_elements() -> None:
+    source = SourceMap.create(
+        (
+            "/// <summary>Возвращает <c>null</c>, если значение не задано.</summary>\n"
+            "/// <remarks><code>return null;</code></remarks>\n"
+            "class Sample {}\n"
+        ).encode(),
+        "utf-8",
+        None,
+    )
+
+    result = extract_code(source, ".cs", ExtractSettings())
+
+    assert result.partial is False
+    assert [item.text for item in result.fragments] == ["Возвращает", ", если значение не задано."]
+
+
 def test_rust_logging_macros_skip_fields_and_select_the_message() -> None:
     source = SourceMap.create(
         (
@@ -460,6 +477,25 @@ def test_xml_selectors_support_namespace_prefixes() -> None:
     assert [fragment.text for fragment in fragments] == ["Настроенное сообщение."]
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "<ui><message>До<![CDATA[между]]>после</message></ui>",
+        "<ui><message>До &amp; после</message></ui>",
+        "<ui><message>До &#38; после</message></ui>",
+    ],
+)
+def test_xml_selected_unsupported_content_nodes_are_partial(raw: str) -> None:
+    source = SourceMap.create(raw.encode(), "utf-8", None)
+    settings = ExtractSettings(selectors={".xml": ("$.ui.message",)})
+
+    _language, fragments, diagnostics, partial = extract_structured(source, ".xml", settings)
+
+    assert diagnostics == ["unsupported_xml_content_node"]
+    assert partial is True
+    assert fragments
+
+
 def test_structured_escape_sequences_remain_protected() -> None:
     yaml_source = SourceMap.create(
         "ui:\n  message: 'Строка с ''кавычками'' и \\e escape'\n".encode(), "utf-8", None
@@ -748,7 +784,7 @@ def test_extract_detects_source_change_after_scan(
 
 
 def test_extract_classifies_adapter_value_error_as_extractor_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, isolated_appdata: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from language_review import extraction
 

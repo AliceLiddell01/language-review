@@ -537,6 +537,17 @@ def _xml_doc_fragments(
             continue
         view_start = bisect_left(byte_offsets, first) - len(prefix)
         view_end = bisect_left(byte_offsets, last) - len(prefix)
+        tag = "xml_text"
+        element = node.parent.parent if node.parent is not None else None
+        if element is not None:
+            for child in element.children:
+                if child.type == "STag":
+                    name = next((item for item in child.children if item.type == "Name"), None)
+                    if name is not None:
+                        tag = (name.text or b"").decode("utf-8", errors="replace")
+                    break
+        if tag in {"c", "code"}:
+            continue
         for source_start, source_end in _mapped_runs(view, view_start, view_end):
             raw_text = source.text[source_start:source_end]
             trim_start = len(raw_text) - len(raw_text.lstrip())
@@ -548,15 +559,6 @@ def _xml_doc_fragments(
             text = source.text[source_start:source_end]
             if _is_machine_literal(text):
                 continue
-            tag = "xml_text"
-            element = node.parent.parent if node.parent is not None else None
-            if element is not None:
-                for child in element.children:
-                    if child.type == "STag":
-                        name = next((item for item in child.children if item.type == "Name"), None)
-                        if name is not None:
-                            tag = (name.text or b"").decode("utf-8", errors="replace")
-                        break
             output.append(
                 FragmentDraft(
                     "documentation_comment",

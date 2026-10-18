@@ -11,6 +11,8 @@ from language_review import __version__
 from language_review.config import LoadedConfig, load_config
 from language_review.doctor import doctor_exit_code, doctor_human, run_doctor
 from language_review.errors import ConfigurationError, InputError, OutputError
+from language_review.extract_report import extract_document, extract_human
+from language_review.extraction import extract_paths
 from language_review.report import scan_document, scan_human, write_report
 from language_review.scanner import scan_paths
 
@@ -61,6 +63,42 @@ def _parser() -> argparse.ArgumentParser:
         help="обходить внутренние символические ссылки (по умолчанию выключено)",
     )
     scan.add_argument("--max-file-size", type=int, metavar="БАЙТЫ")
+
+    extract = commands.add_parser(
+        "extract", help="извлечь человекочитаемые фрагменты с точными диапазонами исходника"
+    )
+    extract.add_argument("paths", nargs="+", metavar="ПУТЬ")
+    extract.add_argument("--format", choices=("human", "json"), default="human")
+    extract.add_argument("--output", type=Path, metavar="ФАЙЛ", help="сохранить отчёт в файл")
+    extract.add_argument("--profile", metavar="ИМЯ")
+    extract.add_argument(
+        "--extension",
+        action="append",
+        default=[],
+        metavar=".EXT",
+        help="добавить расширение; параметр можно повторять",
+    )
+    extract.add_argument(
+        "--only-extension",
+        action="append",
+        default=None,
+        metavar=".EXT",
+        help="использовать только указанные расширения",
+    )
+    extract.add_argument("--exclude", action="append", default=[], metavar="ШАБЛОН")
+    extract.add_argument(
+        "--respect-gitignore",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="учитывать правила .gitignore (по умолчанию включено)",
+    )
+    extract.add_argument(
+        "--follow-symlinks",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="обходить внутренние символические ссылки (по умолчанию выключено)",
+    )
+    extract.add_argument("--max-file-size", type=int, metavar="БАЙТЫ")
 
     doctor = commands.add_parser("doctor", help="проверить пакет, конфигурацию и заданные сервисы")
     doctor.add_argument("paths", nargs="*", metavar="ПУТЬ")
@@ -118,6 +156,18 @@ def _config_human(mapping: dict[str, Any]) -> str:
     lines.append("Параметры сканирования:")
     for key, item in sorted(mapping["scan"].items()):
         lines.append(f"  {key}: {item['value']} (источник: {item['source']})")
+    lines.append("Параметры извлечения:")
+    for key, item in sorted(mapping["extract"].items()):
+        if key == "selectors":
+            if not item:
+                lines.append("  selectors: {}")
+            for extension, selector_group in sorted(item.items()):
+                lines.append(
+                    f"  selectors.{extension}: {selector_group['value']} "
+                    f"(источник: {selector_group['source']})"
+                )
+        else:
+            lines.append(f"  {key}: {item['value']} (источник: {item['source']})")
     lines.append("Профили:")
     if not mapping["profiles"]:
         lines.append("  не настроены")
@@ -129,6 +179,15 @@ def _config_human(mapping: dict[str, Any]) -> str:
             lines.append(f"    {selector}: {value['value']} (источник: {value['source']})")
         for key, item in sorted(profile["scan"].items()):
             lines.append(f"    scan.{key}: {item['value']} (источник: {item['source']})")
+        for key, item in sorted(profile["extract"].items()):
+            if key == "selectors":
+                for extension, selector_group in sorted(item.items()):
+                    lines.append(
+                        f"    extract.selectors.{extension}: {selector_group['value']} "
+                        f"(источник: {selector_group['source']})"
+                    )
+            else:
+                lines.append(f"    extract.{key}: {item['value']} (источник: {item['source']})")
     lines.append("Диагностика:")
     lines.append(
         f"  programs: {mapping['doctor']['programs']} "
@@ -165,6 +224,33 @@ def _run(arguments: argparse.Namespace) -> int:
         if scan_result.input_errors:
             return 2
         return 3 if scan_result.error_count else 0
+
+    if arguments.command == "extract":
+        result = extract_paths(
+            arguments.paths,
+            config,
+            requested_profile=arguments.profile,
+            cli_overrides=_cli_overrides(arguments),
+        )
+        content = _emit(extract_document(result), extract_human(result), arguments.format)
+        if arguments.output is None:
+            print(content)
+        else:
+            target = write_report(arguments.output, content, result.scan_result)
+            print(f"Отчёт сохранён: {target}", file=sys.stderr)
+        for document in result.documents:
+            for diagnostic in sorted(set(document.diagnostics)):
+                print(
+                    f"Диагностика {document.root} :: {document.path}: {diagnostic}",
+                    file=sys.stderr,
+                )
+        if result.scan_result.input_errors:
+            return 2
+        if any(
+            document.status in {"error", "partial", "unsupported"} for document in result.documents
+        ):
+            return 3
+        return 0
 
     if arguments.command == "doctor":
         doctor_result = run_doctor(config, arguments.paths)

@@ -42,7 +42,10 @@ def scan_document(result: ScanResult) -> dict[str, Any]:
             "errors": result.error_count,
             "roots": len(result.roots),
         },
-        "files": [asdict(record) for record in result.files],
+        "files": [
+            {key: value for key, value in asdict(record).items() if key != "_source_sha256"}
+            for record in result.files
+        ],
     }
 
 

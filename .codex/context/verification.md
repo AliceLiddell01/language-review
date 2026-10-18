@@ -13,7 +13,7 @@ uv run --locked pytest -n 8
 .\scripts\verify-package.ps1
 ```
 
-Скрипт собирает wheel/sdist, устанавливает их в изолированные среды Windows и проверяет настоящий CLI, `python -m language_review` и JSON-вывод `scan`.
+Скрипт собирает wheel/sdist, устанавливает их в изолированные среды Windows и проверяет настоящий CLI, `python -m language_review`, JSON-вывод `scan` и структурное извлечение через `extract`.
 
 ## Проверки агентской и GitHub-инфраструктуры
 

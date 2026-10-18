@@ -4,7 +4,7 @@ import ipaddress
 import os
 import re
 import tomllib
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import SplitResult, urlsplit, urlunsplit
@@ -22,6 +22,8 @@ DEFAULT_EXTENSIONS = (
     ".hpp",
     ".hh",
     ".hxx",
+    ".ps1",
+    ".psm1",
     ".md",
     ".markdown",
     ".txt",
@@ -54,8 +56,10 @@ SCAN_KEYS = {
     "follow_symlinks",
     "max_file_size",
 }
-ROOT_KEYS = {"scan", "default_profile", "profiles", "doctor"}
-PROFILE_KEYS = {"priority", "project_markers", "match_paths", "scan"}
+EXTRACT_KEYS = {"header_language", "message_calls", "selectors"}
+SELECTOR_EXTENSIONS = {".json", ".yaml", ".yml", ".toml", ".xml"}
+ROOT_KEYS = {"scan", "extract", "default_profile", "profiles", "doctor"}
+PROFILE_KEYS = {"priority", "project_markers", "match_paths", "scan", "extract"}
 DOCTOR_KEYS = {"programs", "http_services"}
 PROFILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
@@ -71,18 +75,31 @@ class ScanSettings:
 
 
 @dataclass(frozen=True)
+class ExtractSettings:
+    header_language: str = "auto"
+    message_calls: tuple[str, ...] = ()
+    selectors: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+    def selector_map(self) -> dict[str, tuple[str, ...]]:
+        return dict(self.selectors)
+
+
+@dataclass(frozen=True)
 class Profile:
     name: str
     priority: int
     project_markers: tuple[str, ...]
     match_paths: tuple[str, ...]
     scan_overrides: dict[str, Any]
+    extract_overrides: dict[str, Any]
 
 
 @dataclass(frozen=True)
 class LoadedConfig:
     scan: ScanSettings
+    extract: ExtractSettings
     sources: dict[str, str]
+    extract_sources: dict[str, str]
     profiles: dict[str, Profile]
     profile_sources: dict[str, dict[str, str]]
     default_profile: str | None
@@ -109,12 +126,83 @@ class LoadedConfig:
             )
         return settings, sources
 
+    def extract_settings_for_profile(
+        self, profile_name: str | None
+    ) -> tuple[ExtractSettings, dict[str, str]]:
+        settings = self.extract
+        sources = dict(self.extract_sources)
+        if profile_name is None:
+            return settings, sources
+        profile = self.profiles.get(profile_name)
+        if profile is None:
+            raise ConfigurationError(f"Профиль «{profile_name}» не найден.")
+        overrides = dict(profile.extract_overrides)
+        if "selectors" in overrides:
+            selectors = settings.selector_map()
+            selectors.update(overrides.pop("selectors"))
+            overrides["selectors"] = selectors
+        if "message_calls" in overrides:
+            overrides["message_calls"] = tuple(
+                dict.fromkeys((*settings.message_calls, *overrides["message_calls"]))
+            )
+        settings = replace(settings, **overrides)
+        for key in profile.extract_overrides:
+            sources[key] = self.profile_sources.get(profile_name, {}).get(
+                f"extract.{key}", f"профиль: {profile_name}"
+            )
+        return settings, sources
+
     def as_mapping(self, profile_name: str | None = None) -> dict[str, Any]:
         settings, sources = self.settings_for_profile(profile_name)
         scan_values = asdict(settings)
         scan = {key: {"value": value, "source": sources[key]} for key, value in scan_values.items()}
+        extract_settings, extract_sources = self.extract_settings_for_profile(profile_name)
+        extract = {
+            "header_language": {
+                "value": extract_settings.header_language,
+                "source": extract_sources.get("header_language", "по умолчанию"),
+            },
+            "message_calls": {
+                "value": list(extract_settings.message_calls),
+                "source": extract_sources.get("message_calls", "по умолчанию"),
+            },
+            "selectors": {
+                extension: {
+                    "value": list(patterns),
+                    "source": extract_sources.get(f"selectors.{extension}", "по умолчанию"),
+                }
+                for extension, patterns in sorted(extract_settings.selector_map().items())
+            },
+        }
         profiles: dict[str, Any] = {}
         for name, profile in sorted(self.profiles.items()):
+            profile_extract: dict[str, Any] = {}
+            if "header_language" in profile.extract_overrides:
+                profile_extract["header_language"] = {
+                    "value": profile.extract_overrides["header_language"],
+                    "source": self.profile_sources.get(name, {}).get(
+                        "extract.header_language", f"профиль: {name}"
+                    ),
+                }
+            if "message_calls" in profile.extract_overrides:
+                profile_extract["message_calls"] = {
+                    "value": list(profile.extract_overrides["message_calls"]),
+                    "source": self.profile_sources.get(name, {}).get(
+                        "extract.message_calls", f"профиль: {name}"
+                    ),
+                }
+            if "selectors" in profile.extract_overrides:
+                profile_extract["selectors"] = {
+                    extension: {
+                        "value": list(patterns),
+                        "source": self.profile_sources.get(name, {}).get(
+                            f"extract.selectors.{extension}", f"профиль: {name}"
+                        ),
+                    }
+                    for extension, patterns in sorted(
+                        profile.extract_overrides["selectors"].items()
+                    )
+                }
             profiles[name] = {
                 "priority": {
                     "value": profile.priority,
@@ -137,6 +225,7 @@ class LoadedConfig:
                     }
                     for key, value in sorted(profile.scan_overrides.items())
                 },
+                "extract": profile_extract,
             }
         return {
             "schema_version": "1.0",
@@ -155,6 +244,7 @@ class LoadedConfig:
                 "loaded": [str(path) for path in self.loaded_config_paths],
             },
             "scan": scan,
+            "extract": extract,
             "profiles": profiles,
             "doctor": {
                 "programs": list(self.doctor_programs),
@@ -234,6 +324,80 @@ def _validate_scan(raw: Any, label: str, *, partial: bool) -> dict[str, Any]:
             checked[key] = value
     if not partial:
         defaults = asdict(ScanSettings())
+        defaults.update(checked)
+        return defaults
+    return checked
+
+
+def _validate_selector(selector: str, label: str) -> str:
+    if not selector.startswith("$"):
+        raise ConfigurationError(f"Селектор {label} должен начинаться с символа $. ")
+    index = 1
+    while index < len(selector):
+        if selector[index] == ".":
+            index += 1
+            start = index
+            while index < len(selector) and (
+                selector[index].isalnum() or selector[index] in "_-*@:"
+            ):
+                index += 1
+            if start == index:
+                raise ConfigurationError(f"Некорректный селектор {label}: {selector!r}.")
+            continue
+        if selector[index] == "[":
+            closing = selector.find("]", index + 1)
+            if closing < 0:
+                raise ConfigurationError(f"Некорректный селектор {label}: {selector!r}.")
+            item = selector[index + 1 : closing]
+            if not (item == "*" or item.isdecimal()):
+                if len(item) < 2 or item[0] not in "\"'" or item[-1] != item[0]:
+                    raise ConfigurationError(f"Некорректный селектор {label}: {selector!r}.")
+            index = closing + 1
+            continue
+        raise ConfigurationError(f"Некорректный селектор {label}: {selector!r}.")
+    return selector
+
+
+def _validate_extract(raw: Any, label: str, *, partial: bool) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ConfigurationError(f"Раздел {label} должен быть таблицей TOML.")
+    unknown = set(raw) - EXTRACT_KEYS
+    if unknown:
+        raise ConfigurationError(f"Неизвестные параметры в {label}: {', '.join(sorted(unknown))}.")
+    checked: dict[str, Any] = {}
+    if "header_language" in raw:
+        value = raw["header_language"]
+        if not isinstance(value, str) or value not in {"auto", "c", "cpp"}:
+            raise ConfigurationError(f"{label}.header_language должен быть auto, c или cpp.")
+        checked["header_language"] = value
+    if "message_calls" in raw:
+        calls = _as_string_list(raw["message_calls"], f"{label}.message_calls")
+        if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.$:!-]*", name) for name in calls):
+            raise ConfigurationError(f"{label}.message_calls содержит некорректное имя вызова.")
+        checked["message_calls"] = tuple(dict.fromkeys(calls))
+    if "selectors" in raw:
+        raw_selectors = raw["selectors"]
+        if not isinstance(raw_selectors, dict):
+            raise ConfigurationError(f"{label}.selectors должен быть таблицей расширений.")
+        selectors: dict[str, tuple[str, ...]] = {}
+        for extension, values in raw_selectors.items():
+            if not isinstance(extension, str):
+                raise ConfigurationError(f"{label}.selectors содержит неверное расширение.")
+            normalized = extension.lower()
+            if normalized not in SELECTOR_EXTENSIONS:
+                raise ConfigurationError(
+                    f"{label}.selectors не поддерживает расширение {extension!r}."
+                )
+            patterns = _as_string_list(values, f"{label}.selectors.{extension}")
+            selectors[normalized] = tuple(
+                dict.fromkeys(
+                    _validate_selector(pattern, f"{label}.selectors.{extension}")
+                    for pattern in patterns
+                )
+            )
+        checked["selectors"] = selectors
+    if not partial:
+        defaults = asdict(ExtractSettings())
         defaults.update(checked)
         return defaults
     return checked
@@ -331,6 +495,20 @@ def _profile_definitions(
             for key in ("priority", "project_markers", "match_paths")
             if key in value
         }
+        if "extract" in value:
+            definition["extract"] = _validate_extract(
+                value["extract"], f"profiles.{name}.extract", partial=True
+            )
+            for key, item in definition["extract"].items():
+                if key == "selectors":
+                    sources[name].update(
+                        {
+                            f"extract.selectors.{extension}": f"профиль {name} из {path}"
+                            for extension in item
+                        }
+                    )
+                else:
+                    sources[name][f"extract.{key}"] = f"профиль {name} из {path}"
         if "priority" in value:
             priority = value["priority"]
             if not isinstance(priority, int) or isinstance(priority, bool):
@@ -354,6 +532,8 @@ def _merge_file(
     path: Path,
     scan: dict[str, Any],
     scan_sources: dict[str, str],
+    extract: dict[str, Any],
+    extract_sources: dict[str, str],
     profiles: dict[str, dict[str, Any]],
     profile_sources: dict[str, dict[str, str]],
     doctor: dict[str, Any],
@@ -366,6 +546,16 @@ def _merge_file(
         values = _validate_scan(document["scan"], f"{label}.scan", partial=True)
         scan.update(values)
         scan_sources.update({key: label for key in values})
+    if "extract" in document:
+        values = _validate_extract(document["extract"], f"{label}.extract", partial=True)
+        for key, value in values.items():
+            if key == "selectors":
+                selectors = extract.setdefault("selectors", {})
+                selectors.update(value)
+                extract_sources.update({f"selectors.{extension}": label for extension in value})
+            else:
+                extract[key] = value
+                extract_sources[key] = label
     if "default_profile" in document:
         profile_name = document["default_profile"]
         if not isinstance(profile_name, str) or not PROFILE_NAME.fullmatch(profile_name):
@@ -376,12 +566,25 @@ def _merge_file(
         new_profiles, new_sources = _profile_definitions(document["profiles"], path)
         for name, incoming in new_profiles.items():
             target = profiles.setdefault(name, {})
-            target.update({key: value for key, value in incoming.items() if key != "scan"})
+            target.update(
+                {key: value for key, value in incoming.items() if key not in {"scan", "extract"}}
+            )
             target.setdefault("priority", 0)
             target.setdefault("project_markers", ())
             target.setdefault("match_paths", ())
             if "scan" in incoming:
                 target.setdefault("scan", {}).update(incoming["scan"])
+            if "extract" in incoming:
+                extract_target = target.setdefault("extract", {})
+                for key, value in incoming["extract"].items():
+                    if key == "selectors":
+                        extract_target.setdefault("selectors", {}).update(value)
+                    elif key == "message_calls":
+                        extract_target[key] = tuple(
+                            dict.fromkeys((*extract_target.get(key, ()), *value))
+                        )
+                    else:
+                        extract_target[key] = value
             profile_sources.setdefault(name, {}).update(new_sources.get(name, {}))
     if "doctor" in document:
         values = _validate_doctor(document["doctor"], f"{label}.doctor")
@@ -394,6 +597,11 @@ def load_config(explicit_path: str | Path | None = None) -> LoadedConfig:
     user_path = user_config_path()
     scan = asdict(ScanSettings())
     scan_sources = {key: "по умолчанию" for key in scan}
+    extract = asdict(ExtractSettings())
+    extract_sources = {
+        "header_language": "по умолчанию",
+        "message_calls": "по умолчанию",
+    }
     profiles: dict[str, dict[str, Any]] = {}
     profile_sources: dict[str, dict[str, str]] = {}
     doctor: dict[str, Any] = {"programs": (), "http_services": {}}
@@ -409,6 +617,8 @@ def load_config(explicit_path: str | Path | None = None) -> LoadedConfig:
             user_path,
             scan,
             scan_sources,
+            extract,
+            extract_sources,
             profiles,
             profile_sources,
             doctor,
@@ -429,6 +639,8 @@ def load_config(explicit_path: str | Path | None = None) -> LoadedConfig:
             resolved_explicit,
             scan,
             scan_sources,
+            extract,
+            extract_sources,
             profiles,
             profile_sources,
             doctor,
@@ -449,11 +661,14 @@ def load_config(explicit_path: str | Path | None = None) -> LoadedConfig:
             project_markers=raw["project_markers"],
             match_paths=raw["match_paths"],
             scan_overrides=dict(raw.get("scan", {})),
+            extract_overrides=dict(raw.get("extract", {})),
         )
 
     return LoadedConfig(
         scan=ScanSettings(**scan),
+        extract=ExtractSettings(**extract),
         sources=scan_sources,
+        extract_sources=extract_sources,
         profiles=compiled_profiles,
         profile_sources=profile_sources,
         default_profile=default_profile,

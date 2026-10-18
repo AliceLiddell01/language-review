@@ -28,7 +28,8 @@ try {
 
     $sample = Join-Path $tempRoot 'пример'
     New-Item -ItemType Directory -Path $sample | Out-Null
-    Set-Content -LiteralPath (Join-Path $sample 'Пример.rs') -Value 'fn main() {}' -Encoding utf8NoBOM
+    Set-Content -LiteralPath (Join-Path $sample 'Пример.rs') `
+        -Value 'fn main() { println!("Пример для установленного пакета"); }' -Encoding utf8NoBOM
     $artifacts = @(
         Get-ChildItem -LiteralPath $distributionDirectory -File |
             Where-Object { $_.Name -like 'language_review-0.1.0*' } |
@@ -62,7 +63,39 @@ try {
         if ($report.schema_version -ne '1.0' -or $report.summary.selected -ne 1) {
             throw "Установленная команда $kind вернула неожиданный отчёт."
         }
-        Write-Output "${kind}: установка, entry point, python -m и scan прошли."
+
+        $extractJsonOutput = (& $launcher extract $sample --format json) -join [Environment]::NewLine
+        if ($LASTEXITCODE -ne 0) {
+            throw "Установленная команда $kind extract завершилась ошибкой."
+        }
+        $extractReport = $extractJsonOutput | ConvertFrom-Json
+        $extractedText = @(
+            $extractReport.documents |
+                ForEach-Object { $_.fragments } |
+                ForEach-Object { $_.text }
+        )
+        if (
+            $extractReport.schema -ne 'language-review.extract' -or
+            $extractReport.summary.extracted -ne 1 -or
+            $extractedText -notcontains 'Пример для установленного пакета'
+        ) {
+            throw "Установленная команда $kind extract вернула неожиданный отчёт."
+        }
+
+        $moduleExtractOutput = (
+            & $environmentPython -m language_review extract $sample --format json
+        ) -join [Environment]::NewLine
+        if ($LASTEXITCODE -ne 0) {
+            throw "Установленный модуль $kind extract завершился ошибкой."
+        }
+        $moduleExtractReport = $moduleExtractOutput | ConvertFrom-Json
+        if (
+            $moduleExtractReport.schema -ne 'language-review.extract' -or
+            $moduleExtractReport.summary.fragments -lt 1
+        ) {
+            throw "Установленный модуль $kind extract вернул неожиданный отчёт."
+        }
+        Write-Output "${kind}: установка, entry point, python -m, scan и extract прошли."
     }
 }
 finally {

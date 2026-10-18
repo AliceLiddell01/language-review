@@ -1,0 +1,95 @@
+{
+  "coordinate_system": {
+    "byte_offset": "zero-based offset in original file bytes, including BOM",
+    "column": "one-based Unicode code point column; a tab counts as one code point",
+    "end": "exclusive",
+    "line": "one-based physical line number",
+    "utf16_column": "one-based UTF-16 code unit column"
+  },
+  "documents": [
+    {
+      "bom": null,
+      "diagnostics": [],
+      "encoding": "utf-8",
+      "format": "json",
+      "fragments": [
+        {
+          "context": "json:ui.message",
+          "id": "frag-65722c557d48cd3a5b24cd2f",
+          "kind": "configured_value",
+          "protected_ranges": [
+            {
+              "range": {
+                "end": {
+                  "byte_offset": 69,
+                  "column": 42,
+                  "line": 3,
+                  "utf16_column": 42
+                },
+                "start": {
+                  "byte_offset": 63,
+                  "column": 36,
+                  "line": 3,
+                  "utf16_column": 36
+                }
+              },
+              "reason": "форматное поле"
+            }
+          ],
+          "range": {
+            "end": {
+              "byte_offset": 69,
+              "column": 42,
+              "line": 3,
+              "utf16_column": 42
+            },
+            "start": {
+              "byte_offset": 28,
+              "column": 17,
+              "line": 3,
+              "utf16_column": 17
+            }
+          },
+          "reason": null,
+          "source_text": "Не удалось открыть {Path}",
+          "status": "extracted",
+          "text": "Не удалось открыть {Path}"
+        }
+      ],
+      "id": "doc-718e8c318d97863341033e41",
+      "language": "json",
+      "path": "sample.json",
+      "profile": null,
+      "reason": null,
+      "root": "root-0001",
+      "source_sha256": "e01be6c2c8df0c8e41d2ef2f1c87bc5998309b7e9c6c60986b0f6b9e100e8060",
+      "status": "extracted"
+    }
+  ],
+  "operation": "extract",
+  "roots": [
+    {
+      "id": "root-0001",
+      "kind": "file",
+      "profile": null,
+      "status": "ok"
+    }
+  ],
+  "schema": "language-review.extract",
+  "schema_version": "1.0",
+  "status": "ok",
+  "summary": {
+    "documents": 1,
+    "errors": 0,
+    "extracted": 1,
+    "fragments": 1,
+    "partial": 0,
+    "roots": 1,
+    "skipped": 0,
+    "unsupported": 0
+  },
+  "tool": {
+    "name": "language-review",
+    "version": "0.1.0"
+  }
+}

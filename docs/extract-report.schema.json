@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://language-review.invalid/schemas/extract-report-1.0.json",
+  "title": "Language Review extract report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "operation",
+    "tool",
+    "status",
+    "coordinate_system",
+    "roots",
+    "summary",
+    "documents"
+  ],
+  "properties": {
+    "schema": {"const": "language-review.extract"},
+    "schema_version": {"const": "1.0"},
+    "operation": {"const": "extract"},
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"const": "language-review"},
+        "version": {"type": "string"}
+      }
+    },
+    "status": {"enum": ["ok", "input_error", "partial", "unsupported"]},
+    "coordinate_system": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["byte_offset", "line", "column", "utf16_column", "end"],
+      "properties": {
+        "byte_offset": {"type": "string"},
+        "line": {"type": "string"},
+        "column": {"type": "string"},
+        "utf16_column": {"type": "string"},
+        "end": {"const": "exclusive"}
+      }
+    },
+    "roots": {"type": "array", "items": {"$ref": "#/$defs/root"}},
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "roots",
+        "documents",
+        "extracted",
+        "skipped",
+        "unsupported",
+        "partial",
+        "errors",
+        "fragments"
+      ],
+      "properties": {
+        "roots": {"type": "integer", "minimum": 0},
+        "documents": {"type": "integer", "minimum": 0},
+        "extracted": {"type": "integer", "minimum": 0},
+        "skipped": {"type": "integer", "minimum": 0},
+        "unsupported": {"type": "integer", "minimum": 0},
+        "partial": {"type": "integer", "minimum": 0},
+        "errors": {"type": "integer", "minimum": 0},
+        "fragments": {"type": "integer", "minimum": 0}
+      }
+    },
+    "documents": {"type": "array", "items": {"$ref": "#/$defs/document"}}
+  },
+  "$defs": {
+    "nullableString": {"type": ["string", "null"]},
+    "root": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "status", "profile"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^root-[0-9]{4,}$"},
+        "kind": {"type": "string"},
+        "status": {"type": "string"},
+        "profile": {"$ref": "#/$defs/nullableString"}
+      }
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["byte_offset", "line", "column", "utf16_column"],
+      "properties": {
+        "byte_offset": {"type": "integer", "minimum": 0},
+        "line": {"type": "integer", "minimum": 1},
+        "column": {"type": "integer", "minimum": 1},
+        "utf16_column": {"type": "integer", "minimum": 1}
+      }
+    },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": {"$ref": "#/$defs/position"},
+        "end": {"$ref": "#/$defs/position"}
+      }
+    },
+    "protectedRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "range"],
+      "properties": {
+        "reason": {"type": "string"},
+        "range": {"$ref": "#/$defs/range"}
+      }
+    },
+    "fragment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "context",
+        "text",
+        "source_text",
+        "status",
+        "reason",
+        "range",
+        "protected_ranges"
+      ],
+      "properties": {
+        "id": {"type": "string", "pattern": "^frag-[0-9a-f]{24}$"},
+        "kind": {"type": "string"},
+        "context": {"type": "string"},
+        "text": {"type": "string"},
+        "source_text": {"type": "string"},
+        "status": {"enum": ["extracted", "skipped", "unsupported", "partial", "error"]},
+        "reason": {"$ref": "#/$defs/nullableString"},
+        "range": {"$ref": "#/$defs/range"},
+        "protected_ranges": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/protectedRange"}
+        }
+      }
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "root",
+        "path",
+        "language",
+        "format",
+        "profile",
+        "status",
+        "reason",
+        "source_sha256",
+        "encoding",
+        "bom",
+        "diagnostics",
+        "fragments"
+      ],
+      "properties": {
+        "id": {"type": "string", "pattern": "^doc-[0-9a-f]{24}$"},
+        "root": {"type": "string"},
+        "path": {"type": "string"},
+        "language": {"$ref": "#/$defs/nullableString"},
+        "format": {"$ref": "#/$defs/nullableString"},
+        "profile": {"$ref": "#/$defs/nullableString"},
+        "status": {"enum": ["extracted", "skipped", "unsupported", "partial", "error"]},
+        "reason": {"$ref": "#/$defs/nullableString"},
+        "source_sha256": {
+          "oneOf": [
+            {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            {"type": "null"}
+          ]
+        },
+        "encoding": {"$ref": "#/$defs/nullableString"},
+        "bom": {"$ref": "#/$defs/nullableString"},
+        "diagnostics": {"type": "array", "items": {"type": "string"}},
+        "fragments": {"type": "array", "items": {"$ref": "#/$defs/fragment"}}
+      }
+    }
+  }
+}

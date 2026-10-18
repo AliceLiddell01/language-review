@@ -5,7 +5,18 @@ description = "Инвентаризация текстовых файлов дл
 readme = "README.md"
 requires-python = ">=3.15"
 dependencies = [
+    "markdown-it-py>=4.2.0",
     "pathspec>=1.1.1",
+    "tree-sitter>=0.26.0",
+    "tree-sitter-c>=0.24.2",
+    "tree-sitter-c-sharp>=0.23.5",
+    "tree-sitter-cpp>=0.23.4",
+    "tree-sitter-json>=0.24.8",
+    "tree-sitter-powershell>=0.26.4",
+    "tree-sitter-rust>=0.24.2",
+    "tree-sitter-toml>=0.7.0",
+    "tree-sitter-xml>=0.7.0",
+    "tree-sitter-yaml>=0.7.2",
 ]
 
 [project.scripts]
@@ -13,7 +24,6 @@ language-review = "language_review.cli:main"
 
 [dependency-groups]
 dev = [
-    "markdown-it-py>=4.2.0",
     "mypy>=2.4.0",
     "pytest>=9.1.1",
     "pytest-xdist>=3.8.0",

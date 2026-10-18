@@ -47,7 +47,9 @@ def test_languagetool_utf16_offsets_after_non_bmp_characters() -> None:
     assert view.source_range(4, 13) == (4, 13)
 
 
-def test_technical_tokens_placeholders_and_insertion_after_mask(tmp_path: Path) -> None:
+def test_technical_tokens_placeholders_and_insertion_after_mask(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
     source = tmp_path / "note.txt"
     source.write_text("Вызовите id.ToString() чтобы получить строку.\n", encoding="utf-8")
 
@@ -66,7 +68,9 @@ def test_technical_tokens_placeholders_and_insertion_after_mask(tmp_path: Path) 
     assert view.only_masked(9, 10)
 
 
-def test_literal_interpretation_of_escapes_entities_and_markdown(tmp_path: Path) -> None:
+def test_literal_interpretation_of_escapes_entities_and_markdown(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
     source = tmp_path / "doc.md"
     source.write_text("Это **важно** и &laquo;точно&raquo; для {Path}.\n", encoding="utf-8")
 
@@ -84,7 +88,7 @@ def test_literal_interpretation_of_escapes_entities_and_markdown(tmp_path: Path)
     assert decode_literal("\\x07") is None
 
 
-def test_crlf_and_line_join_are_reversible(tmp_path: Path) -> None:
+def test_crlf_and_line_join_are_reversible(tmp_path: Path, isolated_appdata: Path) -> None:
     source = tmp_path / "doc.md"
     source.write_bytes(
         b"\xef\xbb\xbf" + "Первая строка абзаца\r\nпродолжение без ошыбок.\r\n".encode()

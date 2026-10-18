@@ -1,4 +1,8 @@
 name: Проверка конфигурации Renovate
+env:
+  # renovate: datasource=npm depName=renovate
+  RENOVATE_VERSION: 44.166.0
+
 on:
   pull_request:
     paths:
@@ -32,8 +36,8 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.npm
-          key: ${{ runner.os }}-renovate-cli-44.166.0
+          key: ${{ runner.os }}-renovate-cli-${{ env.RENOVATE_VERSION }}
           restore-keys: |
             ${{ runner.os }}-renovate-cli-
       - name: Проверить схему и актуальность конфигурации
-        run: npm exec --yes --package=renovate@44.166.0 -- renovate-config-validator renovate.json --strict
+        run: npm exec --yes --package="renovate@${RENOVATE_VERSION}" -- renovate-config-validator renovate.json --strict

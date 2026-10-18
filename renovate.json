@@ -25,6 +25,18 @@
     "dependencyDashboardApproval": false,
     "prConcurrentLimit": 1
   },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Обновлять закреплённую версию Renovate CLI для проверки конфигурации",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/renovate-config\\.yml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+RENOVATE_VERSION: (?<currentValue>\\S+)"
+      ]
+    }
+  ],
   "packageRules": [
     {
       "description": "Зависимости Python из pyproject.toml и uv.lock",

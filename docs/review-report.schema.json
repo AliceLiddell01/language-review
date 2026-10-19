@@ -727,7 +727,7 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://language-review.invalid/schemas/review-report-1.0.json",
-  "title": "Гипотезы языкового ревью для coding-агента",
+  "title": "Гипотезы языкового ревью для агента-разработчика",
   "$defs": {
     "count": {
       "type": "integer",

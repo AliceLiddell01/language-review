@@ -209,7 +209,10 @@ class LanguageToolEngine:
             else:
                 category = CATEGORY_MAP.get(rule_category or "", "other")
             raw_replacements = match.get("replacements", [])
-            if not isinstance(raw_replacements, list):
+            if not isinstance(raw_replacements, list) or any(
+                not isinstance(item, dict) or not isinstance(item.get("value"), str)
+                for item in raw_replacements
+            ):
                 fail("languagetool_schema_violation")
                 outcome.rejected.append(
                     RejectedOutput(self.name, unit.index, "schema_violation", rule_id, message)

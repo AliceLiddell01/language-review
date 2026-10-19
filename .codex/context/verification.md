@@ -13,7 +13,9 @@ uv run --locked pytest -n 8
 .\scripts\verify-package.ps1
 ```
 
-Скрипт собирает wheel/sdist, устанавливает их в изолированные среды Windows и проверяет настоящий CLI, `python -m language_review`, JSON-вывод `scan`, структурное извлечение через `extract`, `check` со встроенными правилами Vale (без Vale — ожидаемый статус `unavailable` и код 5) и сохранность исходного файла после каждой команды чтения.
+Скрипт собирает wheel/sdist, устанавливает их в изолированные среды Windows и проверяет настоящий CLI, `python -m language_review`, JSON-вывод `scan`, структурное извлечение через `extract`, `check` со встроенными правилами Vale (без Vale — ожидаемый статус `unavailable` и код 5), review-контракт, `show-review`, `verify-review` и сохранность исходного файла после каждой команды чтения.
+
+`tests/test_review.py` сверяет упакованную и документированную review-схемы, вложенный контракт check, отказ обеих команд при повреждённом JSON и согласованность локализаций `items`/`analysis`.
 
 ## Приёмка языковых движков
 

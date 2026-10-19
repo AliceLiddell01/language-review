@@ -636,6 +636,7 @@ class LlmEngine:
                     reason,
                     excerpt=finding["excerpt"],
                     message=finding["explanation"],
+                    details=dict(finding),
                 )
             )
         for item, finding in accepted:
@@ -661,6 +662,7 @@ class LlmEngine:
                     rule_id=f"{PROMPT_VERSION}:{finding['category']}",
                     message=finding["explanation"],
                     excerpt=excerpt,
+                    details=dict(finding),
                 )
             )
             return

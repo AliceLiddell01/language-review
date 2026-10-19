@@ -5,6 +5,7 @@ description = "Инвентаризация текстовых файлов дл
 readme = "README.md"
 requires-python = ">=3.15"
 dependencies = [
+    "jsonschema>=4.25",
     "markdown-it-py>=4.2.0",
     "pathspec>=1.1.1",
     "tree-sitter>=0.26.0",
@@ -24,12 +25,12 @@ language-review = "language_review.cli:main"
 
 [dependency-groups]
 dev = [
-    "jsonschema>=4.25",
     "mypy>=2.4.0",
     "pytest>=9.1.1",
     "pytest-xdist>=3.8.0",
     "ruamel-yaml>=0.19.1",
     "ruff>=0.17.1",
+    "types-jsonschema>=4.26.0.20261006",
 ]
 
 [build-system]

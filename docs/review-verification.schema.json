@@ -1,0 +1,57 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "status",
+    "documents"
+  ],
+  "properties": {
+    "schema": {
+      "const": "language-review.review-verification"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "status": {
+      "enum": [
+        "current",
+        "stale",
+        "unverified"
+      ]
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "document_id",
+          "status",
+          "reason"
+        ],
+        "properties": {
+          "document_id": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "current",
+              "stale",
+              "unverified"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://language-review.invalid/schemas/review-verification-1.0.json"
+}

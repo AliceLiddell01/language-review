@@ -22,6 +22,8 @@ from language_review.errors import ConfigurationError, InputError, OutputError
 from language_review.extract_report import extract_document, extract_human
 from language_review.extraction import extract_paths
 from language_review.report import scan_document, scan_human, write_report
+from language_review.review_report import render_review, review_document
+from language_review.review_verify import load_review, verify_review
 from language_review.scanner import scan_paths
 
 
@@ -89,6 +91,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     _add_selection_arguments(check)
     check.add_argument(
+        "--view",
+        choices=("check", "review"),
+        default="check",
+        help="представление результата: исходный check или review для агента",
+    )
+    check.add_argument("--all", action="store_true", help="показать все замечания review в тексте")
+    check.add_argument(
         "--engine",
         action="append",
         choices=CHECK_ENGINES,
@@ -108,6 +117,22 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="транспорт LLM: llama_cpp (по умолчанию) или ollama",
     )
+
+    show_review = commands.add_parser("show-review", help="показать сохранённое ревью без анализа")
+    show_review.add_argument("report", type=Path)
+    show_review.add_argument("--all", action="store_true", help="показать все замечания")
+    verify = commands.add_parser(
+        "verify-review", help="сверить SHA-256 и цитаты сохранённого ревью"
+    )
+    verify.add_argument("report", type=Path)
+    verify.add_argument(
+        "--root",
+        action="append",
+        default=[],
+        metavar="ID=ПУТЬ",
+        help="явно сопоставить root-0001 исходному корню; можно повторять",
+    )
+    verify.add_argument("--format", choices=("human", "json"), default="human")
 
     doctor = commands.add_parser("doctor", help="проверить пакет, конфигурацию и заданные сервисы")
     doctor.add_argument("paths", nargs="*", metavar="ПУТЬ")
@@ -221,7 +246,39 @@ def _emit(document: Callable[[], Any], human: Callable[[], str], output_format: 
     return human()
 
 
+def _verify_review_human(report: dict[str, Any]) -> str:
+    lines = [f"Сверка ревью: {report['status']}"]
+    for item in report["documents"]:
+        line = f"  {json.dumps(item['document_id'])}: {item['status']}"
+        if item["reason"] is not None:
+            line += f" ({json.dumps(item['reason'])})"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _run(arguments: argparse.Namespace) -> int:
+    if arguments.command == "show-review":
+        try:
+            print(render_review(load_review(arguments.report), show_all=arguments.all))
+        except (ValueError, LookupError, TypeError, AttributeError) as exc:
+            raise InputError("Некорректная структура review-отчёта.") from exc
+        return 0
+    if arguments.command == "verify-review":
+        roots = {}
+        for value in arguments.root:
+            identifier, separator, path = value.partition("=")
+            if not separator or not path or identifier in roots:
+                raise InputError("--root требует уникальную пару ID=ПУТЬ.")
+            roots[identifier] = Path(path)
+        verified = verify_review(arguments.report, roots)
+        print(
+            _emit(
+                lambda: verified,
+                lambda: _verify_review_human(verified),
+                arguments.format,
+            )
+        )
+        return 0 if verified["status"] == "current" else 4
     config: LoadedConfig = load_config(arguments.config)
     if arguments.command == "scan":
         scan_result = scan_paths(
@@ -272,6 +329,8 @@ def _run(arguments: argparse.Namespace) -> int:
         return 0
 
     if arguments.command == "check":
+        if arguments.all and arguments.view != "review":
+            raise InputError("--all применим только с --view review.")
         check_result = check_paths(
             arguments.paths,
             config,
@@ -285,9 +344,14 @@ def _run(arguments: argparse.Namespace) -> int:
                 "llm.provider": arguments.llm_provider,
             },
         )
+        review = review_document(check_result) if arguments.view == "review" else None
         content = _emit(
-            lambda: check_document(check_result),
-            lambda: check_human(check_result),
+            lambda: review if review is not None else check_document(check_result),
+            lambda: (
+                render_review(review, show_all=arguments.all)
+                if review is not None
+                else check_human(check_result)
+            ),
             arguments.format,
         )
         if arguments.output is None:
@@ -306,7 +370,11 @@ def _run(arguments: argparse.Namespace) -> int:
                     f"{checked.status}",
                     file=sys.stderr,
                 )
-        return check_exit_code(check_result)
+        return (
+            4
+            if review is not None and review["status"] == "partial"
+            else check_exit_code(check_result)
+        )
 
     if arguments.command == "doctor":
         doctor_result = run_doctor(config, arguments.paths)

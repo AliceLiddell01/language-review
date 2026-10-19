@@ -65,6 +65,8 @@ class RejectedOutput:
     rule_id: str | None = None
     message: str | None = None
     excerpt: str | None = None
+    raw: RawFinding | None = None
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -165,6 +167,7 @@ class CheckDocument:
     findings: list[Finding] = field(default_factory=list)
     rejected: list[RejectedOutput] = field(default_factory=list)
     diagnostics: list[str] = field(default_factory=list)
+    filtered: list[RawFinding] = field(default_factory=list)
 
 
 @dataclass

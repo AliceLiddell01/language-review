@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import socket
-import subprocess
-import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -13,12 +10,22 @@ from typing import Any
 import jsonschema
 import pytest
 from conftest import JsonServer, RecordedRequest
+from support.check_helpers import (
+    _config,
+    _findings,
+    _languagetool_config,
+    _llm_finding,
+    _run,
+    _utf16,
+    _vale_engine_factory,
+    languagetool_responder,
+    llama_responder,
+)
 
 from language_review.check import check_paths
 from language_review.config import load_config
 from language_review.engine_http import EngineHttpError, join_url, request_json
 from language_review.engine_llm import SYSTEM_PROMPT, response_schema
-from language_review.engine_vale import ValeEngine
 from language_review.errors import ConfigurationError
 
 SCHEMA = json.loads(
@@ -32,120 +39,12 @@ def _validate(report: dict[str, Any]) -> None:
     jsonschema.Draft202012Validator(SCHEMA).validate(report)
 
 
-def _run(args: list[str], appdata: Path) -> subprocess.CompletedProcess[str]:
-    environment = os.environ.copy()
-    environment["APPDATA"] = str(appdata)
-    environment["XDG_CONFIG_HOME"] = str(appdata)
-    environment["PYTHONUTF8"] = "1"
-    return subprocess.run(
-        [sys.executable, "-m", "language_review", *args],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        env=environment,
-        check=False,
-    )
-
-
-def _config(tmp_path: Path, body: str) -> Path:
-    path = tmp_path / "config.toml"
-    path.write_text(body, encoding="utf-8")
-    return path
-
-
-def _languagetool_config(tmp_path: Path, url: str) -> Path:
-    return _config(
-        tmp_path,
-        f'[check]\nengines = ["languagetool"]\n[check.languagetool]\nendpoint = "{url}"\n',
-    )
-
-
 def _assert_no_local_path(report: dict[str, Any], tmp_path: Path) -> None:
     serialized = json.dumps(report, ensure_ascii=False)
     # json.dumps экранирует обратную косую черту, поэтому проверяем и сериализованную форму пути.
     assert json.dumps(str(tmp_path), ensure_ascii=False)[1:-1] not in serialized
     assert str(tmp_path) not in serialized
     assert tmp_path.as_posix() not in serialized
-
-
-def _utf16(text: str, index: int) -> int:
-    return len(text[:index].encode("utf-16-le")) // 2
-
-
-def languagetool_responder(misspellings: dict[str, list[str]]) -> Any:
-    """Протокол LanguageTool: смещения в UTF-16, как у настоящего сервера."""
-
-    def respond(request: RecordedRequest) -> tuple[int, Any]:
-        if request.path == "/v2/languages":
-            return 200, [{"name": "Russian", "code": "ru", "longCode": "ru-RU"}]
-        assert request.path == "/v2/check"
-        text = request.body["text"]
-        matches = []
-        for word, replacements in misspellings.items():
-            start = text.find(word)
-            if start >= 0:
-                matches.append(
-                    {
-                        "message": "Возможно найдена орфографическая ошибка.",
-                        "offset": _utf16(text, start),
-                        "length": _utf16(text, start + len(word)) - _utf16(text, start),
-                        "replacements": [{"value": value} for value in replacements],
-                        "rule": {
-                            "id": "MORFOLOGIK_RULE_RU_RU",
-                            "issueType": "misspelling",
-                            "category": {"id": "TYPOS"},
-                        },
-                    }
-                )
-        if "X" in text:
-            # Правило, которое касается только заглушки, должно быть отбраковано.
-            start = text.index("X")
-            matches.append(
-                {
-                    "message": "Слово на латинице.",
-                    "offset": _utf16(text, start),
-                    "length": 1,
-                    "replacements": [],
-                    "rule": {"id": "LATIN", "category": {"id": "MISC"}},
-                }
-            )
-        return 200, {"software": {"version": "stub"}, "matches": matches}
-
-    return respond
-
-
-def llama_responder(content: Any, *, finish_reason: str = "stop") -> Any:
-    def respond(request: RecordedRequest) -> tuple[int, Any]:
-        if request.path == "/health":
-            return 200, {"status": "ok"}
-        if request.path == "/v1/models":
-            return 200, {"data": [{"id": "stub-model", "aliases": ["stub-alias"]}]}
-        if request.path == "/props":
-            return 200, {"build_info": "b0-stub", "model_path": "C:/private/model.gguf"}
-        assert request.path == "/v1/chat/completions"
-        items = json.loads(request.body["messages"][1]["content"])["items"]
-        value = content(items) if callable(content) else content
-        return 200, {
-            "choices": [{"message": {"content": value}, "finish_reason": finish_reason}],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
-        }
-
-    return respond
-
-
-def _findings(*findings: dict[str, Any]) -> str:
-    return json.dumps({"findings": list(findings)}, ensure_ascii=False)
-
-
-def _llm_finding(item: str, excerpt: str, replacement: str | None, **extra: Any) -> dict[str, Any]:
-    return {
-        "item": item,
-        "category": extra.get("category", "spelling"),
-        "excerpt": excerpt,
-        "replacement": replacement,
-        "explanation": extra.get("explanation", "Опечатка."),
-        "confidence": extra.get("confidence", "high"),
-    }
 
 
 def _report(
@@ -1158,31 +1057,14 @@ def test_languagetool_valid_match_with_rejected_suggestion_stays_checked(
     assert "negation_changed" in finding["suggestions"][0]["reasons"]
 
 
-def _vale_engine_factory(stdout: str) -> Any:
-    class FakeVale(ValeEngine):
-        def _resolve(self) -> str | None:
-            return "vale"
-
-        def _invoke(self, arguments: list[str], text: str | None) -> tuple[int, str, str]:
-            if arguments == ["--version"]:
-                return 0, "vale version 3.0.0", ""
-            return 0, stdout if text and "ошыбка" in text else "{}", ""
-
-    def factory(name: str, settings: Any) -> Any:
-        assert name == "vale"
-        return FakeVale(settings)
-
-    return factory
-
-
 @pytest.mark.parametrize(
     ("alert", "clean"),
     [
         ({"Check": "X.Y", "Message": "m", "Line": "1", "Span": [1, 3]}, False),
         ({"Check": "X.Y", "Message": "m", "Line": 1, "Span": [1]}, False),
-        ({"Check": "X.Y", "Message": "m", "Line": 1, "Span": [1, 3], "Match": "нет"}, True),
+        ({"Check": "X.Y", "Message": "m", "Line": 1, "Span": [1, 3], "Match": "нет"}, False),
     ],
-    ids=["line_not_int", "span_short", "match_mismatch_is_semantic_rejection"],
+    ids=["line_not_int", "span_short", "match_mismatch_fails_only_affected_unit"],
 )
 def test_vale_malformed_alert_is_not_clean(
     tmp_path: Path, alert: dict[str, Any], clean: bool
@@ -1202,6 +1084,81 @@ def test_vale_malformed_alert_is_not_clean(
         assert result.status in {"partial", "unavailable"}
         assert document.status != "clean"
         assert document.unit_status[(0, "vale")] == ("failed", "vale_schema_violation")
+
+
+def test_vale_match_mismatch_fails_only_the_affected_unit(tmp_path: Path) -> None:
+    source = tmp_path / "notes.txt"
+    source.write_text("Здесь ошыбка.\n\nЗдесь ошыбка.\n", encoding="utf-8")
+    config = load_config(_config(tmp_path, '[check]\nengines = ["vale"]\n'))
+    alerts = [
+        {
+            "Check": "X.Y",
+            "Message": "Некорректная цитата",
+            "Line": 1,
+            "Span": [7, 12],
+            "Match": "ошибка",
+        },
+        {
+            "Check": "X.Y",
+            "Message": "Корректная цитата",
+            "Line": 3,
+            "Span": [7, 12],
+            "Match": "ошыбка",
+        },
+    ]
+
+    result = check_paths(
+        [str(source)],
+        config,
+        engine_factory=_vale_engine_factory(json.dumps({"stdin.txt": alerts})),
+    )
+
+    document = result.documents[0]
+    [run] = result.engines
+    assert document.unit_status[(0, "vale")] == ("failed", "vale_schema_violation")
+    assert document.unit_status[(1, "vale")] == ("checked", None)
+    assert (run.units_failed, run.units_checked) == (1, 1)
+    assert run.status == "partial"
+
+
+@pytest.mark.parametrize(
+    "payload,valid",
+    [
+        ({}, False),
+        ({"Match": None}, False),
+        ({"Match": 42}, False),
+        ({"Match": ""}, False),
+        ({"Match": "ошибка"}, False),
+        ({"Match": "ошыбка"}, True),
+    ],
+    ids=["missing", "null", "number", "empty", "mismatch", "exact"],
+)
+def test_vale_requires_exact_match_for_nonempty_span(
+    tmp_path: Path, payload: dict[str, Any], valid: bool
+) -> None:
+    source = tmp_path / "notes.txt"
+    original = "Здесь ошыбка.\n\nЗдесь ошыбка.\n".encode()
+    source.write_bytes(original)
+    config = load_config(_config(tmp_path, '[check]\nengines=["vale"]\n'))
+    alert = {"Check": "X.Rule", "Message": "Гипотеза", "Line": 1, "Span": [7, 12]}
+    alerts = [{**alert, **payload}, {**alert, "Line": 3, "Match": "ошыбка"}]
+    result = check_paths(
+        [str(source)],
+        config,
+        engine_factory=_vale_engine_factory(json.dumps({"stdin.txt": alerts})),
+    )
+    [document], [run] = result.documents, result.engines
+    assert document.unit_status[(1, "vale")] == ("checked", None)
+    assert (run.units_checked, run.units_failed, run.rejected) == (
+        (2, 0, 0) if valid else (1, 1, 1)
+    )
+    assert document.status == ("findings" if valid else "partial")
+    assert run.status == ("ok" if valid else "partial")
+    assert len(document.findings) == (2 if valid else 1)
+    if not valid:
+        assert document.unit_status[(0, "vale")] == ("failed", "vale_schema_violation")
+        assert [item.reason for item in document.rejected] == ["position_mismatch"]
+    assert source.read_bytes() == original
 
 
 ENGLISH_SENTENCE = "The tool reads the configuration file from disk."

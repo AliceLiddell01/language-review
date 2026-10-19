@@ -169,9 +169,9 @@ class ValeEngine:
         for value in document.values():
             if not isinstance(value, list):
                 raise ValeError("invalid_output", "Vale вернул неожиданный ответ")
-            alerts.extend(item for item in value if isinstance(item, dict))
-            if len(alerts) != len(value):
+            if any(not isinstance(item, dict) for item in value):
                 raise ValeError("invalid_output", "Vale вернул неожиданный ответ")
+            alerts.extend(value)
         return alerts
 
     def probe(self) -> ProbeResult:
@@ -254,13 +254,14 @@ class ValeEngine:
         regions: list[tuple[int, int, CheckUnit]],
         outcomes: dict[int, UnitOutcome],
     ) -> bool:
-        """Отобразить замечание; False — структура замечания Vale недостоверна."""
+        """Отобразить замечание; False — его нельзя безопасно отнести к единице."""
         check = str(alert.get("Check") or "")
         message = str(alert.get("Message") or "")
         line, span, match = alert.get("Line"), alert.get("Span"), alert.get("Match")
         # Vale: строка от 1, Span — [начало, конец] в кодовых точках от 1, конец включительно.
         valid = (
             isinstance(line, int)
+            and not isinstance(line, bool)
             and isinstance(span, list)
             and len(span) == 2
             and all(isinstance(item, int) and not isinstance(item, bool) for item in span)
@@ -269,8 +270,12 @@ class ValeEngine:
         start = end = -1
         if valid:
             assert isinstance(line, int) and isinstance(span, list)
-            start = line_starts[line - 1] + span[0] - 1
-            end = line_starts[line - 1] + span[1]
+            line_start = line_starts[line - 1]
+            line_end = line_starts[line] - 1 if line < len(line_starts) else len(combined)
+            valid = 1 <= span[0] <= span[1] <= line_end - line_start
+            if valid:
+                start = line_start + span[0] - 1
+                end = line_start + span[1]
         region = next((item for item in regions if item[0] <= start < end <= item[1]), None)
         if region is None:
             target = next(
@@ -283,10 +288,19 @@ class ValeEngine:
             return valid
         region_start, _region_end, unit = region
         outcome = outcomes[unit.index]
-        if isinstance(match, str) and match and combined[start:end] != match:
+        if not isinstance(match, str) or combined[start:end] != match:
             outcome.rejected.append(
-                RejectedOutput(self.name, unit.index, "position_mismatch", check, message, match)
+                RejectedOutput(
+                    self.name,
+                    unit.index,
+                    "position_mismatch",
+                    check,
+                    message,
+                    match if isinstance(match, str) else None,
+                )
             )
+            outcome.status = "failed"
+            outcome.reason = "vale_schema_violation"
             return True
         raw_action = alert.get("Action")
         action: dict[str, Any] = raw_action if isinstance(raw_action, dict) else {}

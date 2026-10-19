@@ -115,6 +115,7 @@ name = "language-review"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "jsonschema" },
     { name = "markdown-it-py" },
     { name = "pathspec" },
     { name = "tree-sitter" },
@@ -131,16 +132,17 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "jsonschema" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-xdist" },
     { name = "ruamel-yaml" },
     { name = "ruff" },
+    { name = "types-jsonschema" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "jsonschema", specifier = ">=4.25" },
     { name = "markdown-it-py", specifier = ">=4.2.0" },
     { name = "pathspec", specifier = ">=1.1.1" },
     { name = "tree-sitter", specifier = ">=0.26.0" },
@@ -157,12 +159,12 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "jsonschema", specifier = ">=4.25" },
     { name = "mypy", specifier = ">=2.4.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "ruamel-yaml", specifier = ">=0.19.1" },
     { name = "ruff", specifier = ">=0.17.1" },
+    { name = "types-jsonschema", specifier = ">=4.26.0.20261006" },
 ]
 
 [[package]]
@@ -556,6 +558,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/6c/e7/9525defa7b30792623f56b1fba9bbba361752348875b165b8975b87398fd/tree_sitter_yaml-0.7.2-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:74ca712c50fc9d7dbc68cb36b4a7811d6e67a5466b5a789f19bf8dd6084ef752", size = 90455, upload-time = "2025-10-07T14:40:33.778Z" },
     { url = "https://files.pythonhosted.org/packages/4a/d6/8d1e1ace03db3b02e64e91daf21d1347941d1bbecc606a5473a1a605250d/tree_sitter_yaml-0.7.2-cp310-abi3-win_amd64.whl", hash = "sha256:7587b5ca00fc4f9a548eff649697a3b395370b2304b399ceefa2087d8a6c9186", size = 45514, upload-time = "2025-10-07T14:40:34.562Z" },
     { url = "https://files.pythonhosted.org/packages/d8/c7/dcf3ea1c4f5da9b10353b9af4455d756c92d728a8f58f03c480d3ef0ead5/tree_sitter_yaml-0.7.2-cp310-abi3-win_arm64.whl", hash = "sha256:f63c227b18e7ce7587bce124578f0bbf1f890ac63d3e3cd027417574273642c4", size = 44065, upload-time = "2025-10-07T14:40:35.337Z" },
+]
+
+[[package]]
+name = "types-jsonschema"
+version = "4.26.0.20261006"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "referencing" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/29/d2/1f742605f5a6d39f993134885b8de41c98af606871d3ebddaf3e776bd1eb/types_jsonschema-4.26.0.20261006.tar.gz", hash = "sha256:3eb7db61b6819d40addfdaac7173e749071a7d4a9a4394f0c844598ec84b2500", size = 16843, upload-time = "2026-10-06T08:16:07.318Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8b/a0/4f2e3c0dc3d5cad958006f2e0307065cc8fe4fbf0393ff0b69d55ee9bbe5/types_jsonschema-4.26.0.20261006-py3-none-any.whl", hash = "sha256:29301f4e65e3928540cdf5e23ad716e38bb0c0b416a48dada213edd3d70206ec", size = 16113, upload-time = "2026-10-06T08:16:06.355Z" },
 ]
 
 [[package]]

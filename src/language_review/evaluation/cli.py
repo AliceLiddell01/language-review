@@ -403,12 +403,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     except InputError as exc:
         print(f"Ошибка оценки: {exc}", file=sys.stderr)
         return 2
-    except OSError, ValueError, LookupError, TypeError, RecursionError:
+    except OSError:
         print(
-            "Ошибка оценки: некорректные данные или недоступный файл; "
+            "Ошибка оценки: недоступный файл или ошибка записи; "
             "существующие артефакты не перезаписываются.",
             file=sys.stderr,
         )
         return 3
+    except ValueError, LookupError, TypeError, RecursionError, KeyError:
+        print("Ошибка оценки: некорректные данные или контракт.", file=sys.stderr)
+        return 2
     except KeyboardInterrupt:
         return 130

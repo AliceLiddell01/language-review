@@ -275,3 +275,10 @@ def test_reference_cli_saves_same_canonical_assessment(
     assert main(args) == 0
     assert read_json(output) == reference_score(corpus, report, bundle, "test", manifest)
     assert main(args) == 3  # no overwrite
+    (bundle / "provenance.json").write_text(
+        canonical({"schema": "language-review.eval-source", "schema_version": "1.0"}),
+        encoding="utf-8",
+    )
+    invalid_args = args.copy()
+    invalid_args[-1] = str(tmp_path / "invalid-assessment.json")
+    assert main(invalid_args) == 2

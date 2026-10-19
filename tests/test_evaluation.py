@@ -464,7 +464,17 @@ def test_packaged_check_schema_is_exact_existing_contract() -> None:
         (Path(__file__).parents[1] / "docs/check-report.schema.json").read_text("utf-8")
     )
     assert schema("check") == expected
-    for name in ("corpus", "result", "run", "expectations"):
-        from jsonschema import Draft202012Validator
+    from jsonschema import Draft202012Validator
 
+    for name in (
+        "check",
+        "corpus",
+        "result",
+        "run",
+        "expectations",
+        "comparison",
+        "distribution",
+        "judgments",
+        "reference",
+    ):
         Draft202012Validator.check_schema(schema(name))

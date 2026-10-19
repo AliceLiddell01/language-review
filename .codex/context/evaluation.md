@@ -9,14 +9,14 @@
   превращает собственные или модельные гипотезы в истину. Синтетические, независимые
   и exploratory отчёты имеют разные report_kind.
 - `import-source` использует pinned каталог `evaluation/sources.json`, проверяет все
-  hashes/основания прав; upstream bytes/references/provenance остаются вне Git.
-  Rust Book — одна dev семья; SAGE сохраняет upstream test. Пары и отсутствие исправления
-  не подтверждают gold/clean. Автоматические proposals только draft.
+  hashes/основания прав; upstream bytes/references/provenance остаются вне Git. Split
+  каждой семьи задаётся каталогом. Пары и отсутствие исправления не подтверждают
+  gold/clean; автоматические proposals только draft. Детали источников и форматов см.
+  в [docs/evaluation.md](../../docs/evaluation.md).
 - `reference-score` оценивает только точное строковое совпадение с pinned correction,
   отдельно от gold scoring. Альтернативы/конфликты candidate-правок неопределённы;
-  нулевой знаменатель null. SAGE `.txt` — явный адаптер неизвестного source-формата;
-  legacy Markdown доступен для сравнения. Native code recipes сохраняют bytes/суффиксы
-  и отдельные draft validation семьи; SAGE родство/contamination не доказаны.
+  нулевой знаменатель null. Ограничения протокола и источников описаны в
+  [docs/evaluation.md](../../docs/evaluation.md).
 - `annotation-export/import` — слепой JSONL/CSV round-trip с codepoint offsets,
   точными quote/hash/protected ranges и явным человеческим свидетельством. Verified
   требует exhaustive по указанным категориям; untouched/disputed не повышаются.

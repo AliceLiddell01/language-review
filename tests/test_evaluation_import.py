@@ -446,6 +446,27 @@ def test_cli_roundtrip_agreement_conflict_and_frozen_holdout(tmp_path: Path) -> 
         import_annotations(corpus, test_packet, "fixture-person", "fixture record", True)
 
 
+def test_cli_classifies_malformed_annotation_json_as_invalid_input(tmp_path: Path) -> None:
+    corpus = make_corpus()
+    corpus_path = tmp_path / "corpus.json"
+    save_new(corpus_path, corpus)
+    packet = tmp_path / "packet"
+    export_annotations(corpus, "dev", packet)
+    (packet / "fragments.jsonl").write_text("{ malformed\n", encoding="utf-8")
+    assert (
+        main(
+            [
+                "annotation-import",
+                str(corpus_path),
+                str(packet),
+                "--output",
+                str(tmp_path / "result.json"),
+            ]
+        )
+        == 2
+    )
+
+
 def test_imported_corpus_cross_split_duplicates_and_hash_guard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

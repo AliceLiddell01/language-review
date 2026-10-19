@@ -8,6 +8,14 @@
   Реальные independently_verified метки требуют human/external_reference. Оценщик не
   превращает собственные или модельные гипотезы в истину. Синтетические, независимые
   и exploratory отчёты имеют разные report_kind.
+- `import-source` использует pinned каталог `evaluation/sources.json`, проверяет все
+  hashes/основания прав; upstream bytes/references/provenance остаются вне Git.
+  Rust Book — одна dev семья; SAGE сохраняет upstream test. Пары и отсутствие исправления
+  не подтверждают gold/clean. Автоматические proposals только draft.
+- `annotation-export/import` — слепой JSONL/CSV round-trip с codepoint offsets,
+  точными quote/hash/protected ranges и явным человеческим свидетельством. Verified
+  требует exhaustive по указанным категориям; untouched/disputed не повышаются.
+  Замороженный test не изменяется; agreement не назначает истину и не подтверждает личность.
 - Matching строгий и взаимно однозначный; частичное пересечение не TP. Неоднозначность
   явная, correction отдельна от detection. Смысловой ущерб оценивается только независимыми
   judgments; машинные risk reasons не доказательство. Незапущенные/непокрытые случаи не TN.

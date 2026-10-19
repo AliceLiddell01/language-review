@@ -15,6 +15,7 @@ from typing import Any
 from language_review.config import CHECK_CATEGORIES, CHECK_ENGINES
 from language_review.coordinates import SourceMap
 from language_review.errors import InputError
+from language_review.evaluation.annotation_io import export_annotations, import_annotations
 from language_review.evaluation.comparison import (
     check_expectation,
     compare,
@@ -31,6 +32,7 @@ from language_review.evaluation.corpus import (
 from language_review.evaluation.live import capture, materialize
 from language_review.evaluation.reports import load_product_report
 from language_review.evaluation.scoring import score
+from language_review.evaluation.source_import import import_source, recipes
 from language_review.review_report import _quote
 from language_review.scanner import _classify_encoding
 
@@ -41,6 +43,28 @@ def parser() -> argparse.ArgumentParser:
         description="Независимая оценка сохранённых check/review без изменения исходников",
     )
     commands = root.add_subparsers(dest="command", required=True)
+    source = commands.add_parser(
+        "import-source", help="получить pinned разрешённый реальный источник"
+    )
+    source.add_argument("source", choices=tuple(recipes()))
+    source.add_argument("--output", type=Path, required=True, help="новый внешний каталог")
+    source.add_argument("--limit", type=int, default=250)
+    source.add_argument("--cache", type=Path, help="исходные файлы с теми же pinned hashes")
+    for name in ("annotation-export", "annotation-import"):
+        annotation = commands.add_parser(name, help="слепая разметка JSONL/CSV")
+        annotation.add_argument("corpus", type=Path)
+        annotation.add_argument("--output", type=Path, required=True)
+        if name == "annotation-export":
+            annotation.add_argument("--split", choices=("dev", "validation", "test"), required=True)
+        else:
+            annotation.add_argument("packet", type=Path)
+            annotation.add_argument("--actor", default="")
+            annotation.add_argument("--evidence", default="")
+            annotation.add_argument(
+                "--attest-human",
+                action="store_true",
+                help="реальный человек подтверждает собственную независимую разметку",
+            )
     for name, help_text in (
         ("validate", "проверить корпус"),
         ("export", "канонический импорт/экспорт корпуса"),
@@ -244,6 +268,21 @@ def _init(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _run(args: argparse.Namespace) -> int:
+    if args.command == "import-source":
+        print(canonical(import_source(args.source, args.output, args.limit, args.cache)), end="")
+        return 0
+    if args.command in {"annotation-export", "annotation-import"}:
+        corpus = load_corpus(args.corpus)
+        if args.command == "annotation-export":
+            export_annotations(corpus, args.split, args.output)
+        else:
+            save_new(
+                args.output,
+                import_annotations(
+                    corpus, args.packet, args.actor, args.evidence, args.attest_human
+                ),
+            )
+        return 0
     if args.command == "init":
         save_new(args.output, _init(args))
         return 0

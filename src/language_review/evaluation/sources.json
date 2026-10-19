@@ -1,0 +1,92 @@
+[
+  {
+    "id": "rust-book-ru",
+    "revision": "1bec6512e7475b20919b6266dc8596ba71298ff9",
+    "base_url": "https://raw.githubusercontent.com/rust-lang-ru/book",
+    "license": "MIT",
+    "rights_basis": "Pinned LICENSE-MIT applies to associated documentation; preserve notice. Not proof of linguistic correctness.",
+    "attribution": "Copyright (c) 2010 The Rust Project Developers; rust-lang-ru/book contributors",
+    "split": "dev",
+    "license_path": "LICENSE-MIT",
+    "kind": "markdown",
+    "files": [
+      {
+        "path": "LICENSE-MIT",
+        "sha256": "0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720"
+      },
+      {
+        "path": "rustbook-ru/src/ch01-01-installation.md",
+        "sha256": "bf53639f0ac3a66339a819ba042cc511c0987fbeca368e4effd437018d71a1c2"
+      },
+      {
+        "path": "rustbook-ru/src/ch01-02-hello-world.md",
+        "sha256": "74122731598766efbb599960a8dd889b248ddeaf8e94a0bed58a2ed1e3e0c20f"
+      },
+      {
+        "path": "rustbook-ru/src/ch01-03-hello-cargo.md",
+        "sha256": "b1fe57bc2231379c32be96ee15978d786d95fc4006eaa4f588988eae5d38da99"
+      },
+      {
+        "path": "rustbook-ru/src/ch02-00-guessing-game-tutorial.md",
+        "sha256": "e3cd2d85e0c52acb7e3aafd43f9209b09c68ae9fadd697a0a933481669cc1b11"
+      },
+      {
+        "path": "rustbook-ru/src/ch03-01-variables-and-mutability.md",
+        "sha256": "8f13c83a936477484b9ff542cbf1e11d7954d866e57268e812908303db965e2c"
+      },
+      {
+        "path": "rustbook-ru/src/ch03-02-data-types.md",
+        "sha256": "dbbb1497790fd802995da4792bfa1b80a43aba4f900f611d0c482c35cd16c419"
+      },
+      {
+        "path": "rustbook-ru/src/ch03-03-how-functions-work.md",
+        "sha256": "f9329049a6577fb3de727df5edbd238190c3c88f081cc6ef64d12633b0b70022"
+      },
+      {
+        "path": "rustbook-ru/src/ch03-04-comments.md",
+        "sha256": "ffe78db086bee3279a82f2989bb729fdf0c7c813ba8cdfb12b366ffb192e9203"
+      },
+      {
+        "path": "rustbook-ru/src/ch03-05-control-flow.md",
+        "sha256": "386a6d3f890c5b33e24558a8b1570fca9cc02f3938217394512a5314ec8ee4df"
+      },
+      {
+        "path": "rustbook-ru/src/ch04-01-what-is-ownership.md",
+        "sha256": "4f4650162bae81af104d1c2341b4b38c73a1a2b6600d1a9225ea022c6037b9d7"
+      },
+      {
+        "path": "rustbook-ru/src/ch04-02-references-and-borrowing.md",
+        "sha256": "6ac4ef151ba51d4cd45ed0710736e7cacdaf1ff627bd8337c5fbd939e89aaadb"
+      },
+      {
+        "path": "rustbook-ru/src/ch04-03-slices.md",
+        "sha256": "7d30052060e58d2da5ef138c09ff050817282b3aeeddc26ac9ecc88b8a0ed91e"
+      }
+    ]
+  },
+  {
+    "id": "sage-github-ru",
+    "revision": "efa1663eade2afd35c8569fb149f94751c3cbfc0",
+    "base_url": "https://huggingface.co/datasets/ai-forever/spellcheck_punctuation_benchmark/resolve",
+    "license": "MIT-card/Apache-2.0-script",
+    "rights_basis": "Dataset card explicitly licenses data MIT and states source permissions; loader metadata says Apache-2.0. Preserve both notices, use privately; original repository identities/rights are not supplied. No exhaustive category gold.",
+    "attribution": "SAGE / ai-forever; original GitHub contributors as described by dataset curators",
+    "split": "test",
+    "license_path": "README.md",
+    "kind": "pairs",
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "e03cb57d98d5f2326da68fd96efe5632a8cbd604bf175602afd10d0857df28e5"
+      },
+      {
+        "path": "spellcheck_punctuation_benchmark.py",
+        "sha256": "58fbcfd6308c0e4728934a75c6f1ff42edcdc113c93c43e9b1f6a8c5144f9ed2"
+      },
+      {
+        "path": "data/GitHubTypoCorpusRu/test.json",
+        "sha256": "3d07df181fdd625590628d359e1c695f5a68052a20fddd221ec709bf3439daf3"
+      }
+    ]
+  }
+]

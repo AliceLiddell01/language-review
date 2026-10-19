@@ -298,8 +298,122 @@ split, metric/scorer version, report_kind и judgment_policy. Конфигура
 
 ## Приёмочные доказательства и исследовательские ориентиры
 
+### Реальные источники и слепая разметка
+
+`import-source` получает только разрешённые версии из упакованного
+[каталога](../src/language_review/evaluation/sources.json). Команда проверяет commit,
+SHA-256 каждого файла, включая основание прав; недоступный или изменённый источник
+не заменяется текущей веткой. `--cache` принимает ту же файловую структуру с теми же
+hashes. В новом **внешнем** каталоге сохраняются `upstream/` с исходными байтами,
+`provenance.json` с URLs/лицензией/атрибуцией/правилом отбора, `corpus.json` и
+`references.json`. Последний содержит внешние исправления/диагностики, не gold labels.
+Corpus-документы также несут optional `provenance`; export и annotation-import его сохраняют.
+
+```powershell
+$work = Join-Path $env:TEMP ('lr-corpus-' + [guid]::NewGuid())
+New-Item -ItemType Directory $work | Out-Null
+uv run --locked language-review-eval import-source rust-book-ru --output "$work/book"
+uv run --locked language-review-eval import-source sage-github-ru --output "$work/sage"
+uv run --locked language-review-eval validate "$work/book/corpus.json"
+uv run --locked language-review-eval annotation-export "$work/book/corpus.json" `
+  --split dev --output "$work/annotator-a"
+```
+
+- [Rust Book RU](https://github.com/rust-lang-ru/book/tree/1bec6512e7475b20919b6266dc8596ba71298ff9)
+  — 12 русских Markdown-файлов глав 1–4; MIT для документации по pinned LICENSE-MIT,
+  атрибуция Rust Project Developers и участников перевода сохранена. Вся семья — dev.
+  Используется существующий Markdown extractor без изменений; отбор русских фрагментов
+  не зависит от находок check. Отсутствие разметки не означает чистый текст.
+- [GitHubTypoCorpusRu/SAGE](https://huggingface.co/datasets/ai-forever/spellcheck_punctuation_benchmark/tree/efa1663eade2afd35c8569fb149f94751c3cbfc0)
+  — JSONL `source/correction/domain`, несмотря на расширение `.json`. Карточка явно
+  заявляет MIT для данных и разрешения источников; Python loader указывает Apache-2.0.
+  Оба pinned документа сохраняются, скрипт не выполняется. Производные данные имеют
+  `publish=private_only`; это консервативная политика импорта, не новое условие MIT.
+  Исходные GitHub repository/file IDs отсутствуют. Весь набор считается одной семьёй,
+  только test; source field кодируется UTF-8 без нормализации. Это байты поля датасета,
+  а не неизвестного исходного GitHub-файла. Неподдерживаемые scan строки сохраняются
+  в upstream и перечисляются как `unsupported_rows`, без исправления сканера.
+
+По умолчанию выбираются до 250 фрагментов в стабильном порядке hash ID после удаления
+точных нормализованных дублей. `--limit` позволяет меньший пилот. Это выборка из
+извлечённых фрагментов выбранных файлов, не всего технического русского. Контексты Rust
+Book — документация, SAGE — неизвестный `other`; C#/C++/логи не представлены. Validation
+остаётся пустым: одну семью не разделяют случайно по строкам. Для расширения нужны новые
+независимые семьи и ручной аудит переводов/forks/близких дублей; existing corpus validator
+дополнительно запрещает cross-split совпадения/containment/высокую shingle similarity.
+Публичный test может быть известен модели: отсутствие contamination не доказано.
+
+У SAGE есть человеческие corrected sentences, но нет наших категорий и anchors.
+[Протокол источника](https://sage-documentation-main.readthedocs.io/en/stable/rst/datasets/GitHubTypoCorpusRu.html)
+не подтверждает полноту всех девяти категорий. Автоматическое single-splice предложение
+сохраняется только при единственном минимальном диапазоне без внутренних совпадений.
+Повторяющиеся символы, широкие смешанные изменения и слишком длинные пары требуют человека.
+Даже однозначные proposals остаются draft; неизменённая пара не подтверждает clean.
+`references.json` никогда не поступает в `materialize`, слепой пакет или prompt.
+
+В слепом пакете `fragments.jsonl` содержит только точный текст, ID, hash, protected ranges
+и единицу offset — **Unicode codepoints**, с полуоткрытыми диапазонами `[start,end)`.
+`decisions.csv` (UTF-8 BOM) содержит тот же текст и поля для человека:
+
+| Поле | Ввод |
+| --- | --- |
+| decision | `unreviewed`, `clean`, `errors`, `disputed` |
+| exhaustive | `yes` только после полной проверки указанных categories; иначе `no` |
+| categories | явный список идентификаторов через пробел, например `spelling punctuation` |
+| terms / exceptions | по одной записи на строку внутри CSV-ячейки |
+| note | объяснение/основание решения |
+
+`labels.csv` изначально содержит только заголовок. На каждую ошибку добавляют строку:
+`id,start,end,quote,category,replace,replacement,note`. ID берётся из decisions; offsets
+считаются от начала точного текста фрагмента, **не UTF-16 и не bytes**. `quote` должен
+точно совпасть с исходным диапазоном. `replace=yes` разрешает также пустую replacement
+для удаления; `replace=no` означает отсутствие предложенного исправления. Технические
+protected ranges изменять нельзя. CSV читается с сохранением CRLF и Unicode; его можно
+редактировать обычным текстовым редактором с поддержкой quoted multiline CSV.
+
+```powershell
+# Выполняет реальный аннотатор после самостоятельной проверки, не агент вместо него:
+uv run --locked language-review-eval annotation-import "$work/book/corpus.json" `
+  "$work/annotator-a" --actor 'реальный-идентификатор' --attest-human `
+  --evidence 'проверяемая запись о выполненной независимой проверке и её области' `
+  --output "$work/annotated-a.json"
+```
+
+Без `--attest-human`, actor и evidence решения не принимаются. Это явное свидетельство,
+а не техническая аутентификация личности: CLI не доказывает, кто заполнил CSV. Модель не
+вправе заявлять себя человеком. Только `exhaustive=yes` и clean/errors дают verified
+случай в явно указанных категориях; неполный и disputed не становятся eligible.
+Пустой пакет не меняет существующую разметку. Original corpus и binding сохраняют
+provenance и историю; новые файлы не перезаписывают предыдущие версии. Для второго
+независимого человека экспортируют отдельный пакет из **того же исходного** корпуса,
+не показывая первый результат. `agreement annotated-a.json annotated-b.json` выявляет
+разногласия; не назначает истину большинством. Реальный adjudicator фиксирует решение
+в следующей версии с evidence; до этого disputed исключён из оценки. Смысловой вред
+отдельно требует существующего judgments-контракта.
+
+`freeze-test` выполняют после принятия разметки release. Изменение замороженной версии
+отклоняется; новая разметка требует новой незамороженной версии, сохранения старого
+release и повторной заморозки. Test экспортируют только для независимой оценки;
+никаких answers/references в настройку правил, retrieval или prompt.
+
+У [doccano](https://github.com/doccano/doccano/blob/master/docs/tutorial.md) рассмотрен
+JSONL sequence-labeling экспорт `text/labels` с character spans. Он сам по себе не даёт
+clean/exhaustive attestation, corrections и доказательства независимости; адаптер не
+заявляется. Обычный процесс использует проверяемый CSV round-trip без веб-сервиса.
+[RLC-GEC](https://github.com/Russian-Learner-Corpus/rlc-annotated) имеет MIT, но другой
+учебный домен; его start/end — token boundaries, а `rlc-errant` — автоматически
+выведенные аннотации. В этом этапе его коннектор не добавлен. Частные проекты не получены.
+
+Для первого real capture используются прежние `materialize/run/score/aggregate`.
+До получения реальных независимых решений все cases остаются draft/disputed:
+`exploratory`, качество `NOT_RUN`/`PARTIAL`, precision/recall null. Нулевые TP/FP/FN при
+нуле evaluated cases не доказывают точность или отсутствие ошибок. Покрытие check и
+количество наблюдаемых предложений движков можно измерять отдельно. Повторы LLM дают
+лишь описательный разброс; без judgments correction accuracy и смысловой вред неизвестны.
+
 Детерминированные проверки — `tests/test_evaluation.py` и
-`tests/test_evaluation_workflows.py`. Их HTTP-фикстуры — синтетические ответы протокола,
+`tests/test_evaluation_workflows.py`, `tests/test_evaluation_import.py`.
+Их HTTP-фикстуры — синтетические ответы протокола,
 которые проходят через настоящий check; они не доказывают языковую точность движков.
 Windows wheel/sdist smoke выполняет validate/score/regress/compare и проверяет сохранность
 исходников, корпуса и сохранённого отчёта. Команды всех проверок принадлежат

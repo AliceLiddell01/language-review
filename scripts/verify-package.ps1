@@ -211,6 +211,27 @@ try {
         if ($LASTEXITCODE -ne 0 -or ($comparison | ConvertFrom-Json).new_fp.Count -ne 0) {
             throw "Оценщик $kind не сравнил сохранённые результаты."
         }
+        $annotationPacket = Join-Path $tempRoot ("annotation-$kind")
+        & $evalLauncher annotation-export $evalCorpus --split dev --output $annotationPacket
+        if ($LASTEXITCODE -ne 0) {
+            throw "Оценщик $kind не экспортировал слепой пакет."
+        }
+        $roundtripCorpus = Join-Path $tempRoot ("annotation-roundtrip-$kind.json")
+        & $environmentPython -m language_review.evaluation annotation-import `
+            $evalCorpus $annotationPacket --output $roundtripCorpus
+        if ($LASTEXITCODE -ne 0) {
+            throw "Оценщик $kind не импортировал непроверенный слепой пакет."
+        }
+        & $environmentPython -c 'import json,sys; from pathlib import Path; assert json.loads(Path(sys.argv[1]).read_bytes()) == json.loads(Path(sys.argv[2]).read_bytes())' `
+            $roundtripCorpus $evalCorpus
+        if ($LASTEXITCODE -ne 0) {
+            throw "Оценщик $kind изменил разметку непроверенного слепого пакета."
+        }
+        $catalogOutput = (& $evalLauncher import-source --help) -join [Environment]::NewLine
+        if ($LASTEXITCODE -ne 0 -or $catalogOutput -notmatch 'rust-book-ru' -or
+            $catalogOutput -notmatch 'sage-github-ru') {
+            throw "Оценщик $kind не загрузил упакованный pinned каталог."
+        }
         if ((Get-FileHash -LiteralPath $evalCorpus -Algorithm SHA256).Hash -ne $evalCorpusHash -or
             (Get-FileHash -LiteralPath $evalReport -Algorithm SHA256).Hash -ne $evalReportHash -or
             (Get-FileHash -LiteralPath $sampleFile -Algorithm SHA256).Hash -ne $sampleHash) {

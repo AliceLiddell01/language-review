@@ -113,6 +113,8 @@ def validate_corpus(corpus: dict[str, Any]) -> dict[str, Any]:
             raise InputError("Повторный путь документа.")
         maps = {key: source_map(doc) for key, doc in documents.items()}
         for doc in documents.values():
+            if "provenance" in doc and doc["provenance"]["source_revision"] != doc["revision"]:
+                raise InputError("Revision документа отличается от pinned provenance.")
             safe_path(doc["path"])
             safe_path(doc["repository"])
             if "/" in doc["repository"]:
@@ -124,6 +126,11 @@ def validate_corpus(corpus: dict[str, Any]) -> dict[str, Any]:
                 raise InputError("Повторный case ID или неизвестный документ.")
             seen.add(case["id"])
             document = documents[case["document"]]
+            if (
+                "provenance" in document
+                and case["split"] != document["provenance"]["upstream_split"]
+            ):
+                raise InputError("Нельзя переносить pinned источник в другой split.")
             source = maps[case["document"]]
             span(source, case["range"])
             _verified(case["annotation"], document["data_kind"])

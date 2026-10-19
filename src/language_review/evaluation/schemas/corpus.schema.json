@@ -163,6 +163,67 @@
               "utf-32-le",
               "utf-32-be"
             ]
+          },
+          "provenance": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source_url",
+              "source_revision",
+              "source_sha256",
+              "license",
+              "license_url",
+              "license_sha256",
+              "attribution",
+              "upstream_split",
+              "transformation"
+            ],
+            "properties": {
+              "source_url": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_revision": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-f0-9]{40}$"
+              },
+              "source_sha256": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "license": {
+                "enum": [
+                  "MIT",
+                  "MIT-card/Apache-2.0-script"
+                ]
+              },
+              "license_url": {
+                "type": "string",
+                "minLength": 1
+              },
+              "license_sha256": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "attribution": {
+                "type": "string",
+                "minLength": 1
+              },
+              "upstream_split": {
+                "enum": [
+                  "dev",
+                  "validation",
+                  "test"
+                ]
+              },
+              "transformation": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
           }
         }
       },

@@ -64,10 +64,14 @@ def _target(root: Path, relative: str, kind: str) -> Path:
 def _verify_quote(source: SourceMap, location: Any, quote: Any) -> None:
     if not isinstance(quote, str):
         raise ValueError("quote_unavailable")
+    if not isinstance(location, dict) or set(location) != {"start", "end"}:
+        raise ValueError("invalid_coordinate_structure")
     first, last = location["start"], location["end"]
     fields = {"byte_offset", "line", "column", "utf16_column"}
     if any(
-        set(position) != fields or any(type(value) is not int for value in position.values())
+        not isinstance(position, dict)
+        or set(position) != fields
+        or any(type(value) is not int for value in position.values())
         for position in (first, last)
     ):
         raise ValueError("invalid_coordinate_structure")
@@ -183,6 +187,8 @@ def verify_review(report_path: Path, roots: dict[str, Path]) -> dict[str, Any]:
             except (OSError, ValueError, LookupError) as exc:
                 # Не раскрываем пути из ошибок файловой системы.
                 reason = str(exc) if type(exc) is ValueError else "source_unavailable"
+                if reason == "invalid_coordinate_structure":
+                    raise InputError("Некорректный или недоступный review-отчёт.") from exc
                 if reason in {"quote_mismatch", "coordinate_mismatch", "invalid_byte_range"}:
                     state = "stale"
             results.append({"document_id": identifier, "status": state, "reason": reason})

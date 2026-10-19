@@ -178,6 +178,18 @@ def test_review_cli_exact_unicode_context_evidence_and_stale_source(
     stale_suggestion = _run(command, isolated_appdata)
     assert stale_suggestion.returncode == 4
     assert json.loads(stale_suggestion.stdout)["documents"][0]["reason"] == "quote_mismatch"
+    malformed = json.loads(json.dumps(report))
+    malformed["items"][0]["range"]["start"] = [
+        "byte_offset",
+        "line",
+        "column",
+        "utf16_column",
+    ]
+    saved.write_text(json.dumps(malformed), encoding="utf-8")
+    invalid_coordinate = _run(command, isolated_appdata)
+    assert invalid_coordinate.returncode == 2
+    assert "Traceback" not in invalid_coordinate.stderr
+    assert invalid_coordinate.stdout == ""
     # Тот же хеш с ошибочной цитатой не даёт current.
     report["items"][0]["excerpt"] = "ошибка"
     saved.write_text(json.dumps(report), encoding="utf-8")

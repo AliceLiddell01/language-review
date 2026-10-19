@@ -1,4 +1,4 @@
-"""Review-представление того же CheckResult. Никаких новых вызовов движков или правок."""
+"""Представление результатов ревью из того же CheckResult без новых вызовов движков."""
 
 from __future__ import annotations
 
@@ -308,7 +308,7 @@ def render_review(report: dict[str, Any], *, show_all: bool = False) -> str:
     for document in analysis["documents"]:
         lines.append(
             f"Документ {_quote(document['path'])}: {_quote(document['status'])}; "
-            f"extract={_quote(document['extraction_status'])}; "
+            f"извлечение={_quote(document['extraction_status'])}; "
             f"причина {_quote(document['extraction_reason'])}"
         )
         counts: dict[str, int] = {}

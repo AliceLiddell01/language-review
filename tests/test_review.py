@@ -122,6 +122,7 @@ def test_reconcile_requires_one_edit_shared_by_entire_group(tmp_path: Path, comm
             ]
             assert set.intersection(*edits)
 
+
 def test_reconcile_same_edit_text_at_different_ranges_is_independent(tmp_path: Path) -> None:
     candidates = _candidates(
         tmp_path,
@@ -133,6 +134,7 @@ def test_reconcile_same_edit_text_at_different_ranges_is_independent(tmp_path: P
     assert first.edit[2] == second.edit[2]
     assert first.edit[:2] != second.edit[:2]
     assert len(reconcile(0, candidates)) == 2
+
 
 @pytest.mark.parametrize("layout", ["units", "ranges", "dense", "rules"])
 def test_reconcile_independent_findings_avoid_global_pair_scan(
@@ -705,3 +707,176 @@ def test_review_schema_and_cli_refuse_malformed_saved_report(
             assert process.returncode == 2
             assert "Traceback" not in process.stderr
             assert process.stdout == ""
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "priority",
+        "decision",
+        "nested_required",
+        "unknown_key",
+        "wrong_type",
+        "analysis_type",
+        "document_link",
+        "finding_link",
+        "duplicate_item",
+        "duplicate_document",
+        "duplicate_root",
+        "fragment_link",
+        "related_link",
+        "range_order",
+    ],
+)
+def test_saved_review_commands_reject_invalid_format_and_links(
+    tmp_path: Path, isolated_appdata: Path, damage: str
+) -> None:
+    report = json.loads((ROOT / "docs/review-report.example.json").read_text(encoding="utf-8"))
+    item = report["items"][0]
+    document = report["analysis"]["documents"][0]
+    match damage:
+        case "priority":
+            item["priority"] = "approved"
+        case "decision":
+            item["decision"] = "apply_automatically"
+        case "nested_required":
+            del item["evidence"][0]["range"]
+        case "unknown_key":
+            item["execute"] = "untrusted text"
+        case "wrong_type":
+            item["context"] = {}
+        case "analysis_type":
+            document["findings"] = "invalid"
+        case "document_link":
+            item["document_id"] = "doc-" + "0" * 24
+        case "finding_link":
+            item["id"] = "find-" + "0" * 24
+        case "duplicate_item":
+            report["items"].append(item)
+        case "duplicate_document":
+            report["analysis"]["documents"].append(document)
+        case "duplicate_root":
+            report["analysis"]["roots"].append(report["analysis"]["roots"][0])
+        case "fragment_link":
+            item["fragment_ids"] = ["frag-" + "0" * 24]
+        case "related_link":
+            item["related_findings"] = ["find-" + "0" * 24]
+        case "range_order":
+            item["range"]["start"]["byte_offset"] = 1000
+    saved = tmp_path / "invalid.json"
+    saved.write_text(json.dumps(report), encoding="utf-8")
+    for command in ("show-review", "verify-review"):
+        process = _run([command, str(saved)], isolated_appdata)
+        assert process.returncode == 2, (command, process.stdout, process.stderr)
+        assert process.stdout == ""
+        assert "Traceback" not in process.stderr
+
+
+@pytest.mark.parametrize("damage", ["original", "range", "text", "source_range"])
+def test_verify_review_checks_analysis_edits_and_duplicate_localizations(
+    tmp_path: Path, isolated_appdata: Path, json_server: JsonServer, damage: str
+) -> None:
+    json_server.responder = languagetool_responder({"ошыбка": ["ошибка"]})
+    report, _, source, _ = _review_run(
+        tmp_path, json_server, isolated_appdata, "// 😀 Здесь ошыбка.\r\n".encode("utf-8-sig")
+    )
+    original_bytes = source.read_bytes()
+    finding = report["analysis"]["documents"][0]["findings"][0]
+    edit = finding["suggestions"][0]["edit"]
+    if damage == "original":
+        edit["original"] = "подлог"
+    elif damage == "range":
+        edit["range"]["start"]["line"] += 1
+    elif damage == "text":
+        edit["text"] = "иная гипотеза"
+    else:
+        finding["sources"][0]["range"]["start"]["utf16_column"] += 1
+    saved = tmp_path / "review.json"
+    saved.write_text(json.dumps(report), encoding="utf-8")
+    process = _run(
+        ["verify-review", str(saved), "--root", f"root-0001={source}", "--format", "json"],
+        isolated_appdata,
+    )
+    assert process.returncode in {2, 4}
+    assert "Traceback" not in process.stderr
+    if process.stdout:
+        assert json.loads(process.stdout)["status"] != "current"
+    assert source.read_bytes() == original_bytes
+
+
+def test_packaged_review_schema_matches_documented_contract() -> None:
+    from importlib import resources
+
+    packaged = resources.files("language_review").joinpath("review-report.schema.json")
+    assert json.loads(packaged.read_text(encoding="utf-8")) == SCHEMA
+    check_schema = json.loads((ROOT / "docs/check-report.schema.json").read_text(encoding="utf-8"))
+    assert SCHEMA["$defs"]["analysis"] == {
+        key: value for key, value in check_schema.items() if key not in {"$defs", "$schema", "$id"}
+    }
+    for name, definition in check_schema["$defs"].items():
+        assert SCHEMA["$defs"][name] == definition
+
+
+def test_finding_ids_bind_saved_runs_with_different_document_sets(
+    tmp_path: Path, isolated_appdata: Path, json_server: JsonServer
+) -> None:
+    json_server.responder = languagetool_responder({"ошыбка": ["ошибка"]})
+    earlier = tmp_path / "a.cs"
+    target = tmp_path / "z.md"
+    earlier.write_text("// ошыбка\n", encoding="utf-8")
+    target.write_text("Здесь ошыбка.\n", encoding="utf-8")
+    before = {path: path.read_bytes() for path in (earlier, target)}
+    config = _languagetool_config(tmp_path, json_server.url)
+    seen = []
+    for paths in ([target], [earlier, target], [target, earlier]):
+        process = _run(
+            [
+                "--config",
+                str(config),
+                "check",
+                *map(str, paths),
+                "--view",
+                "review",
+                "--format",
+                "json",
+            ],
+            isolated_appdata,
+        )
+        assert process.returncode == 1
+        report = json.loads(process.stdout)
+        assert len({item["id"] for item in report["items"]}) == len(paths)
+        target_item = next(item for item in report["items"] if item["path"] == target.name)
+        seen.append(target_item)
+        saved = tmp_path / "saved.json"
+        saved.write_text(json.dumps(report), encoding="utf-8")
+        roots = {f"root-{index:04d}": path for index, path in enumerate(paths, 1)}
+        assert verify_review(saved, roots)["status"] == "current"
+    assert all(item["excerpt"] == "ошыбка" for item in seen)
+    # ID — ссылка внутри конкретного отчёта, переносить её между такими запусками нельзя.
+    assert {path: path.read_bytes() for path in (earlier, target)} == before
+
+
+@pytest.mark.parametrize("damage", ["duplicate_key", "nonfinite", "syntax", "deep_nesting"])
+def test_saved_review_rejects_ambiguous_or_malformed_json(
+    tmp_path: Path, isolated_appdata: Path, damage: str
+) -> None:
+    text = (ROOT / "docs/review-report.example.json").read_text(encoding="utf-8")
+    if damage == "duplicate_key":
+        text = text.replace(
+            '"priority": "inspect_first"', '"priority": "approved", "priority": "inspect_first"'
+        )
+    elif damage == "nonfinite":
+        report = json.loads(text)
+        report["analysis"]["engines"][0]["elapsed_ms"] = float("nan")
+        text = json.dumps(report)
+    elif damage == "syntax":
+        text = text[:-10]
+    else:
+        text = "[" * 2000 + "0" + "]" * 2000
+    saved = tmp_path / "invalid.json"
+    saved.write_text(text, encoding="utf-8")
+    for command in ("show-review", "verify-review"):
+        process = _run([command, str(saved)], isolated_appdata)
+        assert process.returncode == 2
+        assert process.stdout == ""
+        assert "Traceback" not in process.stderr

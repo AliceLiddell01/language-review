@@ -1,21 +1,18 @@
-"""Повторная read-only сверка версии и точных координат сохранённого ревью."""
+"""Повторная сверка сохранённого ревью и точных координат только для чтения."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+from functools import lru_cache
+from importlib import resources
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
-from language_review.check_report import (
-    SCHEMA as CHECK_SCHEMA,
-)
-from language_review.check_report import (
-    SCHEMA_VERSION as CHECK_SCHEMA_VERSION,
-)
+from jsonschema import Draft202012Validator, ValidationError
+
 from language_review.coordinates import SourceMap
 from language_review.errors import InputError
-from language_review.review_report import SCHEMA
 
 MAX_VERIFY_BYTES = 32 * 1024 * 1024
 
@@ -90,26 +87,107 @@ def _verify_quote(source: SourceMap, location: Any, quote: Any) -> None:
         raise ValueError("coordinate_mismatch")
 
 
+@lru_cache(maxsize=1)
+def _validator() -> Draft202012Validator:
+    schema = resources.files("language_review").joinpath("review-report.schema.json")
+    return Draft202012Validator(json.loads(schema.read_text(encoding="utf-8")))
+
+
+def _unique_objects(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result = dict(pairs)
+    if len(result) != len(pairs):
+        raise ValueError("duplicate_json_key")
+    return result
+
+
+def _invalid_constant(value: str) -> Any:
+    raise ValueError("invalid_json_constant")
+
+
+def _identities(values: list[dict[str, Any]]) -> set[str]:
+    identifiers = {value["id"] for value in values}
+    if len(identifiers) != len(values):
+        raise ValueError("duplicate_identity")
+    return identifiers
+
+
+def _validate_ranges(value: Any) -> None:
+    if isinstance(value, dict):
+        if set(value) == {"start", "end"} and isinstance(value["start"], dict):
+            first, last = value["start"], value["end"]
+            if first["byte_offset"] > last["byte_offset"]:
+                raise ValueError("invalid_range_order")
+        for key, child in value.items():
+            if key != "details":
+                _validate_ranges(child)
+    elif isinstance(value, list):
+        for child in value:
+            _validate_ranges(child)
+
+
+def _validate_links(report: dict[str, Any]) -> None:
+    analysis = report["analysis"]
+    roots = _identities(analysis["roots"])
+    _identities(analysis["documents"])
+    _identities(report["items"])
+    documents = {value["id"]: value for value in analysis["documents"]}
+    findings: dict[str, dict[str, Any]] = {}
+    fragments: dict[str, set[str]] = {}
+    items_by_document: dict[str, list[dict[str, Any]]] = {key: [] for key in documents}
+    for document in documents.values():
+        if document["root"] not in roots:
+            raise ValueError("unknown_root")
+        fragments[document["id"]] = _identities(document["fragments"])
+        _identities(document["findings"])
+        for finding in document["findings"]:
+            if finding["id"] in findings:
+                raise ValueError("duplicate_identity")
+            findings[finding["id"]] = document
+    if set(findings) != {item["id"] for item in report["items"]}:
+        raise ValueError("finding_set_mismatch")
+    for item in report["items"]:
+        if (
+            item["document_id"] not in documents
+            or findings[item["id"]]["id"] != item["document_id"]
+        ):
+            raise ValueError("unknown_document")
+        items_by_document[item["document_id"]].append(item)
+        if any(
+            related == item["id"] or findings.get(related) is not documents[item["document_id"]]
+            for related in item["related_findings"]
+        ):
+            raise ValueError("unknown_related_finding")
+    for document in documents.values():
+        known = fragments[document["id"]]
+        values = [*document["findings"], *document["rejected"]]
+        values += items_by_document[document["id"]]
+        for value in values:
+            if not set(value["fragment_ids"]) <= known:
+                raise ValueError("unknown_fragment")
+            for context in value.get("context", []):
+                if context["fragment_id"] not in known:
+                    raise ValueError("unknown_fragment")
+        for fragment in document["fragments"]:
+            if not set(fragment["unit_fragment_ids"]) <= known:
+                raise ValueError("unknown_fragment")
+    for value in [*report["filtered"], *report["unlocalized"]]:
+        if (
+            value["document_id"] not in documents
+            or not set(value["fragment_ids"]) <= fragments[value["document_id"]]
+        ):
+            raise ValueError("unknown_fragment")
+
+
 def load_review(report_path: Path) -> dict[str, Any]:
     try:
-        report = json.loads(_read(report_path))
-        if (
-            not isinstance(report, dict)
-            or report["schema"] != SCHEMA
-            or report["schema_version"] != "1.0"
-        ):
-            raise ValueError("unsupported_review_schema")
-        analysis = report.get("analysis")
-        if (
-            not isinstance(analysis, dict)
-            or analysis.get("schema") != CHECK_SCHEMA
-            or analysis.get("schema_version") != CHECK_SCHEMA_VERSION
-            or not isinstance(analysis.get("documents"), list)
-            or not isinstance(report.get("items"), list)
-        ):
-            raise ValueError("invalid_review_structure")
+        report: dict[str, Any] = json.loads(
+            _read(report_path), object_pairs_hook=_unique_objects, parse_constant=_invalid_constant
+        )
+        _validator().validate(report)
+        _validate_ranges(report)
+        _validate_links(report)
         return report
-    except (OSError, ValueError, LookupError, TypeError) as exc:
+    except (OSError, ValueError, LookupError, TypeError, RecursionError, ValidationError) as exc:
         raise InputError("Некорректный или недоступный review-отчёт.") from exc
 
 
@@ -119,13 +197,11 @@ def verify_review(report_path: Path, roots: dict[str, Path]) -> dict[str, Any]:
         analysis = report["analysis"]
         root_kinds = {root["id"]: root["kind"] for root in analysis["roots"]}
         documents, items = analysis["documents"], report["items"]
-        if not isinstance(documents, list) or not isinstance(items, list):
-            raise ValueError("invalid_review_structure")
-        known = {document["id"] for document in documents}
-        if len(known) != len(documents) or len({item["id"] for item in items}) != len(items):
-            raise ValueError("duplicate_identity")
-        if any(item["document_id"] not in known for item in items):
-            raise ValueError("unknown_document")
+        items_by_document: dict[str, list[dict[str, Any]]] = {
+            document["id"]: [] for document in documents
+        }
+        for item in items:
+            items_by_document[item["document_id"]].append(item)
         results = []
         for document in documents:
             identifier = document["id"]
@@ -154,35 +230,47 @@ def verify_review(report_path: Path, roots: dict[str, Path]) -> dict[str, Any]:
                     }:
                         raise ValueError("unsupported_encoding")
                     source = SourceMap.create(raw, encoding, document["bom"])
-                    expected = {finding["id"] for finding in document["findings"]}
-                    actual = [item for item in items if item["document_id"] == identifier]
-                    if expected != {item["id"] for item in actual}:
-                        raise ValueError("finding_set_mismatch")
-                    for item in actual:
-                        original = next(
-                            finding
-                            for finding in document["findings"]
-                            if finding["id"] == item["id"]
-                        )
+                    findings = {finding["id"]: finding for finding in document["findings"]}
+                    for item in items_by_document[identifier]:
+                        original = findings[item["id"]]
                         if any(
                             item[key] != document[key] for key in ("root", "path", "source_sha256")
                         ):
                             raise ValueError("document_binding_mismatch")
                         _verify_quote(source, item["range"], item["excerpt"])
-                        if any(item[key] != original[key] for key in ("range", "excerpt")):
-                            raise ValueError("finding_binding_mismatch")
+                        _verify_quote(source, original["range"], original["excerpt"])
+                        for entry in (item, original):
+                            for suggestion in entry["suggestions"]:
+                                edit = suggestion["edit"]
+                                if edit is not None:
+                                    _verify_quote(source, edit["range"], edit["original"])
+                            for origin in entry["sources"]:
+                                location = origin["range"]
+                                start = location["start"]["byte_offset"]
+                                end = location["end"]["byte_offset"]
+                                quote = source.raw[start:end].decode(source.encoding)
+                                _verify_quote(source, location, quote)
+                        if any(item[key] != value for key, value in original.items()):
+                            raise InputError("Несогласованные представления review-отчёта.")
                         for context in item["context"]:
                             _verify_quote(source, context["range"], context["quote"])
-                        for suggestion in item["suggestions"]:
-                            edit = suggestion["edit"]
-                            if edit is not None:
-                                _verify_quote(source, edit["range"], edit["original"])
-                        for evidence in item["evidence"]:
+                        if len(item["evidence"]) != len(item["sources"]):
+                            raise InputError("Несогласованные свидетельства review-отчёта.")
+                        for evidence, origin in zip(item["evidence"], item["sources"], strict=True):
                             _verify_quote(source, evidence["range"], evidence["source_excerpt"])
+                            if any(evidence[key] != value for key, value in origin.items()):
+                                raise InputError("Несогласованные свидетельства review-отчёта.")
                             for suggestion in evidence["suggestions"]:
                                 edit = suggestion["edit"]
                                 if edit is not None and edit["original"] is not None:
                                     _verify_quote(source, edit["range"], edit["original"])
+                                if not any(
+                                    value["edit"] == edit
+                                    and value["status"] == suggestion["status"]
+                                    and evidence["engine"] in value["engines"]
+                                    for value in item["suggestions"]
+                                ):
+                                    raise InputError("Несогласованные варианты review-отчёта.")
                     state = "current"
             except LookupError as exc:
                 raise InputError("Некорректный или недоступный review-отчёт.") from exc

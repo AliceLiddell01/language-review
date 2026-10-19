@@ -15,6 +15,8 @@ uv run --locked pytest -n 8
 
 Скрипт собирает wheel/sdist, устанавливает их в изолированные среды Windows и проверяет настоящий CLI, `python -m language_review`, JSON-вывод `scan`, структурное извлечение через `extract`, `check` со встроенными правилами Vale (без Vale — ожидаемый статус `unavailable` и код 5), review-контракт, `show-review`, `verify-review` и сохранность исходного файла после каждой команды чтения.
 
+`tests/test_review.py` сверяет упакованную и документированную review-схемы, вложенный контракт check, отказ обеих команд при повреждённом JSON и согласованность локализаций `items`/`analysis`.
+
 ## Приёмка языковых движков
 
 Контрактные тесты `tests/test_check.py` используют локальные HTTP-серверы протоколов и проверяют отказы; они не доказывают работу настоящих движков. `tests/test_check_live.py` запускается на реальных LanguageTool, `llama-server`, Ollama и Vale только при заданных `LANGUAGE_REVIEW_LIVE_LANGUAGETOOL`, `LANGUAGE_REVIEW_LIVE_LLAMA_CPP` (`_MODEL`), `LANGUAGE_REVIEW_LIVE_OLLAMA` (`_MODEL`) и найденном `vale`; пропуск — `NOT_RUN`. Эталон `docs/check-report.example.json` перестраивается фактическим CLI на входах `prepare_example_inputs` из `tests/test_check_live.py`. Модели, журналы движков и пользовательские тексты не добавляются в Git.

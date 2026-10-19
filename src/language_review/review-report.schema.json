@@ -1,0 +1,1749 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "status",
+    "suggestions_applied",
+    "trust_boundary",
+    "analysis",
+    "summary",
+    "items",
+    "filtered",
+    "unlocalized",
+    "diagnostics"
+  ],
+  "properties": {
+    "schema": {
+      "const": "language-review.review"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "status": {
+      "$ref": "#/$defs/overall_status"
+    },
+    "suggestions_applied": {
+      "const": false
+    },
+    "trust_boundary": {
+      "type": "string"
+    },
+    "analysis": {
+      "$ref": "#/$defs/analysis"
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inspect_first",
+        "needs_context",
+        "unreliable"
+      ],
+      "properties": {
+        "inspect_first": {
+          "$ref": "#/$defs/count"
+        },
+        "needs_context": {
+          "$ref": "#/$defs/count"
+        },
+        "unreliable": {
+          "$ref": "#/$defs/count"
+        }
+      }
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "category",
+          "categories",
+          "fragment_ids",
+          "range",
+          "excerpt",
+          "excerpt_status",
+          "agreement",
+          "conflicting_suggestions",
+          "sources",
+          "suggestions",
+          "document_id",
+          "root",
+          "path",
+          "source_sha256",
+          "priority",
+          "priority_reasons",
+          "risks",
+          "related_findings",
+          "agreement_basis",
+          "context",
+          "evidence",
+          "decision",
+          "coverage"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^find-[0-9a-f]{24}$"
+          },
+          "category": {
+            "$ref": "#/$defs/category"
+          },
+          "categories": {
+            "description": "Категории всех источников; объединяются только свидетельства с одной общей минимальной правкой у всех членов группы в одной единице и совместимыми категориями.",
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/$defs/category"
+            }
+          },
+          "fragment_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/$defs/fragment_id"
+            }
+          },
+          "range": {
+            "$ref": "#/$defs/range"
+          },
+          "excerpt": {
+            "description": "Точная цитата исходника для диапазона внутри одного фрагмента.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "excerpt_status": {
+            "enum": [
+              "verified",
+              "spans_fragments"
+            ]
+          },
+          "agreement": {
+            "description": "Движки, предложившие общую минимальную правку в одной единице при попарно совместимых категориях. Совпадение не повышает и не объединяет уверенность.",
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/$defs/engine_name"
+            }
+          },
+          "conflicting_suggestions": {
+            "type": "boolean"
+          },
+          "sources": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/$defs/source"
+            }
+          },
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/suggestion"
+            }
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "root": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "source_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "priority": {
+            "enum": [
+              "inspect_first",
+              "needs_context",
+              "unreliable"
+            ]
+          },
+          "priority_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "risks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "related_findings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "agreement_basis": {
+            "enum": [
+              "shared_minimal_edit",
+              "single_evidence"
+            ]
+          },
+          "context": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "fragment_id",
+                "kind",
+                "context",
+                "range",
+                "quote"
+              ],
+              "properties": {
+                "fragment_id": {
+                  "$ref": "#/$defs/fragment_id"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "context": {
+                  "type": "string"
+                },
+                "range": {
+                  "$ref": "#/$defs/range"
+                },
+                "quote": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "engine",
+                "category",
+                "rule_id",
+                "rule_category",
+                "message",
+                "confidence",
+                "severity",
+                "view",
+                "view_range",
+                "engine_excerpt",
+                "replacements",
+                "replacement_origin",
+                "checked_excerpt",
+                "range",
+                "suggestions",
+                "source_excerpt"
+              ],
+              "properties": {
+                "engine": {
+                  "$ref": "#/$defs/engine_name"
+                },
+                "category": {
+                  "$ref": "#/$defs/category"
+                },
+                "rule_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "rule_category": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                },
+                "confidence": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "severity": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "view": {
+                  "enum": [
+                    "plain",
+                    "llm"
+                  ]
+                },
+                "view_range": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "start",
+                    "end"
+                  ],
+                  "properties": {
+                    "start": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "end": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                },
+                "engine_excerpt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "replacements": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "replacement_origin": {
+                  "type": "string"
+                },
+                "checked_excerpt": {
+                  "type": "string"
+                },
+                "range": {
+                  "$ref": "#/$defs/range"
+                },
+                "suggestions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "status",
+                      "reasons",
+                      "origin",
+                      "engine_replacement",
+                      "edit"
+                    ],
+                    "properties": {
+                      "status": {
+                        "enum": [
+                          "candidate",
+                          "rejected"
+                        ]
+                      },
+                      "reasons": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "origin": {
+                        "type": "string"
+                      },
+                      "engine_replacement": {
+                        "type": "string"
+                      },
+                      "edit": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "range",
+                              "original",
+                              "text"
+                            ],
+                            "properties": {
+                              "range": {
+                                "$ref": "#/$defs/range"
+                              },
+                              "original": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "text": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                "source_excerpt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "decision": {
+            "const": "agent_review_required"
+          },
+          "coverage": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "document_status",
+              "extraction_status",
+              "checks"
+            ],
+            "properties": {
+              "document_status": {
+                "type": "string"
+              },
+              "extraction_status": {
+                "type": "string"
+              },
+              "checks": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/$defs/unit_check"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "filtered": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "engine",
+          "category",
+          "rule_id",
+          "rule_category",
+          "message",
+          "confidence",
+          "severity",
+          "view",
+          "view_range",
+          "engine_excerpt",
+          "replacements",
+          "replacement_origin",
+          "document_id",
+          "reason",
+          "fragment_ids"
+        ],
+        "properties": {
+          "engine": {
+            "$ref": "#/$defs/engine_name"
+          },
+          "category": {
+            "$ref": "#/$defs/category"
+          },
+          "rule_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rule_category": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "severity": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "view": {
+            "enum": [
+              "plain",
+              "llm"
+            ]
+          },
+          "view_range": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "start",
+              "end"
+            ],
+            "properties": {
+              "start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "end": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "engine_excerpt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "replacements": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "replacement_origin": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "reason": {
+            "const": "category_disabled"
+          },
+          "fragment_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/fragment_id"
+            }
+          }
+        }
+      }
+    },
+    "unlocalized": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "document_id",
+          "engine",
+          "fragment_ids",
+          "reason",
+          "rule_id",
+          "message",
+          "excerpt",
+          "raw",
+          "details"
+        ],
+        "properties": {
+          "document_id": {
+            "type": "string"
+          },
+          "engine": {
+            "$ref": "#/$defs/engine_name"
+          },
+          "fragment_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/fragment_id"
+            }
+          },
+          "reason": {
+            "type": "string"
+          },
+          "rule_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "excerpt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "raw": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "engine",
+                  "category",
+                  "rule_id",
+                  "rule_category",
+                  "message",
+                  "confidence",
+                  "severity",
+                  "view",
+                  "view_range",
+                  "engine_excerpt",
+                  "replacements",
+                  "replacement_origin"
+                ],
+                "properties": {
+                  "engine": {
+                    "$ref": "#/$defs/engine_name"
+                  },
+                  "category": {
+                    "$ref": "#/$defs/category"
+                  },
+                  "rule_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "rule_category": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "confidence": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "severity": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "view": {
+                    "enum": [
+                      "plain",
+                      "llm"
+                    ]
+                  },
+                  "view_range": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "start",
+                      "end"
+                    ],
+                    "properties": {
+                      "start": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "end": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    }
+                  },
+                  "engine_excerpt": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "replacements": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "replacement_origin": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "item": {
+                "type": "string"
+              },
+              "category": {
+                "type": "string"
+              },
+              "excerpt": {
+                "type": "string"
+              },
+              "replacement": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "explanation": {
+                "type": "string"
+              },
+              "confidence": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://language-review.invalid/schemas/review-report-1.0.json",
+  "title": "Гипотезы языкового ревью для coding-агента",
+  "$defs": {
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "overall_status": {
+      "description": "clean — проверено полностью без замечаний; findings — проверено полностью, есть замечания; partial — часть текста не проверена или извлечена неполно; unavailable — выбранный движок недоступен или завершился ошибкой; error — ошибка входных данных.",
+      "enum": [
+        "clean",
+        "findings",
+        "partial",
+        "unavailable",
+        "error"
+      ]
+    },
+    "engine_name": {
+      "enum": [
+        "languagetool",
+        "llm",
+        "vale"
+      ]
+    },
+    "category": {
+      "enum": [
+        "spelling",
+        "grammar",
+        "punctuation",
+        "style",
+        "bureaucratese",
+        "terminology",
+        "untranslated_english",
+        "typography",
+        "other"
+      ]
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "byte_offset",
+        "line",
+        "column",
+        "utf16_column"
+      ],
+      "properties": {
+        "byte_offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "utf16_column": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/position"
+        },
+        "end": {
+          "$ref": "#/$defs/position"
+        }
+      }
+    },
+    "fragment_id": {
+      "type": "string",
+      "pattern": "^frag-[0-9a-f]{24}$"
+    },
+    "document_configuration": {
+      "description": "Параметры, фактически применённые к документу: база, профиль документа и затем аргументы командной строки. Пустой список categories — фильтр не задан.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engines",
+        "categories",
+        "terms_count",
+        "sources"
+      ],
+      "properties": {
+        "engines": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/engine_name"
+          }
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/category"
+          }
+        },
+        "terms_count": {
+          "description": "Число терминов проекта, переданных Vale и LLM; сами термины не публикуются.",
+          "$ref": "#/$defs/count"
+        },
+        "sources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "engines",
+            "categories",
+            "terms"
+          ],
+          "properties": {
+            "engines": {
+              "type": "string"
+            },
+            "categories": {
+              "type": "string"
+            },
+            "terms": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "engine_run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "status",
+        "details",
+        "diagnostics",
+        "message",
+        "statistics",
+        "elapsed_ms",
+        "tokens"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/engine_name"
+        },
+        "status": {
+          "description": "ok — все назначенные единицы проверены; partial — часть единиц не проверена; error — ни одна единица не проверена; unavailable — движок не прошёл проверку готовности.",
+          "enum": [
+            "ok",
+            "partial",
+            "error",
+            "unavailable"
+          ]
+        },
+        "details": {
+          "type": "object",
+          "description": "Параметры движка без секретов и локальных путей: endpoint с маскированием, модель, версия, версия промпта.",
+          "properties": {
+            "endpoint": {
+              "type": "string"
+            },
+            "endpoint_origin": {
+              "enum": [
+                "loopback",
+                "remote"
+              ]
+            },
+            "provider": {
+              "enum": [
+                "llama_cpp",
+                "ollama"
+              ]
+            },
+            "model": {
+              "description": "Публичное обозначение модели; для локального пути к файлу модели — только имя файла.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "prompt_version": {
+              "type": "string"
+            },
+            "prompt_template_sha256": {
+              "description": "SHA-256 базового шаблона: системного промпта и структуры схемы ответа. Термины профиля и предел числа замечаний пакета в него не входят.",
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "configuration": {
+              "enum": [
+                "bundled",
+                "custom"
+              ]
+            }
+          }
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "statistics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "units_total",
+            "units_checked",
+            "units_failed",
+            "units_skipped",
+            "fragments_checked",
+            "findings",
+            "rejected",
+            "filtered",
+            "requests",
+            "request_failures"
+          ],
+          "properties": {
+            "units_total": {
+              "$ref": "#/$defs/count"
+            },
+            "units_checked": {
+              "$ref": "#/$defs/count"
+            },
+            "units_failed": {
+              "$ref": "#/$defs/count"
+            },
+            "units_skipped": {
+              "$ref": "#/$defs/count"
+            },
+            "fragments_checked": {
+              "$ref": "#/$defs/count"
+            },
+            "findings": {
+              "$ref": "#/$defs/count"
+            },
+            "rejected": {
+              "$ref": "#/$defs/count"
+            },
+            "filtered": {
+              "$ref": "#/$defs/count"
+            },
+            "requests": {
+              "$ref": "#/$defs/count"
+            },
+            "request_failures": {
+              "$ref": "#/$defs/count"
+            }
+          }
+        },
+        "elapsed_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "tokens": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "prompt": {
+              "$ref": "#/$defs/count"
+            },
+            "completion": {
+              "$ref": "#/$defs/count"
+            }
+          }
+        }
+      }
+    },
+    "unit_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "reason"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "checked",
+            "failed",
+            "skipped"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "fragment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "context",
+        "range",
+        "unit_fragment_ids",
+        "checks"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/fragment_id"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "context": {
+          "type": "string"
+        },
+        "range": {
+          "$ref": "#/$defs/range"
+        },
+        "unit_fragment_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/fragment_id"
+          }
+        },
+        "checks": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/engine_name"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/unit_check"
+          }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engine",
+        "rule_id",
+        "rule_category",
+        "category",
+        "message",
+        "confidence",
+        "severity",
+        "engine_excerpt",
+        "range"
+      ],
+      "properties": {
+        "engine": {
+          "$ref": "#/$defs/engine_name"
+        },
+        "rule_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rule_category": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "category": {
+          "$ref": "#/$defs/category"
+        },
+        "message": {
+          "type": "string"
+        },
+        "confidence": {
+          "description": "Самооценка модели; у LanguageTool и Vale отсутствует. Не является откалиброванной вероятностью.",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            null
+          ]
+        },
+        "severity": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "engine_excerpt": {
+          "description": "Текст, который видел движок: защищённые вставки показаны заглушками.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "range": {
+          "$ref": "#/$defs/range"
+        }
+      }
+    },
+    "suggestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "reasons",
+        "origin",
+        "engines",
+        "engine_replacement",
+        "edit"
+      ],
+      "properties": {
+        "status": {
+          "description": "candidate — гипотеза, прошедшая проверки границ и смысловых рисков, но требующая ручной проверки; rejected — непригодна для применения.",
+          "enum": [
+            "candidate",
+            "rejected"
+          ]
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "origin": {
+          "enum": [
+            "dictionary",
+            "rule",
+            "model"
+          ]
+        },
+        "engines": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/engine_name"
+          }
+        },
+        "engine_replacement": {
+          "type": "string"
+        },
+        "edit": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "range",
+                "original",
+                "text"
+              ],
+              "properties": {
+                "range": {
+                  "$ref": "#/$defs/range"
+                },
+                "original": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "text": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "candidate"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reasons": {
+                "maxItems": 0
+              },
+              "edit": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "rejected"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reasons": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "category",
+        "categories",
+        "fragment_ids",
+        "range",
+        "excerpt",
+        "excerpt_status",
+        "agreement",
+        "conflicting_suggestions",
+        "sources",
+        "suggestions"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^find-[0-9a-f]{24}$"
+        },
+        "category": {
+          "$ref": "#/$defs/category"
+        },
+        "categories": {
+          "description": "Категории всех источников; объединяются только свидетельства с одной общей минимальной правкой у всех членов группы в одной единице и совместимыми категориями.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/category"
+          }
+        },
+        "fragment_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/fragment_id"
+          }
+        },
+        "range": {
+          "$ref": "#/$defs/range"
+        },
+        "excerpt": {
+          "description": "Точная цитата исходника для диапазона внутри одного фрагмента.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "excerpt_status": {
+          "enum": [
+            "verified",
+            "spans_fragments"
+          ]
+        },
+        "agreement": {
+          "description": "Движки, предложившие общую минимальную правку в одной единице при попарно совместимых категориях. Совпадение не повышает и не объединяет уверенность.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/engine_name"
+          }
+        },
+        "conflicting_suggestions": {
+          "type": "boolean"
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/source"
+          }
+        },
+        "suggestions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/suggestion"
+          }
+        }
+      }
+    },
+    "rejected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engine",
+        "reason",
+        "fragment_ids",
+        "rule_id",
+        "message",
+        "excerpt"
+      ],
+      "properties": {
+        "engine": {
+          "$ref": "#/$defs/engine_name"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "fragment_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/fragment_id"
+          }
+        },
+        "rule_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "excerpt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "root",
+        "path",
+        "language",
+        "format",
+        "profile",
+        "status",
+        "extraction_status",
+        "extraction_reason",
+        "source_sha256",
+        "encoding",
+        "bom",
+        "configuration",
+        "diagnostics",
+        "fragments",
+        "findings",
+        "rejected"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^doc-[0-9a-f]{24}$"
+        },
+        "root": {
+          "type": "string",
+          "pattern": "^root-[0-9]{4}$"
+        },
+        "path": {
+          "type": "string"
+        },
+        "language": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "clean",
+            "findings",
+            "partial",
+            "unavailable",
+            "error",
+            "skipped",
+            "unsupported"
+          ]
+        },
+        "extraction_status": {
+          "enum": [
+            "extracted",
+            "skipped",
+            "unsupported",
+            "partial",
+            "error"
+          ]
+        },
+        "extraction_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "encoding": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bom": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "configuration": {
+          "$ref": "#/$defs/document_configuration"
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fragments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fragment"
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        },
+        "rejected": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rejected"
+          }
+        }
+      }
+    },
+    "analysis": {
+      "title": "Отчёт языковой проверки Language Review",
+      "description": "Результат языковой проверки извлечённых фрагментов. Предложения не применяются к исходникам.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "schema_version",
+        "operation",
+        "tool",
+        "status",
+        "suggestions_applied",
+        "coordinate_system",
+        "configuration",
+        "engines",
+        "roots",
+        "summary",
+        "documents"
+      ],
+      "properties": {
+        "schema": {
+          "const": "language-review.check"
+        },
+        "schema_version": {
+          "const": "1.0"
+        },
+        "operation": {
+          "const": "check"
+        },
+        "tool": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "version"
+          ],
+          "properties": {
+            "name": {
+              "const": "language-review"
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "status": {
+          "$ref": "#/$defs/overall_status"
+        },
+        "suggestions_applied": {
+          "const": false
+        },
+        "coordinate_system": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "byte_offset",
+            "line",
+            "column",
+            "utf16_column",
+            "end"
+          ],
+          "properties": {
+            "byte_offset": {
+              "type": "string"
+            },
+            "line": {
+              "type": "string"
+            },
+            "column": {
+              "type": "string"
+            },
+            "utf16_column": {
+              "type": "string"
+            },
+            "end": {
+              "const": "exclusive"
+            }
+          }
+        },
+        "configuration": {
+          "description": "Базовые параметры запуска: раздел [check] и аргументы командной строки без профилей. Фактически применённые к документу движки, категории и термины — в documents[].configuration.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "engines",
+            "categories",
+            "llm_provider",
+            "sources"
+          ],
+          "properties": {
+            "engines": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/engine_name"
+              }
+            },
+            "categories": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/category"
+              }
+            },
+            "llm_provider": {
+              "enum": [
+                "llama_cpp",
+                "ollama"
+              ]
+            },
+            "sources": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "engines",
+                "categories",
+                "llm.provider"
+              ],
+              "properties": {
+                "engines": {
+                  "type": "string"
+                },
+                "categories": {
+                  "type": "string"
+                },
+                "llm.provider": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "engines": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/engine_run"
+          }
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "kind",
+              "status",
+              "profile"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^root-[0-9]{4}$"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "profile": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "roots",
+            "documents",
+            "clean",
+            "with_findings",
+            "partial",
+            "unavailable",
+            "errors",
+            "skipped",
+            "unsupported",
+            "fragments",
+            "units",
+            "units_without_russian_text",
+            "findings",
+            "rejected"
+          ],
+          "properties": {
+            "roots": {
+              "$ref": "#/$defs/count"
+            },
+            "documents": {
+              "$ref": "#/$defs/count"
+            },
+            "clean": {
+              "$ref": "#/$defs/count"
+            },
+            "with_findings": {
+              "$ref": "#/$defs/count"
+            },
+            "partial": {
+              "$ref": "#/$defs/count"
+            },
+            "unavailable": {
+              "$ref": "#/$defs/count"
+            },
+            "errors": {
+              "$ref": "#/$defs/count"
+            },
+            "skipped": {
+              "$ref": "#/$defs/count"
+            },
+            "unsupported": {
+              "$ref": "#/$defs/count"
+            },
+            "fragments": {
+              "$ref": "#/$defs/count"
+            },
+            "units": {
+              "$ref": "#/$defs/count"
+            },
+            "units_without_russian_text": {
+              "$ref": "#/$defs/count"
+            },
+            "findings": {
+              "$ref": "#/$defs/count"
+            },
+            "rejected": {
+              "$ref": "#/$defs/count"
+            }
+          }
+        },
+        "documents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/document"
+          }
+        }
+      }
+    }
+  }
+}

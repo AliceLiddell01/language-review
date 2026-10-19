@@ -254,7 +254,7 @@ class ValeEngine:
         regions: list[tuple[int, int, CheckUnit]],
         outcomes: dict[int, UnitOutcome],
     ) -> bool:
-        """Отобразить замечание; False — структура замечания Vale недостоверна."""
+        """Отобразить замечание; False — его нельзя безопасно отнести к единице."""
         check = str(alert.get("Check") or "")
         message = str(alert.get("Message") or "")
         line, span, match = alert.get("Line"), alert.get("Span"), alert.get("Match")
@@ -292,7 +292,9 @@ class ValeEngine:
             outcome.rejected.append(
                 RejectedOutput(self.name, unit.index, "position_mismatch", check, message, match)
             )
-            return False
+            outcome.status = "failed"
+            outcome.reason = "vale_schema_violation"
+            return True
         raw_action = alert.get("Action")
         action: dict[str, Any] = raw_action if isinstance(raw_action, dict) else {}
         params = action.get("Params") if action.get("Name") == "replace" else None

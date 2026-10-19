@@ -1182,7 +1182,7 @@ def _vale_engine_factory(stdout: str) -> Any:
         ({"Check": "X.Y", "Message": "m", "Line": 1, "Span": [1]}, False),
         ({"Check": "X.Y", "Message": "m", "Line": 1, "Span": [1, 3], "Match": "нет"}, False),
     ],
-    ids=["line_not_int", "span_short", "match_mismatch_fails_closed"],
+    ids=["line_not_int", "span_short", "match_mismatch_fails_only_affected_unit"],
 )
 def test_vale_malformed_alert_is_not_clean(
     tmp_path: Path, alert: dict[str, Any], clean: bool
@@ -1202,6 +1202,41 @@ def test_vale_malformed_alert_is_not_clean(
         assert result.status in {"partial", "unavailable"}
         assert document.status != "clean"
         assert document.unit_status[(0, "vale")] == ("failed", "vale_schema_violation")
+
+
+def test_vale_match_mismatch_fails_only_the_affected_unit(tmp_path: Path) -> None:
+    source = tmp_path / "notes.txt"
+    source.write_text("Здесь ошыбка.\n\nЗдесь ошыбка.\n", encoding="utf-8")
+    config = load_config(_config(tmp_path, '[check]\nengines = ["vale"]\n'))
+    alerts = [
+        {
+            "Check": "X.Y",
+            "Message": "Некорректная цитата",
+            "Line": 1,
+            "Span": [7, 12],
+            "Match": "ошибка",
+        },
+        {
+            "Check": "X.Y",
+            "Message": "Корректная цитата",
+            "Line": 3,
+            "Span": [7, 12],
+            "Match": "ошыбка",
+        },
+    ]
+
+    result = check_paths(
+        [str(source)],
+        config,
+        engine_factory=_vale_engine_factory(json.dumps({"stdin.txt": alerts})),
+    )
+
+    document = result.documents[0]
+    [run] = result.engines
+    assert document.unit_status[(0, "vale")] == ("failed", "vale_schema_violation")
+    assert document.unit_status[(1, "vale")] == ("checked", None)
+    assert (run.units_failed, run.units_checked) == (1, 1)
+    assert run.status == "partial"
 
 
 ENGLISH_SENTENCE = "The tool reads the configuration file from disk."

@@ -110,6 +110,12 @@ def test_duplicate_candidate_cannot_earn_second_tp(measured: Any) -> None:
     result = score(corpus, report, BINDINGS, "dev")
     assert result["summary"]["detection"] == metrics(2, 2, 1)
     assert sum(item["duplicate"] for item in result["cases"][0]["candidates"]) == 1
+    duplicate_candidate = next(
+        item for item in result["cases"][0]["candidates"] if item["duplicate"]
+    )
+    assert duplicate_candidate["outcome"] == "fp"
+    assert duplicate_candidate["correction"] == "correct"
+    assert result["summary"]["correction"] == metrics(1, 2, 2)
 
 
 def test_unstable_product_ids_do_not_change_comparison(measured: Any) -> None:

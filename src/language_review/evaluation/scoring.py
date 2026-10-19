@@ -203,7 +203,7 @@ def score_case(
         if proposal["edits"]:
             if outcome == "needs_adjudication":
                 correction = "needs_adjudication"
-            elif outcome == "fp":
+            elif outcome == "fp" and label is None:
                 correction = "incorrect"
             elif label and not label["corrections"]:
                 correction = "unknown"

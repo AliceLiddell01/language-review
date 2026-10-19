@@ -184,9 +184,15 @@ def verify_review(report_path: Path, roots: dict[str, Path]) -> dict[str, Any]:
                                 if edit is not None and edit["original"] is not None:
                                     _verify_quote(source, edit["range"], edit["original"])
                     state = "current"
-            except (OSError, ValueError, LookupError) as exc:
+            except LookupError as exc:
+                raise InputError("Некорректный или недоступный review-отчёт.") from exc
+            except UnicodeError as exc:
+                raise InputError("Некорректный или недоступный review-отчёт.") from exc
+            except OSError:
                 # Не раскрываем пути из ошибок файловой системы.
-                reason = str(exc) if type(exc) is ValueError else "source_unavailable"
+                reason = "source_unavailable"
+            except ValueError as exc:
+                reason = str(exc)
                 if reason == "invalid_coordinate_structure":
                     raise InputError("Некорректный или недоступный review-отчёт.") from exc
                 if reason in {"quote_mismatch", "coordinate_mismatch", "invalid_byte_range"}:

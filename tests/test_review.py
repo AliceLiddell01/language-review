@@ -190,6 +190,13 @@ def test_review_cli_exact_unicode_context_evidence_and_stale_source(
     assert invalid_coordinate.returncode == 2
     assert "Traceback" not in invalid_coordinate.stderr
     assert invalid_coordinate.stdout == ""
+    missing_field = json.loads(json.dumps(report))
+    del missing_field["items"][0]["context"]
+    saved.write_text(json.dumps(missing_field), encoding="utf-8")
+    invalid_report = _run(command, isolated_appdata)
+    assert invalid_report.returncode == 2
+    assert "Traceback" not in invalid_report.stderr
+    assert invalid_report.stdout == ""
     # Тот же хеш с ошибочной цитатой не даёт current.
     report["items"][0]["excerpt"] = "ошибка"
     saved.write_text(json.dumps(report), encoding="utf-8")
@@ -481,6 +488,26 @@ def test_verify_review_refuses_report_controlled_paths(
     verified = verify_review(saved, {"root-0001": tmp_path})
     assert verified["status"] == "unverified"
     assert verified["documents"][0]["reason"] == "unsafe_relative_path"
+
+
+def test_verify_review_reports_missing_source_as_unavailable(
+    tmp_path: Path,
+    isolated_appdata: Path,
+    json_server: JsonServer,
+) -> None:
+    json_server.responder = languagetool_responder({"ошыбка": ["ошибка"]})
+    report, _, source, _ = _review_run(
+        tmp_path, json_server, isolated_appdata, "// ошыбка".encode()
+    )
+    saved = tmp_path / "report.json"
+    saved.write_text(json.dumps(report), encoding="utf-8")
+    source.unlink()
+    verified = verify_review(saved, {"root-0001": source})
+    assert verified["documents"][0] == {
+        "document_id": report["items"][0]["document_id"],
+        "status": "unverified",
+        "reason": "source_unavailable",
+    }
 
 
 @pytest.mark.skipif(shutil.which("vale") is None, reason="Vale недоступен")

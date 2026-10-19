@@ -10,7 +10,7 @@
     "scorer_version": "1.0",
     "split": "dev"
   },
-  "projection_sha256": "93fb95c2d3b58ace524e66d94c4c33944c5c4137a3f8dcd7f22ea0de9a47ffde",
+  "projection_sha256": "69c870c0cd838d1555b525b51d85d39d26554a72e4a1dcf08507d990d496ad4d",
   "schema": "language-review.eval-expectations",
   "schema_version": "1.0"
 }

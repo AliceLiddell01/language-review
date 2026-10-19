@@ -51,6 +51,7 @@ def _coverage(
         "extracted": False,
         "applicable": False,
         "checked": False,
+        "fully_checked": False,
         "fragments": 0,
         "engine_statuses": {},
         "missing_characters": None,
@@ -97,6 +98,7 @@ def _coverage(
         reasons.append("before:category_disabled:" + ",".join(missing_categories))
     selected = [engine] if engine else doc["configuration"]["engines"]
     checked = bool(relevant)
+    any_checked = False
     applicable = False
     for frag in relevant:
         successes = 0
@@ -108,6 +110,7 @@ def _coverage(
             if check["status"] == "checked":
                 successes += 1
                 applicable = True
+                any_checked = True
             elif check["reason"] != "no_russian_text":
                 reasons.append(f"routing_or_engine:{name}:{check['reason'] or check['status']}")
                 checked = False
@@ -115,14 +118,21 @@ def _coverage(
             checked = False
             reasons.append("before:no_applicable_checked_engine")
     coverage["applicable"] = applicable
-    coverage["checked"] = checked
+    coverage["checked"] = any_checked
+    coverage["fully_checked"] = checked
     ids = {frag["id"] for frag in relevant}
     for rejected in doc["rejected"]:
         if ids.intersection(rejected["fragment_ids"]) and (
             engine is None or rejected["engine"] == engine
         ):
             reasons.append("after:rejected:" + rejected["reason"])
-    if doc["status"] in {"partial", "unavailable", "error", "skipped", "unsupported"}:
+    if engine is None and doc["status"] in {
+        "partial",
+        "unavailable",
+        "error",
+        "skipped",
+        "unsupported",
+    }:
         reasons.append("document:" + doc["status"])
     return coverage, sorted(set(reasons))
 
@@ -318,7 +328,7 @@ def summarize(cases: list[dict[str, Any]]) -> dict[str, Any]:
         "unknown_corrections": unknown,
         "coverage": {
             key: sum(bool(case["coverage"][key]) for case in cases)
-            for key in ("observed_document", "extracted", "applicable", "checked")
+            for key in ("observed_document", "extracted", "applicable", "checked", "fully_checked")
         },
     }
 

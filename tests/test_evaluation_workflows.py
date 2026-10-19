@@ -403,6 +403,34 @@ def test_report_kind_requires_independent_real_case_confirmation(measured: Any) 
     assert result["summary"]["eligible_cases"] == 0
 
 
+def test_partial_pipeline_keeps_healthy_engine_metrics_separate(
+    tmp_path: Path, isolated_appdata: Path, json_server: JsonServer
+) -> None:
+    corpus = make_corpus("Здесь ошыбка.")
+    add_label(corpus, "ошыбка", corrections=("ошибка",))
+    root = tmp_path / "inputs"
+    write_source(corpus, root)
+    lt = languagetool_responder({"ошыбка": ["ошибка"]})
+    json_server.responder = lambda request: (
+        lt(request) if request.path.startswith("/v2/") else (503, {"error": "unavailable"})
+    )
+    config = _config(
+        tmp_path,
+        f'[check]\nengines=["languagetool","llm"]\n'
+        f'[check.languagetool]\nendpoint="{json_server.url}"\n'
+        f'[check.llm.llama_cpp]\nendpoint="{json_server.url}"\n',
+    )
+    result = score(
+        corpus, check_document(check_paths([str(root)], load_config(config))), BINDINGS, "dev"
+    )
+    assert result["status"] == "PARTIAL"
+    assert result["summary"]["coverage"]["checked"] == 1
+    assert result["summary"]["coverage"]["fully_checked"] == 0
+    assert result["summary"]["evaluated_applicable_cases"] == 0
+    assert result["engines"]["languagetool"]["summary"]["detection"]["tp"] == 1
+    assert result["engines"]["llm"]["summary"]["evaluated_applicable_cases"] == 0
+
+
 def test_comparison_exposes_new_fp_changed_tp_coverage_and_engine_time(measured: Any) -> None:
     corpus, report = measured
     first = score(corpus, report, BINDINGS, "dev")

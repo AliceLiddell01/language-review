@@ -246,6 +246,16 @@ def _emit(document: Callable[[], Any], human: Callable[[], str], output_format: 
     return human()
 
 
+def _verify_review_human(report: dict[str, Any]) -> str:
+    lines = [f"Сверка ревью: {report['status']}"]
+    for item in report["documents"]:
+        line = f"  {json.dumps(item['document_id'])}: {item['status']}"
+        if item["reason"] is not None:
+            line += f" ({json.dumps(item['reason'])})"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _run(arguments: argparse.Namespace) -> int:
     if arguments.command == "show-review":
         try:
@@ -264,7 +274,7 @@ def _run(arguments: argparse.Namespace) -> int:
         print(
             _emit(
                 lambda: verified,
-                lambda: json.dumps(verified, ensure_ascii=False, indent=2),
+                lambda: _verify_review_human(verified),
                 arguments.format,
             )
         )

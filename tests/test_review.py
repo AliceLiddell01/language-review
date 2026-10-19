@@ -170,6 +170,14 @@ def test_review_cli_exact_unicode_context_evidence_and_stale_source(
     verified = _run(command, isolated_appdata)
     assert verified.returncode == 0
     assert json.loads(verified.stdout)["status"] == "current"
+    human = _run(
+        ["verify-review", str(saved), "--root", f"root-0001={source}"],
+        isolated_appdata,
+    )
+    assert human.returncode == 0
+    assert human.stdout.startswith("Сверка ревью: current\n")
+    assert f"{json.dumps(report['items'][0]['document_id'])}: current" in human.stdout
+    assert not human.stdout.lstrip().startswith("{")
     tampered = json.loads(json.dumps(report))
     [suggestion] = tampered["items"][0]["suggestions"]
     assert suggestion["edit"] is not None

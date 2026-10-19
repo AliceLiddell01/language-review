@@ -1122,6 +1122,44 @@ def test_vale_match_mismatch_fails_only_the_affected_unit(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize(
+    "match,span_end,checked",
+    [
+        ("Слово.\n\nСлово", 13, True),
+        ("Неверная цитата", 13, False),
+        ("Слово.\n\nСлово", 1000, False),
+    ],
+)
+def test_vale_multiline_separator_match_is_rejected_without_document_failure(
+    tmp_path: Path,
+    match: str,
+    span_end: int,
+    checked: bool,
+) -> None:
+    source = tmp_path / "notes.txt"
+    original = "Слово.\n\nСлово ошыбка.\n".encode()
+    source.write_bytes(original)
+    config = load_config(_config(tmp_path, '[check]\nengines=["vale"]\n'))
+    alert = {
+        "Check": "LanguageReview.Repetition",
+        "Message": "Повтор",
+        "Line": 1,
+        "Span": [1, span_end],
+        "Match": match,
+    }
+    result = check_paths(
+        [str(source)],
+        config,
+        engine_factory=_vale_engine_factory(json.dumps({"stdin.txt": [alert]})),
+    )
+    [document], [run] = result.documents, result.engines
+    assert (run.units_checked, run.units_failed) == ((2, 0) if checked else (0, 2))
+    assert [item.reason for item in document.rejected] == ["position_out_of_range"]
+    assert not document.findings
+    assert run.status == ("ok" if checked else "error")
+    assert source.read_bytes() == original
+
+
+@pytest.mark.parametrize(
     "payload,valid",
     [
         ({}, False),

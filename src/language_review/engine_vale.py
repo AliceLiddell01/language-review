@@ -272,10 +272,15 @@ class ValeEngine:
             assert isinstance(line, int) and isinstance(span, list)
             line_start = line_starts[line - 1]
             line_end = line_starts[line] - 1 if line < len(line_starts) else len(combined)
-            valid = 1 <= span[0] <= span[1] <= line_end - line_start
+            # Vale Span measures the entire match from its starting line, including
+            # newlines. Repetition alerts can cross the separators between units.
+            valid = 1 <= span[0] <= line_end - line_start and span[0] <= span[1]
             if valid:
                 start = line_start + span[0] - 1
                 end = line_start + span[1]
+                valid = end <= len(combined)
+                if not valid:
+                    start = end = -1
         region = next((item for item in regions if item[0] <= start < end <= item[1]), None)
         if region is None:
             target = next(
@@ -285,7 +290,7 @@ class ValeEngine:
                 RejectedOutput(self.name, target[2].index, "position_out_of_range", check, message)
             )
             # Достоверное замечание вне одной единицы — отбраковка; нарушение структуры — сбой.
-            return valid
+            return valid and isinstance(match, str) and combined[start:end] == match
         region_start, _region_end, unit = region
         outcome = outcomes[unit.index]
         if not isinstance(match, str) or combined[start:end] != match:

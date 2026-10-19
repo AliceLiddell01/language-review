@@ -9,7 +9,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
-$target = [IO.Path]::GetFullPath($Destination)
+$target = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Destination)
 $parent = (Resolve-Path -LiteralPath (Split-Path -Parent $target) -ErrorAction Stop).Path
 $target = Join-Path $parent (Split-Path -Leaf $target)
 if ($target.Equals($repository, [StringComparison]::OrdinalIgnoreCase) -or

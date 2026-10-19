@@ -113,9 +113,9 @@ def _csv(path: Path, fields: tuple[str, ...]) -> list[dict[str, str]]:
     if len(raw) > MAX_BYTES:
         raise InputError("CSV превышает предел размера.")
     reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig"), newline=""), strict=True)
-    if tuple(reader.fieldnames or ()) != fields:
-        raise InputError("Заголовок CSV не соответствует пакету разметки.")
     try:
+        if tuple(reader.fieldnames or ()) != fields:
+            raise InputError("Заголовок CSV не соответствует пакету разметки.")
         rows = list(reader)
     except csv.Error as exc:
         raise InputError("Некорректный CSV или превышен предел размера поля.") from exc

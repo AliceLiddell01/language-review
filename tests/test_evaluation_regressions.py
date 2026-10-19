@@ -278,6 +278,8 @@ def test_csv_alternatives_are_one_gold_label_and_roundtrip_without_loss(
     labels = imported["cases"][0]["labels"]
     assert len(labels) == 1 and labels[0]["id"] == "error-A"
     assert len(labels[0]["anchors"]) == 2
+    source = source_map(imported["documents"][0])
+    assert labels[0]["anchors"] == [source.range_dict(7, 13), source.range_dict(0, 13)]
     assert [edit["text"] for edit in labels[0]["corrections"]] == [
         "ошибка",
         "опечатка",
@@ -287,6 +289,13 @@ def test_csv_alternatives_are_one_gold_label_and_roundtrip_without_loss(
     result = score(imported, report, BINDINGS, "dev")
     assert (result["summary"]["detection"]["tp"], result["summary"]["detection"]["fn"]) == (1, 0)
     assert result["summary"]["correction"]["tp"] == 1
+    alternative_report = run_report(
+        imported, tmp_path, json_server, {"Первая ошыбка": ["Первая ошибка"]}
+    )
+    alternative_result = score(imported, alternative_report, BINDINGS, "dev")
+    assert alternative_result["cases"][0]["tp"] == ["error-A"]
+    assert alternative_result["cases"][0]["fn"] == []
+    assert alternative_result["summary"]["correction"]["tp"] == 1
     path, output = tmp_path / "imported.json", tmp_path / "exported.json"
     save_new(path, imported)
     assert main(["export", str(path), "--output", str(output)]) == 0

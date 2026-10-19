@@ -71,6 +71,20 @@ GitHubTypoCorpusRu — public/external test. Рецепты имеют фикс�
 
 Внешний config задаёт реально работающие локальные endpoint; сценарий не запускает
 сервисы и не подменяет недоступные движки. Без config можно выбрать только Vale.
+Стандартное исключение каталога `bin` пропускает и исходный Rust `src/bin/cli.rs`.
+Для проверки CLI-сообщений нужен явный профиль в этом внешнем config; общие фильтры
+сканера сохраняются. Например, только для подготовленного дерева `src/bin`:
+
+```toml
+[profiles.rust-source-bin]
+priority = 10
+match_paths = ["src/bin", "src/bin/**"]
+[profiles.rust-source-bin.scan]
+exclude_dirs = []
+```
+
+Исходный capture без профиля следует сохранить: `excluded_directory` — потеря
+на этапе выбора входов, а не успешная проверка отсутствующего документа.
 `-CacheRoot` принимает каталог с подкаталогами source ID и файлами тех же hashes.
 Параметры `-BookLimit`, `-PairLimit`, `-CodeLimit` ограничивают cases; check читает
 полные выбранные документы, поэтому surfaced findings документа не равны числу

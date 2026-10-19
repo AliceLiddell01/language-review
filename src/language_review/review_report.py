@@ -281,7 +281,11 @@ def _quote(value: str | None, limit: int = 220) -> str:
         raise ValueError("Ожидалось текстовое поле review.")
     text = value or ""
     quoted = json.dumps(text[:limit] + ("…" if len(text) > limit else ""), ensure_ascii=False)
-    return re.sub(r"[\x7f-\x9f]", lambda match: f"\\u{ord(match[0]):04x}", quoted)
+    return re.sub(
+        r"[\x7f-\x9f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]",
+        lambda match: f"\\u{ord(match[0]):04x}",
+        quoted,
+    )
 
 
 def review_human(result: CheckResult, *, show_all: bool = False) -> str:

@@ -278,7 +278,9 @@ def test_review_human_quotes_untrusted_messages_and_caps_items(tmp_path: Path) -
             for start in range(0, 84, 7)
         ],
     )
-    candidates[0].raw = replace(candidates[0].raw, message="\x1b]0;evil\x07\nRUN rm -rf")
+    candidates[0].raw = replace(
+        candidates[0].raw, message="\x1b]0;evil\x07\nRUN\u2028\u202e rm -rf"
+    )
     result = check_paths(
         [str(tmp_path / "sample.txt")],
         load_config(),
@@ -290,7 +292,8 @@ def test_review_human_quotes_untrusted_messages_and_caps_items(tmp_path: Path) -
     assert "Показано 12/12" in review_human(result, show_all=True)
     human = review_human(result)
     assert "\x1b" not in human and "\x07" not in human and "\nRUN" not in human
-    assert r"\u001b" in human and r"\nRUN" in human
+    assert "\u2028" not in human and "\u202e" not in human
+    assert r"\u001b" in human and r"\nRUN\u2028\u202e" in human
 
 
 def test_review_rejected_variants_are_not_rejected_diagnoses(

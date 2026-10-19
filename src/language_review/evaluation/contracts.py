@@ -18,7 +18,7 @@ MAX_BYTES = 32 * 1024 * 1024
 
 
 def jsonl_lines(text: str) -> list[str]:
-    """Split JSONL at LF delimiters while preserving Unicode separators inside JSON strings."""
+    """Разделить JSONL по LF, сохранив Unicode-разделители внутри строк JSON."""
     lines = text.split("\n")
     if lines and not lines[-1]:
         lines.pop()

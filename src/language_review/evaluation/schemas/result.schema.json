@@ -673,6 +673,11 @@
                     "null"
                   ]
                 },
+                "potential_labels": {
+                  "type": "array",
+                  "items": {"type": "string", "minLength": 1},
+                  "uniqueItems": true
+                },
                 "duplicate": {
                   "type": "boolean"
                 },

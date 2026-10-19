@@ -1,4 +1,4 @@
-"""PowerShell-friendly entry point независимого оценщика."""
+"""Точка входа независимого оценщика с поддержкой PowerShell."""
 
 from __future__ import annotations
 
@@ -233,12 +233,12 @@ def _init(args: argparse.Namespace) -> dict[str, Any]:
             "version": "1",
             "annotation_version": "1",
             "split_policy": {
-                "strategy": "repository grouping; normalized 5-character shingles "
-                "Jaccard >= 0.8 and containment; manual near-duplicate audit required",
+                "strategy": "Группировка репозиториев; нормализованные символьные 5-граммы, "
+                "Jaccard >= 0.8 и включение текста; требуется ручная проверка близких дублей",
                 "test_frozen": False,
                 "test_sha256": None,
-                "holdout_policy": "answers restricted to independent evaluation; "
-                "do not use in prompts/retrieval",
+                "holdout_policy": "Ответы только для независимой оценки; "
+                "не использовать в промптах и поиске контекста",
             },
             "documents": [
                 {

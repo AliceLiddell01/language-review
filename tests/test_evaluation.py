@@ -84,7 +84,7 @@ def test_actual_check_detection_correction_and_denominators(
     corpus, report = measured
     request_count = len(json_server.requests)
     result = score(corpus, report, BINDINGS, "dev")
-    assert len(json_server.requests) == request_count  # offline: no additional requests
+    assert len(json_server.requests) == request_count  # Офлайн: дополнительных запросов нет.
     summary = result["summary"]
     assert result["status"] == "PASS"
     assert result["report_kind"] == "synthetic_contract_check"
@@ -200,7 +200,18 @@ def test_real_model_or_pipeline_labels_cannot_self_verify() -> None:
 
 
 @pytest.mark.parametrize(
-    "mode", ["missing", "unavailable", "partial_extract", "category", "uncovered", "rejected"]
+    "mode",
+    [
+        "missing",
+        "unavailable",
+        "partial_extract",
+        "category",
+        "uncovered",
+        "rejected",
+        "profile",
+        "error",
+        "partial",
+    ],
 )
 def test_incomplete_is_never_clean(measured: Any, mode: str) -> None:
     corpus, report = measured
@@ -221,6 +232,10 @@ def test_incomplete_is_never_clean(measured: Any, mode: str) -> None:
         doc["configuration"]["categories"] = ["style"]
     elif mode == "uncovered":
         doc["fragments"] = []
+    elif mode == "profile":
+        corpus["cases"][0]["profile"] = "expected"
+    elif mode in {"error", "partial"}:
+        doc["status"] = mode
     else:
         doc["rejected"] = [
             {
@@ -236,6 +251,7 @@ def test_incomplete_is_never_clean(measured: Any, mode: str) -> None:
     assert result["status"] in {"PARTIAL", "NOT_RUN"}
     assert result["summary"]["evaluated_applicable_cases"] == 0
     assert result["summary"]["tn_clean_cases"] == 0
+    assert result["cases"][0]["coverage"]["evaluation_ready"] is False
     assert result["summary"]["pipeline_detection"] == metrics(0, 0, 3)
     assert result["summary"]["fp_per_1000_evaluated_applicable_cases"] is None
     assert result["cases"][0]["reasons"]
@@ -335,6 +351,7 @@ def test_split_leakage_freeze_and_annotation_agreement() -> None:
     second["cases"][0]["exhaustive"] = first["cases"][0]["exhaustive"]
     add_label(second, "ошыбка")
     second["cases"][0]["labels"][0]["annotation"]["method"] = "human"
+    second["cases"][0]["labels"][0]["annotation"]["actor"] = "independent-second"
     assert annotation_agreement(first, second)["conflicts"] == ["case-1"]
     same_actor = annotation_agreement(first, first)
     assert same_actor["agreement"] is None
@@ -428,7 +445,7 @@ def test_cli_import_export_offline_and_read_only(
     assert main(args) == 0
     assert read_json(output)["summary"]["detection"] == metrics(2, 1, 1)
     assert corpus_path.read_text("utf-8") == canonical(corpus)
-    assert main(args) == 3  # exclusive-create, no overwrite
+    assert main(args) == 3  # Создание только нового файла, без перезаписи.
     expected = tmp_path / "expected.json"
     assert main(["regress", str(output), str(expected), "--record"]) == 0
     assert main(["regress", str(output), str(expected)]) == 0

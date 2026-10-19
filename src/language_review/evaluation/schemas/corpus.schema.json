@@ -356,7 +356,13 @@
               "$ref": "#/$defs/label"
             }
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"annotation": {"properties": {"status": {"const": "independently_verified"}}}}},
+            "then": {"properties": {"categories": {"minItems": 1}}}
+          }
+        ]
       }
     }
   },

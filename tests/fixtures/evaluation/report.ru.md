@@ -1,7 +1,7 @@
 # Синтетический контроль оценщика
 
 Оценка: PARTIAL · synthetic_contract_check
-Split: dev; корпус: ecea64c50b5819d4ae4904c01f508e9e89f81ca6f54f8355ffde4b00c3196b03
+Split: dev; корпус: cb62d3eabbb98786682dea1125e5752da59b98d21eee8e54c9ff1d84bb916c91
 Случаев: 15; оценено применимых: 11; неполных: 3; не оценено: 1
 Уровень | TP | FP | FN | Precision | Recall | F1 | F0.5
 --- | --- | --- | --- | --- | --- | --- | ---
@@ -57,4 +57,4 @@ TN чистых случаев: 3; FP/1000 оценённых применимы
 "clean": evaluated; TP=[]; FN=[]; причины=[]
 "disputed": not_evaluated; TP=[]; FN=[]; причины=['annotation:not_verified_exhaustive_applicable']
 Доступные затраты: {"wall_clock_ms": null, "engines": [{"name": "vale", "elapsed_ms": 653.7, "statistics": {"filtered": 0, "findings": 2, "fragments_checked": 12, "rejected": 0, "request_failures": 0, "requests": 12, "units_checked": 12, "units_failed": 0, "units_skipped": 0, "units_total": 12}, "tokens": {}}], "money": null, "resource_usage": null, "retries": null}
-Ограничения: scan viewed/selected totals are absent in check 1.0; check sources are localized retained outputs, not all raw proposals; filtered/unlocalized hypotheses have no reliable source ranges and cannot earn TP; no independent semantic harm judge; risk reasons are diagnostics; small strata: inspect n; no population inference
+Ограничения: check 1.0 не содержит общее число просмотренных/выбранных входов scan; sources в check — сохранённые локализованные выходы, а не все сырые предложения; filtered/unlocalized гипотезы без достоверных исходных координат не получают TP; независимой оценки смыслового вреда нет; причины риска диагностические; малые группы: проверяйте n; выводы о генеральной совокупности не делаются

@@ -35,7 +35,7 @@ def metrics(tp: int, fp: int, fn: int) -> dict[str, Any]:
         **{key: numerators[key] / value if value else None for key, value in denominators.items()},
         "denominators": denominators,
         "undefined": [
-            f"{key}: zero denominator" for key, value in denominators.items() if not value
+            f"{key}: нулевой знаменатель" for key, value in denominators.items() if not value
         ],
     }
 
@@ -55,9 +55,13 @@ def _coverage(
         "fragments": 0,
         "engine_statuses": {},
         "missing_characters": None,
+        "evaluation_ready": False,
+        "blocking_reasons": [],
+        "diagnostic_reasons": [],
     }
     if doc is None:
-        return coverage, ["before:document_missing_scan_or_selection_unknown"]
+        coverage["blocking_reasons"] = ["before:document_missing_scan_or_selection_unknown"]
+        return coverage, coverage["blocking_reasons"]
     reasons = []
     if case["profile"] is not None and case["profile"] != doc["profile"]:
         reasons.append("before:profile_mismatch")
@@ -114,6 +118,9 @@ def _coverage(
             elif check["reason"] != "no_russian_text":
                 reasons.append(f"routing_or_engine:{name}:{check['reason'] or check['status']}")
                 checked = False
+            else:
+                # Неприменимый движок не блокирует успешную проверку другим движком.
+                coverage["diagnostic_reasons"].append(f"routing_or_engine:{name}:no_russian_text")
         if not successes:
             checked = False
             reasons.append("before:no_applicable_checked_engine")
@@ -126,15 +133,36 @@ def _coverage(
             engine is None or rejected["engine"] == engine
         ):
             reasons.append("after:rejected:" + rejected["reason"])
-    if engine is None and doc["status"] in {
+    if doc["status"] in {
         "partial",
         "unavailable",
         "error",
         "skipped",
         "unsupported",
     }:
-        reasons.append("document:" + doc["status"])
-    return coverage, sorted(set(reasons))
+        peer_failure = engine is not None and (
+            any(
+                name != engine
+                and check["status"] != "checked"
+                and check["reason"] != "no_russian_text"
+                for frag in relevant
+                for name, check in frag["checks"].items()
+            )
+            or any(
+                item["engine"] != engine and ids.intersection(item["fragment_ids"])
+                for item in doc["rejected"]
+            )
+        )
+        if doc["status"] == "partial" and peer_failure:
+            coverage["diagnostic_reasons"].append("document:partial:other_engine")
+        else:
+            reasons.append("document:" + doc["status"])
+    # Все причины выше блокируют полную оценку. Чисто диагностические пропуски
+    # хранятся отдельно; fully_checked описывает лишь проверки извлечённых фрагментов.
+    coverage["blocking_reasons"] = sorted(set(reasons))
+    coverage["diagnostic_reasons"] = sorted(set(coverage["diagnostic_reasons"]))
+    coverage["evaluation_ready"] = checked and missing == 0 and not reasons
+    return coverage, coverage["blocking_reasons"]
 
 
 def _edited_bytes(document: dict[str, Any], edit: dict[str, Any]) -> bytes:
@@ -153,7 +181,14 @@ def score_case(
 ) -> dict[str, Any]:
     coverage, reasons = _coverage(case, document, doc, engine)
     allowed = eligible(case)
-    state = "not_evaluated" if not allowed else "incomplete" if reasons else "evaluated"
+    state = (
+        "not_evaluated"
+        if not allowed
+        else "evaluated"
+        if coverage["evaluation_ready"]
+        else "incomplete"
+    )
+    reasons = reasons.copy()
     if not allowed:
         reasons.append("annotation:not_verified_exhaustive_applicable")
     gold = case["labels"] if allowed else []
@@ -172,6 +207,7 @@ def score_case(
                     "correction": "unknown",
                     "harm": None,
                     "decision_provenance": "reference_matching",
+                    "potential_labels": [],
                 }
             )
             continue
@@ -237,6 +273,9 @@ def score_case(
                 "risks": sorted(risks),
                 "harm": None,
                 "decision_provenance": "reference_matching",
+                "potential_labels": sorted(value["id"] for value in exact or near)
+                if outcome == "needs_adjudication"
+                else [],
             }
         )
     if any(
@@ -287,10 +326,16 @@ def summarize(cases: list[dict[str, Any]]) -> dict[str, Any]:
     correction_tp = correction_fp = correction_fn = unknown = 0
     for case in allowed:
         correct = {item["label"] for item in case["candidates"] if item["correction"] == "correct"}
+        unresolved = set(case["coverage"]["unresolved_gold"]) | {
+            item["label"]
+            for item in case["candidates"]
+            if item["correction"] == "needs_adjudication"
+        }
         correction_tp += len(correct)
         correction_fp += sum(item["correction"] == "incorrect" for item in case["candidates"])
         correction_fn += sum(
-            label["correction_known"] and label["id"] not in correct for label in case["gold"]
+            label["correction_known"] and label["id"] not in correct | unresolved
+            for label in case["gold"]
         )
         unknown += sum(item["correction"] == "unknown" for item in case["candidates"])
     fp = counts(completed)[1]
@@ -555,11 +600,11 @@ def score(
                 item["harm"] is None for case in cases for item in case["candidates"]
             ),
             "limitations": [
-                "scan viewed/selected totals are absent in check 1.0",
-                "check sources are localized retained outputs, not all raw proposals",
-                "filtered/unlocalized hypotheses have no reliable source ranges and cannot earn TP",
-                "no independent semantic harm judge; risk reasons are diagnostics",
-                "small strata: inspect n; no population inference",
+                "check 1.0 не содержит общее число просмотренных/выбранных входов scan",
+                "sources в check — сохранённые локализованные выходы, а не все сырые предложения",
+                "filtered/unlocalized гипотезы без достоверных исходных координат не получают TP",
+                "независимой оценки смыслового вреда нет; причины риска диагностические",
+                "малые группы: проверяйте n; выводы о генеральной совокупности не делаются",
             ],
         },
         "cost": {

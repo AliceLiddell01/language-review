@@ -1,4 +1,4 @@
-"""Synthetic wire pairs prove a limited string-agreement protocol, never gold."""
+"""Синтетические пары проверяют ограниченный протокол совпадения строк, не gold."""
 
 from __future__ import annotations
 
@@ -31,16 +31,20 @@ def bundle_pair(
     text: str,
     correction: str,
     pair_format: str = "plain",
+    extra_pairs: tuple[tuple[str, str], ...] = (),
 ) -> tuple[Path, dict[str, Any]]:
     recipe = copy.deepcopy(source_import.recipes()["sage-github-ru"])
     files = {
         "README.md": b"Synthetic license fixture",
         "data/GitHubTypoCorpusRu/test.json": (
-            json.dumps(
-                {"source": text, "correction": correction, "domain": "GitHubTypoCorpusRu"},
-                ensure_ascii=False,
+            "".join(
+                json.dumps(
+                    {"source": original, "correction": replacement, "domain": "GitHubTypoCorpusRu"},
+                    ensure_ascii=False,
+                )
+                + "\n"
+                for original, replacement in ((text, correction), *extra_pairs)
             )
-            + "\n"
         ).encode(),
     }
     recipe["files"] = [
@@ -274,7 +278,7 @@ def test_reference_cli_saves_same_canonical_assessment(
     ]
     assert main(args) == 0
     assert read_json(output) == reference_score(corpus, report, bundle, "test", manifest)
-    assert main(args) == 3  # no overwrite
+    assert main(args) == 3  # Перезапись запрещена.
     (bundle / "provenance.json").write_text(
         canonical({"schema": "language-review.eval-source", "schema_version": "1.0"}),
         encoding="utf-8",
@@ -282,3 +286,117 @@ def test_reference_cli_saves_same_canonical_assessment(
     invalid_args = args.copy()
     invalid_args[-1] = str(tmp_path / "invalid-assessment.json")
     assert main(invalid_args) == 2
+
+
+@pytest.mark.parametrize(
+    "defect,reason",
+    [
+        ("partial_extract", "before:extraction_partial"),
+        ("profile", "before:profile_mismatch"),
+        ("category", "before:category_disabled:grammar"),
+        ("rejected", "after:rejected:excerpt_ambiguous"),
+        ("partial", "document:partial"),
+        ("error", "document:error"),
+        ("missing", "before:document_missing_scan_or_selection_unknown"),
+        ("engine", "routing_or_engine:languagetool:engine_not_selected"),
+        ("uncovered", "before:extract_uncovered"),
+        ("success", None),
+    ],
+)
+def test_reference_requires_complete_coverage_not_only_checked_fragments(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_appdata: Path,
+    json_server: JsonServer,
+    defect: str,
+    reason: str | None,
+) -> None:
+    bundle, corpus = bundle_pair(tmp_path, monkeypatch, "Здесь ашибка.", "Здесь ошибка.")
+    report, manifest = capture_pair(tmp_path, corpus, json_server, {"ашибка": ["ошибка"]})
+    doc = report["documents"][0]
+    if defect == "partial_extract":
+        doc["extraction_status"] = "partial"
+    elif defect == "profile":
+        doc["profile"] = "another-profile"
+        # Ожидание профиля фиксируется до source import, не подделкой reference.
+        original = source_import._case
+
+        def with_profile(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            value = original(*args, **kwargs)
+            value["profile"] = "expected-profile"
+            return value
+
+        monkeypatch.setattr(source_import, "_case", with_profile)
+        # Новый bundle сохраняет настоящее pinned соответствие case/reference.
+        other = tmp_path / "profile"
+        other.mkdir()
+        bundle, corpus = bundle_pair(other, monkeypatch, "Здесь ашибка.", "Здесь ошибка.")
+    elif defect == "category":
+        doc["configuration"]["categories"] = [
+            category for category in corpus["cases"][0]["categories"] if category != "grammar"
+        ]
+    elif defect == "rejected":
+        doc["rejected"].append(
+            {
+                "engine": "languagetool",
+                "reason": "excerpt_ambiguous",
+                "fragment_ids": [doc["fragments"][0]["id"]],
+                "rule_id": None,
+                "message": None,
+                "excerpt": "ашибка",
+            }
+        )
+    elif defect in {"partial", "error"}:
+        doc["status"] = defect
+    elif defect == "missing":
+        report["documents"] = []
+    elif defect == "engine":
+        doc["configuration"]["engines"] = ["languagetool"]
+        for fragment in doc["fragments"]:
+            fragment["checks"] = {}
+    elif defect == "uncovered":
+        doc["fragments"] = []
+        doc["findings"] = []
+    manifest.update(corpus_sha256=digest(corpus), report_sha256=digest(report))
+    result = reference_score(corpus, report, bundle, "test", manifest)
+    for name in ("pipeline", "languagetool"):
+        scope = result["scopes"][name]
+        summary, pair = scope["summary"], scope["pairs"][0]
+        assert summary["denominator"] == int(reason is None)
+        assert summary["rejected"] == 0
+        assert summary["status"] == ("PASS" if reason is None else "NOT_RUN")
+        assert pair["state"] == ("evaluated" if reason is None else "undetermined")
+        if reason:
+            assert pair["reason"] == "incomplete_coverage"
+            assert reason in pair["coverage_reasons"]
+            assert pair["exact"] is None
+        else:
+            assert pair["exact"] is True
+    # Неподтверждённые внешние пары по-прежнему не становятся human gold.
+    ordinary = score(corpus, report, manifest["root_bindings"], "test", manifest)
+    assert ordinary["summary"]["eligible_cases"] == 0
+    assert ordinary["summary"]["detection"]["fp"] == 0
+
+
+def test_reference_mixed_coverage_has_partial_status_and_exact_denominator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_appdata: Path,
+    json_server: JsonServer,
+) -> None:
+    bundle, corpus = bundle_pair(
+        tmp_path,
+        monkeypatch,
+        "Здесь ашибка.",
+        "Здесь ошибка.",
+        extra_pairs=(("Другой пример работает.", "Другой пример работает."),),
+    )
+    report, manifest = capture_pair(tmp_path, corpus, json_server, {"ашибка": ["ошибка"]})
+    report["documents"][0]["extraction_status"] = "partial"
+    manifest["report_sha256"] = digest(report)
+    result = reference_score(corpus, report, bundle, "test", manifest)
+    summary = result["scopes"]["pipeline"]["summary"]
+    assert summary["pairs"] == 2
+    assert summary["evaluated"] == summary["denominator"] == summary["exact_matches"] == 1
+    assert summary["undetermined"] == 1 and summary["rejected"] == 0
+    assert summary["status"] == "PARTIAL" and summary["exact_match_rate"] == 1.0

@@ -134,10 +134,16 @@ def validate_corpus(corpus: dict[str, Any]) -> dict[str, Any]:
             source = maps[case["document"]]
             span(source, case["range"])
             _verified(case["annotation"], document["data_kind"])
+            if case["annotation"]["status"] == "independently_verified" and not case["categories"]:
+                raise InputError("Подтверждённый случай требует непустой области категорий.")
             for other in by_document[case["document"]]:
                 if overlaps(case["range"], other["range"]):
                     raise InputError("Оценочные случаи одного файла не должны пересекаться.")
             by_document[case["document"]].append(case)
+            for location in case["protected_ranges"]:
+                span(source, location)
+                if not contains(case["range"], location):
+                    raise InputError("Защищённый диапазон вне оценочного случая.")
             labels: set[str] = set()
             for label in case["labels"]:
                 if label["category"] not in case["categories"]:
@@ -150,14 +156,16 @@ def validate_corpus(corpus: dict[str, Any]) -> dict[str, Any]:
                     span(source, location)
                     if not contains(case["range"], location):
                         raise InputError("Метка вне оценочного случая.")
+                    if any(overlaps(location, value) for value in case["protected_ranges"]):
+                        raise InputError("Метка затрагивает защищённый технический диапазон.")
                 for correction in label["corrections"]:
                     span(source, correction["range"])
                     if not contains(case["range"], correction["range"]):
                         raise InputError("Исправление вне оценочного случая.")
-            for location in case["protected_ranges"]:
-                span(source, location)
-                if not contains(case["range"], location):
-                    raise InputError("Защищённый диапазон вне оценочного случая.")
+                    if any(
+                        overlaps(correction["range"], value) for value in case["protected_ranges"]
+                    ):
+                        raise InputError("Исправление затрагивает защищённый технический диапазон.")
             if case["verdict"] == "clean" and case["labels"]:
                 raise InputError("Чистый случай не может содержать метки ошибок.")
             if case["verdict"] == "errors" and not case["labels"]:
@@ -215,6 +223,7 @@ def eligible(case: dict[str, Any]) -> bool:
         case["annotation"]["status"] == "independently_verified"
         and case["exhaustive"]
         and case["applicable"]
+        and bool(case["categories"])
         and case["verdict"] != "disputed"
         and all(
             label["annotation"]["status"] == "independently_verified" for label in case["labels"]
@@ -229,14 +238,28 @@ def annotation_agreement(first: dict[str, Any], second: dict[str, Any]) -> dict[
     left = {case["id"]: case for case in first["cases"]}
     right = {case["id"]: case for case in second["cases"]}
     pairs = sorted(left.keys() & right.keys())
-    comparable, equal, conflicts = 0, 0, []
+    verified: dict[str, Any] = {
+        "paired_cases": 0,
+        "exact_agreements": 0,
+        "agreement": None,
+        "conflicts": [],
+    }
+    diagnostic = {**verified, "conflicts": [], "status_pairs": {}}
     excluded_methods = []
     excluded_same_actor = []
+    excluded_unverified = []
     for key in pairs:
         a, b = left[key], right[key]
         if a["range"] != b["range"] or a["document"] != b["document"]:
             raise InputError("Изменена единица аннотации.")
-        if a["annotation"]["actor"] == b["annotation"]["actor"]:
+        actors = [
+            {
+                case["annotation"]["actor"],
+                *(label["annotation"]["actor"] for label in case["labels"]),
+            }
+            for case in (a, b)
+        ]
+        if actors[0] & actors[1]:
             excluded_same_actor.append(key)
             continue
         annotations = [
@@ -259,18 +282,38 @@ def annotation_agreement(first: dict[str, Any], second: dict[str, Any]) -> dict[
                 ),
             ]
 
-        comparable += 1
+        confirmed = all(value["status"] == "independently_verified" for value in annotations)
+        group = verified if confirmed else diagnostic
+        if not confirmed:
+            excluded_unverified.append(key)
+            statuses = "/".join(
+                "+".join(
+                    sorted(
+                        {
+                            case["annotation"]["status"],
+                            *(label["annotation"]["status"] for label in case["labels"]),
+                        }
+                    )
+                )
+                for case in (a, b)
+            )
+            diagnostic["status_pairs"][statuses] = diagnostic["status_pairs"].get(statuses, 0) + 1
+        group["paired_cases"] += 1
         if signature(a) == signature(b):
-            equal += 1
+            group["exact_agreements"] += 1
         else:
-            conflicts.append(key)
+            group["conflicts"].append(key)
+    for group in (verified, diagnostic):
+        if group["paired_cases"]:
+            group["agreement"] = group["exact_agreements"] / group["paired_cases"]
     return {
-        "paired_cases": comparable,
-        "exact_agreements": equal,
-        "agreement": equal / comparable if comparable else None,
-        "conflicts": conflicts,
+        **verified,
+        "evidence_level": "independently_verified",
+        "policy": "verified-case-and-label-origin/1",
+        "diagnostic_agreement": diagnostic,
         "unpaired": sorted(left.keys() ^ right.keys()),
         "excluded_nonindependent_method": excluded_methods,
         "excluded_same_actor": excluded_same_actor,
-        "method": "exact-case-agreement; no chance correction; no automatic truth assignment",
+        "excluded_unverified": excluded_unverified,
+        "method": "Точное согласие случаев; без поправки на случайность и назначения истины.",
     }

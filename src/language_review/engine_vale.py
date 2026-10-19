@@ -272,8 +272,8 @@ class ValeEngine:
             assert isinstance(line, int) and isinstance(span, list)
             line_start = line_starts[line - 1]
             line_end = line_starts[line] - 1 if line < len(line_starts) else len(combined)
-            # Vale Span measures the entire match from its starting line, including
-            # newlines. Repetition alerts can cross the separators between units.
+            # Vale Span измеряет всё совпадение от начальной строки, включая переносы.
+            # Правило повторов может захватить разделители между единицами проверки.
             valid = 1 <= span[0] <= line_end - line_start and span[0] <= span[1]
             if valid:
                 start = line_start + span[0] - 1

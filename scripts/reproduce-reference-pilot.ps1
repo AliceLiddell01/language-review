@@ -21,7 +21,7 @@ if ($Config) { $Config = (Resolve-Path -LiteralPath $Config).Path }
 if ($CacheRoot) { $CacheRoot = (Resolve-Path -LiteralPath $CacheRoot).Path }
 function Invoke-Evaluation([string[]]$Arguments, [int[]]$Allowed = @(0)) {
     & uv run --locked language-review-eval @Arguments
-    if ($LASTEXITCODE -notin $Allowed) { throw "Evaluation завершился с кодом $LASTEXITCODE" }
+    if ($LASTEXITCODE -notin $Allowed) { throw "Оценщик завершился с кодом $LASTEXITCODE" }
 }
 Push-Location -LiteralPath $repository
 try {
@@ -37,7 +37,7 @@ try {
         powershell = $PSVersionTable.PSVersion.ToString()
         engines = $Engine
         config_sha256 = if ($Config) { (Get-FileHash -LiteralPath $Config -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
-        protocol = 'Published correction agreement; draft annotation; no independent baseline claim'
+        protocol = 'Совпадение с опубликованной правкой; черновая разметка; без независимого baseline'
     }
     $metadata | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $target 'environment.json') -Encoding utf8
     $sources = @(
@@ -62,12 +62,12 @@ try {
         Invoke-Evaluation @('annotation-import', $corpus, (Join-Path $target "$name-blind"), '--output', (Join-Path $target "$name-untouched.json"))
         if ((Get-Content -Raw -LiteralPath $corpus | ConvertFrom-Json | ConvertTo-Json -Depth 100 -Compress) -cne
             (Get-Content -Raw -LiteralPath (Join-Path $target "$name-untouched.json") | ConvertFrom-Json | ConvertTo-Json -Depth 100 -Compress)) {
-            throw 'Untouched пакет неожиданно изменил разметку.'
+            throw 'Незаполненный пакет неожиданно изменил разметку.'
         }
         if ($split -eq 'test') {
             $frozen = Join-Path $target "$name-frozen.json"
             Invoke-Evaluation @('freeze-test', $corpus, '--output', $frozen)
-            $corpus = $frozen # Draft snapshot, not an independently verified release.
+            $corpus = $frozen # Снимок черновика; независимое подтверждение release отсутствует.
         }
     }
     $combined = $corpora[0]
@@ -75,7 +75,7 @@ try {
     $combined.version = $sha
     $combined.documents = @($corpora | ForEach-Object { $_.documents })
     $combined.cases = @($corpora | ForEach-Object { $_.cases })
-    $combined.split_policy.strategy = 'Distinct named repository families; normalized duplicate/near-duplicate guard across all splits; SAGE original repository identities unknown'
+    $combined.split_policy.strategy = 'Разные именованные семейства репозиториев; проверка нормализованных и близких дублей между всеми splits; исходные репозитории SAGE неизвестны'
     $combinedPath = Join-Path $target 'combined-corpus.json'
     $combined | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $combinedPath -Encoding utf8
     Invoke-Evaluation @('validate', $combinedPath) > (Join-Path $target 'cross-split-validation.json')

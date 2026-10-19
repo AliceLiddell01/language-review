@@ -103,7 +103,7 @@ def decision(packet: Path, verdict: str = "clean", exhaustive: str = "yes") -> N
         categories="spelling",
         terms="API\nCLI",
         exceptions="Допустимое сокращение",
-        note="Synthetic human-input protocol fixture",
+        note="Синтетическая фикстура протокола человеческого ввода",
     )
     set_csv(packet / "decisions.csv", DECISIONS, rows)
 
@@ -216,7 +216,7 @@ def test_source_metadata_rejected_before_fetch(
     wire_source(monkeypatch)
     recipe = next(iter(source_import.recipes().values()))
     recipe[field] = value
-    monkeypatch.setattr(source_import, "_download", lambda _: pytest.fail("must not fetch"))
+    monkeypatch.setattr(source_import, "_download", lambda _: pytest.fail("загрузка недопустима"))
     with pytest.raises(InputError):
         source_import.import_source(recipe["id"], tmp_path / "output")
     assert not (tmp_path / "output").exists()
@@ -235,7 +235,7 @@ def test_changed_license_or_bytes_rejected(
 
 def test_missing_source_is_sanitized_no_version_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     def unavailable(*args: Any, **kwargs: Any) -> None:
-        raise urllib.error.URLError("private query token")
+        raise urllib.error.URLError("личный токен запроса")
 
     monkeypatch.setattr(source_import.urllib.request, "urlopen", unavailable)
     with pytest.raises(InputError, match="недоступен") as error:
@@ -271,7 +271,7 @@ def test_blind_packet_excludes_gold_reference_and_predictions(tmp_path: Path) ->
     content = "".join(path.read_text("utf-8-sig") for path in (tmp_path / "packet").iterdir())
     assert "HIDDEN_" not in content and "independently_verified" not in content
     restored = import_annotations(corpus, tmp_path / "packet", "", "", False)
-    assert restored == corpus  # no new confirmation from an untouched packet
+    assert restored == corpus  # Нет нового подтверждения из незаполненного пакета.
 
 
 def test_jsonl_lines_preserves_unicode_separators_inside_records() -> None:
@@ -333,13 +333,14 @@ def test_human_offsets_map_back_to_original_unicode_crlf_bom(
         [
             {
                 "id": "case-1",
+                "label_id": "spelling-1",
                 "start": 2,
                 "end": 8,
                 "quote": "Ошабка",
                 "category": "spelling",
                 "replace": "yes",
                 "replacement": "Ошибка",
-                "note": "Protocol fixture",
+                "note": "Фикстура протокола",
             }
         ],
     )
@@ -376,6 +377,7 @@ def test_bad_annotation_roundtrip_rejected(tmp_path: Path, mutation: str) -> Non
         decision(packet, "errors")
     label = {
         "id": "case-1",
+        "label_id": "spelling-1",
         "start": "2",
         "end": "8",
         "quote": "Ошабка",
@@ -385,7 +387,7 @@ def test_bad_annotation_roundtrip_rejected(tmp_path: Path, mutation: str) -> Non
         "note": "test",
     }
     if mutation == "offset":
-        label["start"] = "3"  # JS UTF-16 would be wrong here
+        label["start"] = "3"  # Столбец JS UTF-16 здесь был бы неверен.
     if mutation == "quote":
         label["quote"] = "Ошибка"
     if mutation == "unknown-id":
@@ -436,7 +438,10 @@ def test_cli_roundtrip_agreement_conflict_and_frozen_holdout(tmp_path: Path) -> 
     first = read_json(output)
     decision(packet, "disputed")
     second = import_annotations(corpus, packet, "other-fixture-person", "fixture record", True)
-    assert annotation_agreement(first, second)["conflicts"] == ["case-1"]
+    agreement = annotation_agreement(first, second)
+    assert agreement["conflicts"] == []
+    assert agreement["agreement"] is None
+    assert agreement["diagnostic_agreement"]["conflicts"] == ["case-1"]
     corpus["cases"][0]["split"] = "test"
     corpus["split_policy"].update(test_frozen=True, test_sha256=frozen_hash(corpus))
     test_packet = tmp_path / "test-packet"

@@ -174,7 +174,7 @@ def test_independent_judgments_resolve_matching_and_measure_harm(measured: Any) 
         "status": "independently_verified",
         "actor": "external-reviewer",
         "method": "human",
-        "evidence": "Explicit synthetic adjudication contract, not real independent research",
+        "evidence": "Явный синтетический контракт решений; не реальное независимое исследование",
         "history": [{"revision": "1", "actor": "external-reviewer", "decision": "reviewed"}],
     }
     judgments = {
@@ -247,7 +247,7 @@ def test_unannotated_category_is_not_false_positive_or_false_clean(measured: Any
     assert all(item["outcome"] == "not_evaluated" for item in result["cases"][0]["candidates"])
     corpus["cases"][0].update(verdict="clean", labels=[])
     clean = score(corpus, report, BINDINGS, "dev")
-    assert clean["summary"]["tn_clean_cases"] == 1  # only the annotated grammar scope
+    assert clean["summary"]["tn_clean_cases"] == 1  # Только размеченная область grammar.
 
 
 def test_manual_resolution_preserves_bijection_and_recovers_ambiguous_gold(measured: Any) -> None:
@@ -266,9 +266,9 @@ def test_manual_resolution_preserves_bijection_and_recovers_ambiguous_gold(measu
         "status": "independently_verified",
         "actor": "manual-contract-reviewer",
         "method": "human",
-        "evidence": "Synthetic explicit equivalence of the exact source ranges",
+        "evidence": "Синтетическая явная эквивалентность точных исходных диапазонов",
         "history": [
-            {"revision": "1", "actor": "manual-contract-reviewer", "decision": "same diagnosis"}
+            {"revision": "1", "actor": "manual-contract-reviewer", "decision": "один диагноз"}
         ],
     }
     entry = {
@@ -316,7 +316,7 @@ def test_init_freeze_and_materialize_are_public_read_only_workflows(
                 "--path",
                 "src/sample.rs",
                 "--origin",
-                "authored synthetic test",
+                "авторская синтетическая проверка",
                 "--rights-basis",
                 "test authorship",
                 "--data-kind",

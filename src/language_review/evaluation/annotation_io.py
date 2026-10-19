@@ -33,7 +33,8 @@ DECISIONS = (
     "exceptions",
     "note",
 )
-LABELS = ("id", "start", "end", "quote", "category", "replace", "replacement", "note")
+LEGACY_LABELS = ("id", "start", "end", "quote", "category", "replace", "replacement", "note")
+LABELS = ("id", "label_id", *LEGACY_LABELS[1:], "anchors", "corrections")
 
 
 def _records(corpus: dict[str, Any], split: str) -> list[dict[str, Any]]:
@@ -84,7 +85,12 @@ def export_annotations(corpus: dict[str, Any], split: str, destination: Path) ->
             stream.write(json.dumps(record, ensure_ascii=False) + "\n")
     save_new(
         destination / "binding.json",
-        {"corpus_sha256": digest(corpus), "split": split, "fragments_sha256": digest(records)},
+        {
+            "schema_version": "2.0",
+            "corpus_sha256": digest(corpus),
+            "split": split,
+            "fragments_sha256": digest(records),
+        },
     )
     _write_csv(
         destination / "decisions.csv",
@@ -128,7 +134,11 @@ def import_annotations(
     corpus: dict[str, Any], packet: Path, actor: str, evidence: str, attest_human: bool
 ) -> dict[str, Any]:
     binding = read_json(packet / "binding.json")
-    if set(binding) != {"corpus_sha256", "split", "fragments_sha256"}:
+    version = binding.get("schema_version", "1.0")
+    fields = {"corpus_sha256", "split", "fragments_sha256"}
+    if "schema_version" in binding:
+        fields.add("schema_version")
+    if set(binding) != fields or version not in {"1.0", "2.0"}:
         raise InputError("Некорректная привязка слепого пакета.")
     if binding["corpus_sha256"] != digest(corpus):
         raise InputError("Пакет относится к другой версии корпуса.")
@@ -147,7 +157,11 @@ def import_annotations(
     ):
         raise InputError("Изменены исходные фрагменты слепого пакета.")
     decisions = _csv(packet / "decisions.csv", DECISIONS)
-    labels = _csv(packet / "labels.csv", LABELS)
+    labels = _csv(packet / "labels.csv", LEGACY_LABELS if version == "1.0" else LABELS)
+    if version == "2.0":
+        # Перестановка CSV не меняет метки, историю и версию той же разметки.
+        decisions.sort(key=lambda row: row["id"])
+        labels.sort(key=lambda row: (row["id"], row["label_id"]))
     by_id = {record["id"]: record for record in records}
     if len(decisions) != len(records) or {row["id"] for row in decisions} != set(by_id):
         raise InputError("Решения должны однократно покрывать все ID пакета.")
@@ -213,6 +227,7 @@ def import_annotations(
         start_byte, _ = span(source, case["range"])
         base = len(source.raw[source.position(0).byte_offset : start_byte].decode(source.encoding))
         imported = []
+        seen_ids = set()
         for index, label in enumerate(rows, 1):
             try:
                 start, end = int(label["start"]), int(label["end"])
@@ -227,21 +242,40 @@ def import_annotations(
                 raise InputError("Некорректная категория или replace метки.")
             if label["replace"] == "no" and label["replacement"]:
                 raise InputError("Replacement требует replace=yes.")
-            if any(
-                start < b and a < end or start == end and a <= start <= b
-                for a, b in record["protected"]
-            ):
-                raise InputError("Метка затрагивает защищённый технический диапазон.")
             location = source.range_dict(base + start, base + end)
+            # Старые пакеты сохраняют прежние ID; переход на явные ID не молчаливый.
+            label_id = f"human-{index}" if version == "1.0" else label["label_id"]
+            if not label_id.strip() or label_id != label_id.strip() or label_id in seen_ids:
+                raise InputError("Требуется непустой уникальный label_id в пределах случая.")
+            seen_ids.add(label_id)
+            anchors: list[dict[str, Any]] = [location]
+            corrections: list[dict[str, Any]] = (
+                [{"range": location, "text": label["replacement"]}]
+                if label["replace"] == "yes"
+                else []
+            )
+            if version == "2.0":
+                for field, values in (("anchors", anchors), ("corrections", corrections)):
+                    for alternative in _alternatives(label[field], field):
+                        start, end = alternative["start"], alternative["end"]
+                        if (
+                            not 0 <= start <= end <= len(record["text"])
+                            or record["text"][start:end] != alternative["quote"]
+                        ):
+                            raise InputError("Offset/quote альтернативы не совпадает с исходником.")
+                        alternative_range = source.range_dict(base + start, base + end)
+                        values.append(
+                            alternative_range
+                            if field == "anchors"
+                            else {"range": alternative_range, "text": alternative["replacement"]}
+                        )
             imported.append(
                 {
-                    "id": f"human-{index}",
+                    "id": label_id,
                     "category": label["category"],
-                    "anchors": [location],
+                    "anchors": anchors,
                     "context": label["note"] or row["note"] or evidence,
-                    "corrections": [{"range": location, "text": label["replacement"]}]
-                    if label["replace"] == "yes"
-                    else [],
+                    "corrections": corrections,
                     "annotation": annotation,
                 }
             )
@@ -267,3 +301,26 @@ def import_annotations(
             }
         )
     return validate_corpus(result)
+
+
+def _alternatives(value: str, field: str) -> list[dict[str, Any]]:
+    """Дополнительные независимые anchors/corrections одной метки, без новых ошибок."""
+    if not value:
+        return []
+    try:
+        entries = json.loads(
+            value, object_pairs_hook=_unique_objects, parse_constant=_invalid_constant
+        )
+        keys = {"start", "end", "quote"} | ({"replacement"} if field == "corrections" else set())
+        if not isinstance(entries, list) or any(
+            not isinstance(entry, dict)
+            or set(entry) != keys
+            or any(type(entry[key]) is not int for key in ("start", "end"))
+            or not isinstance(entry["quote"], str)
+            or (field == "corrections" and not isinstance(entry["replacement"], str))
+            for entry in entries
+        ):
+            raise ValueError("alternative_contract")
+        return list(entries)
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise InputError(f"Некорректный JSON альтернатив в колонке {field}.") from exc

@@ -64,12 +64,13 @@ def apply_judgments(
                 raise InputError("Ручные решения нарушают взаимную однозначность matching.")
             case["tp"] = sorted(tp)
             # Неразрешённые автоматические связи не назначаются FN произвольно.
-            unresolved = (
-                case["coverage"]["unresolved_gold"]
-                if any(item["outcome"] == "needs_adjudication" for item in case["candidates"])
-                else []
-            )
-            case["coverage"]["unresolved_gold"] = sorted(set(unresolved) - set(tp))
+            unresolved = {
+                label
+                for item in case["candidates"]
+                if item["outcome"] == "needs_adjudication"
+                for label in item["potential_labels"]
+            } - set(tp)
+            case["coverage"]["unresolved_gold"] = sorted(unresolved)
             case["fn"] = sorted({label["id"] for label in case["gold"]} - set(tp) - set(unresolved))
             reasons = [
                 reason for reason in case["reasons"] if reason != "matching:needs_adjudication"

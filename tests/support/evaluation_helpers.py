@@ -17,7 +17,7 @@ def annotation(actor: str = "contract-author") -> dict[str, Any]:
         "actor": actor,
         "method": "synthetic_contract",
         "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
-        "history": [{"revision": "1", "actor": actor, "decision": "synthetic fixture"}],
+        "history": [{"revision": "1", "actor": actor, "decision": "синтетическая фикстура"}],
     }
 
 
@@ -39,10 +39,11 @@ def make_corpus(
         "version": "1",
         "annotation_version": "1",
         "split_policy": {
-            "strategy": "repository grouping; normalized shingles/containment; manual audit",
+            "strategy": "Группировка репозиториев; нормализованные шинглы и включение текста; "
+            "ручной аудит",
             "test_frozen": False,
             "test_sha256": None,
-            "holdout_policy": "No answers in prompts or retrieval",
+            "holdout_policy": "Ответы не используются в промптах и поиске контекста",
         },
         "documents": [
             {
@@ -50,11 +51,11 @@ def make_corpus(
                 "repository": "demo",
                 "path": path,
                 "revision": "fixture-1",
-                "origin": "Original synthetic material created for Language Review contracts",
+                "origin": "Авторские синтетические данные для проверки контрактов Language Review",
                 "rights": {
                     "use": "permitted",
                     "publish": "permitted",
-                    "basis": "Project-owned synthetic fixture",
+                    "basis": "Синтетическая фикстура проекта",
                 },
                 "data_kind": "synthetic",
                 "content_base64": base64.b64encode(raw).decode("ascii"),
@@ -104,7 +105,7 @@ def add_label(
         "id": f"gold-{len(corpus['cases'][0]['labels']) + 1}",
         "category": category,
         "anchors": [location],
-        "context": "Synthetic controlled diagnosis",
+        "context": "Синтетический контроль диагноза",
         "corrections": [{"range": location, "text": text} for text in corrections],
         "annotation": annotation(),
     }

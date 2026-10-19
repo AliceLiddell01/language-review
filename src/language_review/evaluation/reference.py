@@ -1,4 +1,4 @@
-"""Exact published-pair agreement; deliberately separate from annotated gold metrics."""
+"""Точное согласие с опубликованными парами, отдельно от метрик независимого эталона."""
 
 from __future__ import annotations
 
@@ -33,19 +33,21 @@ from language_review.evaluation.scoring import _coverage
 from language_review.evaluation.source_import import _validate_recipe, pair_proposal
 from language_review.review_verify import _invalid_constant, _unique_objects
 
-PROTOCOL = "published-pair-exact/1; unique-candidate-per-finding; nonoverlapping-edits"
+PROTOCOL = (
+    "published-pair-exact/2; complete-coverage; unique-candidate-per-finding; nonoverlapping-edits"
+)
 
 
 def verified_references(bundle: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Bind references to pinned upstream bytes, not a user-supplied assertion of gold.
+    """Связать внешние исправления с неизменяемыми байтами источника.
 
-    Old bundles remain readable, including their generated Markdown representation.
-    Neither the proposal's inferred anchor nor its category is treated as truth.
+    Старые пакеты читаются, включая сгенерированное Markdown-представление.
+    Выведенные из пары область и категория не становятся эталоном.
     """
     provenance = read_json(bundle / "provenance.json")
     recipe = source_import.recipes().get(provenance["source"]["id"])
     if recipe is None or provenance["source"] != recipe or recipe["kind"] != "pairs":
-        raise InputError("Reference assessment требует pinned pairs из каталога источников.")
+        raise InputError("Оценка внешних пар требует зафиксированный источник из каталога.")
     _validate_recipe(recipe)
     files = {}
     for item in recipe["files"]:
@@ -56,7 +58,7 @@ def verified_references(bundle: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         files[item["path"]] = raw
     rows = [
         json.loads(line, object_pairs_hook=_unique_objects, parse_constant=_invalid_constant)
-        for line in jsonl_lines(files["data/GitHubTypoCorpusRu/test.json"].decode("utf-8-sig"))
+        for line in jsonl_lines(files[source_import.SAGE_PAIRS_PATH].decode("utf-8-sig"))
     ]
     references = read_json(bundle / "references.json")
     corpus = load_corpus(bundle / "corpus.json")
@@ -84,8 +86,8 @@ def verified_references(bundle: Path) -> tuple[dict[str, Any], dict[str, Any]]:
             or document["path"] not in {f"records/{number:04d}.md", f"records/{number:04d}.txt"}
             or document["origin"]
             != (
-                f"{source_import._url(recipe, 'data/GitHubTypoCorpusRu/test.json')}#row={number}; "
-                "UTF-8 source field, not original GitHub file"
+                f"{source_import._url(recipe, source_import.SAGE_PAIRS_PATH)}#row={number}; "
+                f"{source_import.SAGE_ORIGIN_NOTE}"
             )
         ):
             raise InputError("Reference не соответствует исходной паре/документу.")
@@ -94,7 +96,7 @@ def verified_references(bundle: Path) -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 def change_shape(text: str, correction: str) -> dict[str, Any]:
-    """Diagnostic string shapes, never human error categories or certified anchors."""
+    """Эвристические формы строковых изменений, без подтверждённых категорий и областей."""
     source = SourceMap.create(text.encode("utf-8"), "utf-8", None)
     proposal = pair_proposal(source, correction)
     if max(len(text), len(correction)) > 20000:
@@ -218,11 +220,7 @@ def reference_score(
                 if "size_limit" in shape["shapes"]:
                     state, reason = "rejected", "pair_size_limit"
                     applicable = False
-                elif (
-                    coverage["fully_checked"]
-                    and not coverage["missing_characters"]
-                    and doc is not None
-                ):
+                elif coverage["evaluation_ready"] and doc is not None:
                     prediction, reason, edited = _reconstruct(document, doc, engine)
                     if reason is None:
                         state, exact = "evaluated", prediction == ref["correction"]
@@ -280,12 +278,12 @@ def reference_score(
         "source": provenance["source"],
         "scopes": scopes,
         "limitations": [
-            "Published correction string agreement only; no detection TP/FP/FN.",
-            "No exhaustive category gold, clean attestation or semantic harm judgment.",
-            "Public external test; training contamination not excluded.",
-            "String diff shapes are heuristics, not human error categories.",
-            "Candidate reconstruction in memory; no source writes or reference-guided choice.",
-            "Rejected outputs are not FP; unanswered findings leave source unchanged.",
+            "Только совпадение с опубликованной строкой исправления; без detection TP/FP/FN.",
+            "Нет исчерпывающих категорий эталона, подтверждения чистоты и оценки смыслового вреда.",
+            "Внешний публичный test; присутствие в обучающих данных не исключено.",
+            "Формы строкового diff — эвристики, а не человеческие категории ошибок.",
+            "Реконструкция в памяти; без записи исходников и выбора варианта по эталону.",
+            "Отклонённые выходы не FP; находка без правки сохраняет исходную строку.",
         ],
     }
     validate(result, "reference")

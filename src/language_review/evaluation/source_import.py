@@ -22,6 +22,11 @@ from language_review.extract_docs import extract_markdown
 from language_review.review_verify import _invalid_constant, _unique_objects
 from language_review.scanner import _classify_encoding
 
+# Фиксированный контракт единственного поддерживаемого парного источника.
+SAGE_PAIRS_PATH = "data/GitHubTypoCorpusRu/test.json"
+# Исторический литерал origin участвует в проверке уже сохранённых пакетов.
+SAGE_ORIGIN_NOTE = "UTF-8 source field, not original GitHub file"
+
 
 def recipes() -> dict[str, dict[str, Any]]:
     values = json.loads(resources.files(__package__).joinpath("sources.json").read_text("utf-8"))
@@ -97,7 +102,7 @@ def _document(recipe: dict[str, Any], path: str, raw: bytes, origin: str) -> dic
         "rights": {
             "use": "permitted",
             "publish": "private_only",
-            "basis": recipe["rights_basis"] + " Attribution: " + recipe["attribution"],
+            "basis": recipe["rights_basis"] + " Авторство: " + recipe["attribution"],
         },
         "data_kind": "real",
         "content_base64": base64.b64encode(raw).decode("ascii"),
@@ -110,8 +115,7 @@ def _document(recipe: dict[str, Any], path: str, raw: bytes, origin: str) -> dic
             "source_sha256": next(
                 file["sha256"]
                 for file in recipe["files"]
-                if file["path"]
-                == ("data/GitHubTypoCorpusRu/test.json" if recipe["kind"] == "pairs" else path)
+                if file["path"] == (SAGE_PAIRS_PATH if recipe["kind"] == "pairs" else path)
             ),
             "license": recipe["license"],
             "license_url": _url(recipe, recipe["license_path"]),
@@ -120,10 +124,10 @@ def _document(recipe: dict[str, Any], path: str, raw: bytes, origin: str) -> dic
             ),
             "attribution": recipe["attribution"],
             "upstream_split": recipe["split"],
-            "transformation": "original bytes"
+            "transformation": "исходные байты"
             if recipe["kind"] != "pairs"
-            else "UTF-8 encoding of exact JSONL source string; "
-            "not original GitHub file; row in origin",
+            else "Точная строка source из JSONL в UTF-8; "
+            "исходный GitHub-файл неизвестен; номер строки в origin",
         },
     }
 
@@ -177,7 +181,7 @@ def pair_proposal(source: SourceMap, correction: str) -> dict[str, Any]:
         suffix += 1
     end = len(text) - suffix
     replacement = correction[prefix : len(correction) - suffix]
-    # Alternative equally short splices (e.g. delete one of repeated letters).
+    # Альтернативные столь же короткие правки, например удаление повторяющейся буквы.
     width = end - prefix
     alternatives = sum(
         text[:start] + correction[start : start + len(replacement)] + text[start + width :]
@@ -236,7 +240,7 @@ def _candidates(
                 cases.append(case)
             references[document["id"]] = {"extraction_diagnostics": diagnostics}
     else:
-        path = "data/GitHubTypoCorpusRu/test.json"
+        path = SAGE_PAIRS_PATH
         references["unsupported_rows"] = []
         for number, line in enumerate(jsonl_lines(files[path].decode("utf-8-sig")), 1):
             row = json.loads(
@@ -249,9 +253,7 @@ def _candidates(
                 or not row["source"]
             ):
                 raise InputError("Изменён JSONL-контракт GitHubTypoCorpusRu.")
-            origin = (
-                f"{_url(recipe, path)}#row={number}; UTF-8 source field, not original GitHub file"
-            )
+            origin = f"{_url(recipe, path)}#row={number}; {SAGE_ORIGIN_NOTE}"
             raw = row["source"].encode("utf-8")
             encoding, _, _, reason = _classify_encoding(raw)
             if reason or not encoding:
@@ -263,11 +265,11 @@ def _candidates(
                     }
                 )
                 continue
-            # The original file format is unknown. txt is an explicit source-field
-            # transport, not a claim about the original GitHub extension.
+            # Исходный формат неизвестен. txt явно передаёт поле source,
+            # не приписывая исходному GitHub-файлу это расширение.
             extension = "txt" if pair_format == "plain" else "md"
             document = _document(recipe, f"records/{number:04d}.{extension}", raw, origin)
-            document["provenance"]["transformation"] += f"; generated {pair_format} adapter"
+            document["provenance"]["transformation"] += f"; сгенерированный адаптер {pair_format}"
             source = source_map(document)
             case = _case(recipe, document, source.range_dict(0, len(source.text)), "other", [])
             documents.append(document)
@@ -306,12 +308,12 @@ def import_source(
     seen = set()
     cases = []
 
-    # Stable hash order, no dependence on predictions or correction presence.
+    # Стабильный порядок по хешу, без зависимости от предсказаний или наличия правки.
     def sampling_key(case: dict[str, Any]) -> str:
         if recipe["kind"] != "pairs":
             return str(case["id"])
-        # Preserve the old pilot's row selection across transport adapters. The
-        # legacy identifier is a sampling key only, not an original-format claim.
+        # Сохраняем отбор строк старого пилота при смене адаптера представления.
+        # Прежний ID — лишь ключ отбора; исходный формат он не подтверждает.
         row = references[case["id"]]["row"]
         legacy = digest({"source": recipe["id"], "path": f"records/{row:04d}.md"})[:24]
         return digest({"document": legacy, "range": case["range"]})[:24]
@@ -336,13 +338,13 @@ def import_source(
             "version": recipe["revision"],
             "annotation_version": "draft-1",
             "split_policy": {
-                "strategy": "one repository family per split; stable hash sampling; "
-                "exact normalized duplicates removed; "
-                "existing cross-split near-duplicate validator",
+                "strategy": "Одно семейство репозиториев на split; стабильный отбор по хешу; "
+                "точные нормализованные дубли удалены; "
+                "близкие межсплитовые дубли проверяет общий валидатор",
                 "test_frozen": False,
                 "test_sha256": None,
-                "holdout_policy": "upstream test preserved; public contamination possible; "
-                "no answers in prompts/retrieval/rule tuning",
+                "holdout_policy": "Исходный test сохранён; возможен в обучающих данных; "
+                "ответы не используются в промптах, поиске контекста и настройке правил",
             },
             "documents": [doc for doc in documents if doc["id"] in ids],
             "cases": selected,
@@ -358,7 +360,7 @@ def import_source(
         "unsupported_rows": references.get("unsupported_rows", []),
         "limit": limit,
         "pair_format": pair_format if recipe["kind"] == "pairs" else None,
-        "annotation_status": "draft; no independently verified categories or clean attestations",
+        "annotation_status": "draft; нет независимо подтверждённых категорий и чистых случаев",
     }
     destination.mkdir(parents=True, exist_ok=False)
     for path, raw in files.items():

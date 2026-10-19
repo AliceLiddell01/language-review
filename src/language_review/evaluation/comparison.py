@@ -127,7 +127,7 @@ def check_expectation(result: dict[str, Any], expected: dict[str, Any]) -> dict[
         "status": "PASS" if actual == expected else "FAIL",
         "actual": actual,
         "expected": expected,
-        "scope": "offline saved-report scoring only; no live stability claim",
+        "scope": "Офлайн-оценка сохранённого отчёта; устойчивость живых запусков не доказана.",
     }
 
 
@@ -152,7 +152,7 @@ def distribution(results: list[dict[str, Any]]) -> dict[str, Any]:
         "independent_stability_proven": False,
         "statuses": [result["status"] for result in results],
         "pipeline_detection": values,
-        "unit": "one public check invocation on the same split; descriptive only",
+        "unit": "Один запуск публичного check на том же split; только описательная статистика.",
     }
     validate(aggregate, "distribution")
     return aggregate

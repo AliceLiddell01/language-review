@@ -2,15 +2,15 @@
   "compatibility": {
     "annotation_version": "1",
     "corpus_id": "synthetic-contract",
-    "corpus_sha256": "ecea64c50b5819d4ae4904c01f508e9e89f81ca6f54f8355ffde4b00c3196b03",
+    "corpus_sha256": "cb62d3eabbb98786682dea1125e5752da59b98d21eee8e54c9ff1d84bb916c91",
     "corpus_version": "1",
     "judgment_policy": "reference_only",
-    "metric_version": "exact-bijective-1",
+    "metric_version": "exact-bijective-2",
     "report_kind": "synthetic_contract_check",
-    "scorer_version": "1.0",
+    "scorer_version": "1.1",
     "split": "dev"
   },
-  "projection_sha256": "69c870c0cd838d1555b525b51d85d39d26554a72e4a1dcf08507d990d496ad4d",
+  "projection_sha256": "1ddf4c6dc166867f350213316b2d868849a341d910792405016be55b116fcd85",
   "schema": "language-review.eval-expectations",
   "schema_version": "1.0"
 }

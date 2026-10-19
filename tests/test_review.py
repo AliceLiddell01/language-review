@@ -4,6 +4,7 @@ import hashlib
 import json
 import shutil
 from dataclasses import replace
+from itertools import permutations
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +78,101 @@ def test_reconcile_shared_edit_and_transitive_alternatives(tmp_path: Path) -> No
         "ошибки",
     }
     # Попарная проверка исключает A-B-C даже при общей правке у каждой соседней пары.
+    assert reconcile(0, list(reversed(candidates))) == findings
+
+
+@pytest.mark.parametrize("common", [False, True], ids=["triangle", "global_intersection"])
+def test_reconcile_requires_one_edit_shared_by_entire_group(tmp_path: Path, common: bool) -> None:
+    replacements = [("рот", "мот"), ("мот", "бот"), ("рот", "бот")]
+    if common:
+        replacements = [(*values, "кит") for values in replacements]
+    candidates = _candidates(
+        tmp_path,
+        "кот",
+        [
+            (engine, 0, 3, values, "RULE", "grammar")
+            for engine, values in zip(("languagetool", "vale", "llm"), replacements, strict=True)
+        ],
+    )
+    expected = reconcile(0, candidates)
+    assert sorted(len(item.candidates) for item in expected) == ([3] if common else [1, 2])
+    assert sum(len(item.candidates) for item in expected) == 3
+    result = check_paths(
+        [str(tmp_path / "sample.txt")],
+        load_config(),
+        check_overrides={"engines": ("vale",)},
+        engine_factory=_vale_engine_factory("{}"),
+    )
+    result.documents[0].findings = expected
+    report = review_document(result)
+    jsonschema.Draft202012Validator(SCHEMA).validate(report)
+    for item in report["items"]:
+        assert item["agreement_basis"] == (
+            "shared_minimal_edit" if len(item["evidence"]) > 1 else "single_evidence"
+        )
+        assert item["agreement"] == sorted({value["engine"] for value in item["evidence"]})
+        assert item["conflicting_suggestions"] is True
+    for order in permutations(candidates):
+        findings = reconcile(0, list(order))
+        assert findings == expected
+        for finding in findings:
+            edits = [
+                {suggestion.edit for suggestion in item.suggestions if suggestion.edit is not None}
+                for item in finding.candidates
+            ]
+            assert set.intersection(*edits)
+
+def test_reconcile_same_edit_text_at_different_ranges_is_independent(tmp_path: Path) -> None:
+    candidates = _candidates(
+        tmp_path,
+        "кот кот",
+        [("vale", 0, 3, ("рот",), "RULE", "grammar"), ("llm", 4, 7, ("рот",), "RULE", "grammar")],
+    )
+    [first], [second] = (item.suggestions for item in candidates)
+    assert first.edit is not None and second.edit is not None
+    assert first.edit[2] == second.edit[2]
+    assert first.edit[:2] != second.edit[:2]
+    assert len(reconcile(0, candidates)) == 2
+
+@pytest.mark.parametrize("layout", ["units", "ranges", "dense", "rules"])
+def test_reconcile_independent_findings_avoid_global_pair_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, layout: str
+) -> None:
+    import language_review.check as module
+
+    count = 300
+    candidates = _candidates(
+        tmp_path,
+        " ".join(["кот"] * count) if layout == "ranges" else "кот",
+        [
+            (
+                "vale",
+                index * 4 if layout == "ranges" else 0,
+                index * 4 + 3 if layout == "ranges" else 3,
+                (f"слово{index}" if layout == "dense" else "рот",),
+                f"RULE{index}" if layout == "rules" else "RULE",
+                "grammar",
+            )
+            for index in range(count)
+        ],
+    )
+    if layout == "units":
+        candidates = [
+            replace(item, unit=replace(item.unit, index=index), raw=replace(item.raw, unit=index))
+            for index, item in enumerate(candidates)
+        ]
+    comparisons = 0
+    original = module._same_defect
+
+    def counted(first: Candidate, second: Candidate) -> bool:
+        nonlocal comparisons
+        comparisons += 1
+        return original(first, second)
+
+    monkeypatch.setattr(module, "_same_defect", counted)
+    findings = reconcile(0, candidates)
+    assert len(findings) == count
+    assert comparisons <= count * 2
     assert reconcile(0, list(reversed(candidates))) == findings
 
 

@@ -436,7 +436,7 @@ def _same_defect(first: Candidate, second: Candidate) -> bool:
 
 
 def reconcile(document_index: int, candidates: list[Candidate]) -> list[Finding]:
-    """Консервативное полное связывание: пересечение и транзитивность не доказательства дубля."""
+    """Согласовать по общей правке всей группы, сохраняя независимые диагнозы."""
     ordered = sorted(
         candidates,
         key=lambda item: (
@@ -459,15 +459,47 @@ def reconcile(document_index: int, candidates: list[Candidate]) -> list[Finding]
         ),
     )
     clusters: list[list[Candidate]] = []
+    shared_edits: list[set[tuple[int, int, str]]] = []
+    by_edit: dict[tuple[int, tuple[int, int, str]], set[int]] = {}
+    by_rule: dict[tuple[str, str | None], set[int]] = {}
+    without_engine: dict[str, set[int]] = {item.raw.engine: set() for item in ordered}
+    seen: set[tuple[int, RawFinding]] = set()
     for candidate in ordered:
-        cluster = next(
-            (group for group in clusters if all(_same_defect(item, candidate) for item in group)),
+        identity = (id(candidate.unit), candidate.raw)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        edits = {item.edit for item in candidate.suggestions if item.edit is not None}
+        possible: set[int] = set()
+        engine, rule = candidate.raw.engine, candidate.raw.rule_id
+        for edit in edits:
+            groups = by_edit.get((id(candidate.unit), edit), set())
+            possible.update(groups.intersection(by_rule.get((engine, rule), ())))
+            possible.update(groups.intersection(without_engine[engine]))
+        index = next(
+            (
+                index
+                for index in sorted(possible)
+                if all(_same_defect(item, candidate) for item in clusters[index])
+            ),
             None,
         )
-        if cluster is None:
+        if index is None:
+            index = len(clusters)
             clusters.append([candidate])
-        elif not any(item.raw == candidate.raw for item in cluster):
-            cluster.append(candidate)
+            shared_edits.append(edits)
+            for name, groups in without_engine.items():
+                if name != engine:
+                    groups.add(index)
+            for edit in edits:
+                by_edit.setdefault((id(candidate.unit), edit), set()).add(index)
+        else:
+            clusters[index].append(candidate)
+            for edit in shared_edits[index] - edits:
+                by_edit[(id(candidate.unit), edit)].remove(index)
+            shared_edits[index].intersection_update(edits)
+        without_engine[engine].discard(index)
+        by_rule.setdefault((engine, rule), set()).add(index)
     findings: list[Finding] = []
     for members in clusters:
         suggestions: list[Suggestion] = []

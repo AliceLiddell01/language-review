@@ -7,6 +7,12 @@ import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
+from language_review.check_report import (
+    SCHEMA as CHECK_SCHEMA,
+)
+from language_review.check_report import (
+    SCHEMA_VERSION as CHECK_SCHEMA_VERSION,
+)
 from language_review.coordinates import SourceMap
 from language_review.errors import InputError
 from language_review.review_report import SCHEMA
@@ -89,8 +95,13 @@ def load_review(report_path: Path) -> dict[str, Any]:
             or report["schema_version"] != "1.0"
         ):
             raise ValueError("unsupported_review_schema")
-        if not isinstance(report["analysis"]["documents"], list) or not isinstance(
-            report["items"], list
+        analysis = report.get("analysis")
+        if (
+            not isinstance(analysis, dict)
+            or analysis.get("schema") != CHECK_SCHEMA
+            or analysis.get("schema_version") != CHECK_SCHEMA_VERSION
+            or not isinstance(analysis.get("documents"), list)
+            or not isinstance(report.get("items"), list)
         ):
             raise ValueError("invalid_review_structure")
         return report
@@ -158,6 +169,10 @@ def verify_review(report_path: Path, roots: dict[str, Path]) -> dict[str, Any]:
                             raise ValueError("finding_binding_mismatch")
                         for context in item["context"]:
                             _verify_quote(source, context["range"], context["quote"])
+                        for suggestion in item["suggestions"]:
+                            edit = suggestion["edit"]
+                            if edit is not None:
+                                _verify_quote(source, edit["range"], edit["original"])
                         for evidence in item["evidence"]:
                             _verify_quote(source, evidence["range"], evidence["source_excerpt"])
                             for suggestion in evidence["suggestions"]:

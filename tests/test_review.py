@@ -170,6 +170,14 @@ def test_review_cli_exact_unicode_context_evidence_and_stale_source(
     verified = _run(command, isolated_appdata)
     assert verified.returncode == 0
     assert json.loads(verified.stdout)["status"] == "current"
+    tampered = json.loads(json.dumps(report))
+    [suggestion] = tampered["items"][0]["suggestions"]
+    assert suggestion["edit"] is not None
+    suggestion["edit"]["original"] = "подлог"
+    saved.write_text(json.dumps(tampered), encoding="utf-8")
+    stale_suggestion = _run(command, isolated_appdata)
+    assert stale_suggestion.returncode == 4
+    assert json.loads(stale_suggestion.stdout)["documents"][0]["reason"] == "quote_mismatch"
     # Тот же хеш с ошибочной цитатой не даёт current.
     report["items"][0]["excerpt"] = "ошибка"
     saved.write_text(json.dumps(report), encoding="utf-8")
@@ -540,3 +548,17 @@ def test_review_schema_and_cli_refuse_malformed_saved_report(
         assert process.returncode == 2
         assert "Traceback" not in process.stderr
         assert process.stdout == ""
+    for field, value in (
+        ("schema", "language-review.other"),
+        ("schema_version", "2.0"),
+    ):
+        malformed = json.loads(
+            (ROOT / "docs/review-report.example.json").read_text(encoding="utf-8")
+        )
+        malformed["analysis"][field] = value
+        saved.write_text(json.dumps(malformed), encoding="utf-8")
+        for command in ("show-review", "verify-review"):
+            process = _run([command, str(saved)], isolated_appdata)
+            assert process.returncode == 2
+            assert "Traceback" not in process.stderr
+            assert process.stdout == ""

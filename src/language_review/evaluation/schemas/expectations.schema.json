@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://language-review.invalid/schemas/eval-expectations-1.0.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "compatibility",
+    "projection_sha256"
+  ],
+  "properties": {
+    "schema": {
+      "const": "language-review.eval-expectations"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "corpus_id",
+        "corpus_version",
+        "annotation_version",
+        "corpus_sha256",
+        "split",
+        "metric_version",
+        "scorer_version",
+        "report_kind",
+        "judgment_policy"
+      ],
+      "properties": {
+        "corpus_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "corpus_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "annotation_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "corpus_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "split": {
+          "enum": [
+            "dev",
+            "validation",
+            "test"
+          ]
+        },
+        "metric_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scorer_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "report_kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "judgment_policy": {
+          "enum": [
+            "reference_only",
+            "independent_judgments"
+          ]
+        }
+      }
+    },
+    "projection_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

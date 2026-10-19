@@ -1,0 +1,1792 @@
+{
+  "annotation_version": "1",
+  "cases": [
+    {
+      "annotation": {
+        "actor": "contract-author",
+        "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+        "history": [
+          {
+            "actor": "contract-author",
+            "decision": "synthetic fixture",
+            "revision": "1"
+          }
+        ],
+        "method": "synthetic_contract",
+        "status": "independently_verified"
+      },
+      "applicable": true,
+      "categories": [
+        "spelling"
+      ],
+      "context": "comment",
+      "document": "spelling",
+      "exceptions": [],
+      "exhaustive": true,
+      "id": "spelling",
+      "labels": [
+        {
+          "anchors": [
+            {
+              "end": {
+                "byte_offset": 22,
+                "column": 14,
+                "line": 1,
+                "utf16_column": 14
+              },
+              "start": {
+                "byte_offset": 10,
+                "column": 8,
+                "line": 1,
+                "utf16_column": 8
+              }
+            }
+          ],
+          "annotation": {
+            "actor": "contract-author",
+            "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+            "history": [
+              {
+                "actor": "contract-author",
+                "decision": "synthetic fixture",
+                "revision": "1"
+              }
+            ],
+            "method": "synthetic_contract",
+            "status": "independently_verified"
+          },
+          "category": "spelling",
+          "context": "Synthetic controlled diagnosis",
+          "corrections": [
+            {
+              "range": {
+                "end": {
+                  "byte_offset": 22,
+                  "column": 14,
+                  "line": 1,
+                  "utf16_column": 14
+                },
+                "start": {
+                  "byte_offset": 10,
+                  "column": 8,
+                  "line": 1,
+                  "utf16_column": 8
+                }
+              },
+              "text": "ошибка"
+            }
+          ],
+          "id": "gold-1"
+        }
+      ],
+      "languages": [
+        "ru"
+      ],
+      "profile": null,
+      "protected_ranges": [],
+      "range": {
+        "end": {
+          "byte_offset": 60,
+          "column": 35,
+          "line": 1,
+          "utf16_column": 35
+        },
+        "start": {
+          "byte_offset": 3,
+          "column": 4,
+          "line": 1,
+          "utf16_column": 4
+        }
+      },
+      "split": "dev",
+      "terms": [
+        "CLI"
+      ],
+      "verdict": "errors"
+    },
+    {
+      "annotation": {
+        "actor": "contract-author",
+        "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+        "history": [
+          {
+            "actor": "contract-author",
+            "decision": "synthetic fixture",
+            "revision": "1"
+          }
+        ],
+        "method": "synthetic_contract",
+        "status": "independently_verified"
+      },
+      "applicable": true,
+      "categories": [
+        "grammar"
+      ],
+      "context": "comment",
+      "document": "agreement",
+      "exceptions": [],
+      "exhaustive": true,
+      "id": "agreement",
+      "labels": [
+        {
+          "anchors": [
+            {
+              "end": {
+                "byte_offset": 40,
+                "column": 31,
+                "line": 1,
+                "utf16_column": 31
+              },
+              "start": {
+                "byte_offset": 19,
+                "column": 20,
+                "line": 1,
+                "utf16_column": 20
+              }
+            }
+          ],
+          "annotation": {
+            "actor": "contract-author",
+            "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+            "history": [
+              {
+                "actor": "contract-author",
+                "decision": "synthetic fixture",
+                "revision": "1"
+              }
+            ],
+            "method": "synthetic_contract",
+            "status": "independently_verified"
+          },
+          "category": "grammar",
+          "context": "Synthetic controlled diagnosis",
+          "corrections": [
+            {
+              "range": {
+                "end": {
+                  "byte_offset": 40,
+                  "column": 31,
+                  "line": 1,
+                  "utf16_column": 31
+                },
+                "start": {
+                  "byte_offset": 19,
+                  "column": 20,
+                  "line": 1,
+                  "utf16_column": 20
+                }
+              },
+              "text": "Важный файл"
+            }
+          ],
+          "id": "gold-1"
+        }
+      ],
+      "languages": [
+        "ru"
+      ],
+      "profile": null,
+      "protected_ranges": [],
+      "range": {
+        "end": {
+          "byte_offset": 61,
+          "column": 43,
+          "line": 1,
+          "utf16_column": 43
+        },
+        "start": {
+          "byte_offset": 19,
+          "column": 20,
+          "line": 1,
+          "utf16_column": 20
+        }
+      },
+      "split": "dev",
+      "terms": [
+        "CLI"
+      ],
+      "verdict": "errors"
+    },
+    {
+      "annotation": {
+        "actor": "contract-author",
+        "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+        "history": [
+          {
+            "actor": "contract-author",
+            "decision": "synthetic fixture",
+            "revision": "1"
+          }
+        ],
+        "method": "synthetic_contract",
+        "status": "independently_verified"
+      },
+      "applicable": true,
+      "categories": [
+        "punctuation"
+      ],
+      "context": "comment",
+      "document": "punctuation",
+      "exceptions": [],
+      "exhaustive": true,
+      "id": "punctuation",
+      "labels": [
+        {
+          "anchors": [
+            {
+              "end": {
+                "byte_offset": 33,
+                "column": 20,
+                "line": 1,
+                "utf16_column": 20
+              },
+              "start": {
+                "byte_offset": 33,
+                "column": 20,
+                "line": 1,
+                "utf16_column": 20
+              }
+            }
+          ],
+          "annotation": {
+            "actor": "contract-author",
+            "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+            "history": [
+              {
+                "actor": "contract-author",
+                "decision": "synthetic fixture",
+                "revision": "1"
+              }
+            ],
+            "method": "synthetic_contract",
+            "status": "independently_verified"
+          },
+          "category": "punctuation",
+          "context": "Synthetic controlled diagnosis",
+          "corrections": [
+            {
+              "range": {
+                "end": {
+                  "byte_offset": 33,
+                  "column": 20,
+                  "line": 1,
+                  "utf16_column": 20
+                },
+                "start": {
+                  "byte_offset": 33,
+                  "column": 20,
+                  "line": 1,
+                  "utf16_column": 20
+                }
+              },
+              "text": ","
+            }
+          ],
+          "id": "gold-1"
+        }
+      ],
+      "languages": [
+        "ru"
+      ],
+      "profile": null,
+      "protected_ranges": [],
+      "range": {
+        "end": {
+          "byte_offset": 60,
+          "column": 35,
+          "line": 1,
+          "utf16_column": 35
+        },
+        "start": {
+          "byte_offset": 3,
+          "column": 4,
+          "line": 1,
+          "utf16_column": 4
+        }
+      },
+      "split": "dev",
+      "terms": [
+        "CLI"
+      ],
+      "verdict": "errors"
+    },
+    {
+      "annotation": {
+        "actor": "contract-author",
+        "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+        "history": [
+          {
+            "actor": "contract-author",
+            "decision": "synthetic fixture",
+            "revision": "1"
+          }
+        ],
+        "method": "synthetic_contract",
+        "status": "independently_verified"
+      },
+      "applicable": true,
+      "categories": [
+        "grammar"
+      ],
+      "context": "comment",
+      "document": "repetition",
+      "exceptions": [],
+      "exhaustive": true,
+      "id": "repetition",
+      "labels": [
+        {
+          "anchors": [
+            {
+              "end": {
+                "byte_offset": 19,
+                "column": 12,
+                "line": 1,
+                "utf16_column": 12
+              },
+              "start": {
+                "byte_offset": 2,
+                "column": 3,
+                "line": 1,
+                "utf16_column": 3
+              }
+            }
+          ],
+          "annotation": {
+            "actor": "contract-author",
+            "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+            "history": [
+              {
+                "actor": "contract-author",
+                "decision": "synthetic fixture",
+                "revision": "1"
+              }
+            ],
+            "method": "synthetic_contract",
+            "status": "independently_verified"
+          },
+          "category": "grammar",
+          "context": "Synthetic controlled diagnosis",
+          "corrections": [
+            {
+              "range": {
+                "end": {
+                  "byte_offset": 19,
+                  "column": 12,
+                  "line": 1,
+                  "utf16_column": 12
+                },
+                "start": {
+                  "byte_offset": 2,
+                  "column": 3,
+                  "line": 1,
+                  "utf16_column": 3
+                }
+              },
+              "text": "Файл"
+            }
+          ],
+          "id": "gold-1"
+        }
+      ],
+      "languages": [
+        "ru"
+      ],
+      "profile": null,
+      "protected_ranges": [],
+      "range": {
+        "end": {
+          "byte_offset": 48,
+          "column": 28,
+          "line": 1,
+          "utf16_column": 28
+        },
+        "start": {
+          "byte_offset": 2,
+          "column": 3,
+          "line": 1,
+          "utf16_column": 3
+        }
+      },
+      "split": "dev",
+      "terms": [
+        "CLI"
+      ],
+      "verdict": "errors"
+    },
+    {
+      "annotation": {
+        "actor": "contract-author",
+        "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+        "history": [
+          {
+            "actor": "contract-author",
+            "decision": "synthetic fixture",
+            "revision": "1"
+          }
+        ],
+        "method": "synthetic_contract",
+        "status": "independently_verified"
+      },
+      "applicable": true,
+      "categories": [
+        "bureaucratese"
+      ],
+      "context": "documentation",
+      "document": "style",
+      "exceptions": [],
+      "exhaustive": true,
+      "id": "style",
+      "labels": [
+        {
+          "anchors": [
+            {
+              "end": {
+                "byte_offset": 13,
+                "column": 8,
+                "line": 1,
+                "utf16_column": 8
+              },
+              "start": {
+                "byte_offset": 0,
+                "column": 1,
+                "line": 1,
+                "utf16_column": 1
+              }
+            }
+          ],
+          "annotation": {
+            "actor": "contract-author",
+            "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+            "history": [
+              {
+                "actor": "contract-author",
+                "decision": "synthetic fixture",
+                "revision": "1"
+              }
+            ],
+            "method": "synthetic_contract",
+            "status": "independently_verified"
+          },
+          "category": "bureaucratese",
+          "context": "Synthetic controlled diagnosis",
+          "corrections": [
+            {
+              "range": {
+                "end": {
+                  "byte_offset": 13,
+                  "column": 8,
+                  "line": 1,
+                  "utf16_column": 8
+                },
+                "start": {
+                  "byte_offset": 0,
+                  "column": 1,
+                  "line": 1,
+                  "utf16_column": 1
+                }
+              },
+              "text": "Для"
+            }
+          ],
+          "id": "gold-1"
+        }
+      ],
+      "languages": [
+        "ru"
+      ],
+      "profile": null,
+      "protected_ranges": [],
+      "range": {
+        "end": {
+          "byte_offset": 57,
+          "column": 32,
+          "line": 1,
+          "utf16_column": 32
+        },
+        "start": {
+          "byte_offset": 0,
+          "column": 1,
+          "line": 1,
+          "utf16_column": 1
+        }
+      },
+      "split": "dev",
+      "terms": [
+        "CLI"
+      ],
+      "verdict": "errors"
+    },
+    {
+      "annotation": {
+        "actor": "contract-author",
+        "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+        "history": [
+          {
+            "actor": "contract-author",
+            "decision": "synthetic fixture",
+            "revision": "1"
+          }
+        ],
+        "method": "synthetic_contract",
+        "status": "independently_verified"
+      },
+      "applicable": true,
+      "categories": [
+        "terminology"
+      ],
+      "context": "documentation",
+      "document": "terminology",
+      "exceptions": [],
+      "exhaustive": true,
+      "id": "terminology",
+      "labels": [
+        {
+          "anchors": [
+            {
+              "end": {
+                "byte_offset": 8,
+                "column": 5,
+                "line": 1,
+                "utf16_column": 5
+              },
+              "start": {
+                "byte_offset": 0,
+                "column": 1,
+                "line": 1,
+                "utf16_column": 1
+              }
+            }
+          ],
+          "annotation": {
+            "actor": "contract-author",
+            "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+            "history": [
+              {
+                "actor": "contract-author",
+                "decision": "synthetic fixture",
+                "revision": "1"
+              }
+            ],
+            "method": "synthetic_contract",
+            "status": "independently_verified"
+          },
+          "category": "terminology",
+          "context": "Synthetic controlled diagnosis",
+          "corrections": [
+            {
+              "range": {
+                "end": {
+                  "byte_offset": 8,
+                  "column": 5,
+                  "line": 1,
+                  "utf16_column": 5
+                },
+                "start": {
+                  "byte_offset": 0,
+                  "column": 1,
+                  "line": 1,
+                  "utf16_column": 1
+                }
+              },
+              "text": "Пользователь"
+            }
+          ],
+          "id": "gold-1"
+        }
+      ],
+      "languages": [
+        "ru"
+      ],
+      "profile": null,
+      "protected_ranges": [],
+      "range": {
+        "end": {
+          "byte_offset": 31,
+          "column": 18,
+          "line": 1,
+          "utf16_column": 18
+        },
+        "start": {
+          "byte_offset": 0,
+          "column": 1,
+          "line": 1,
+          "utf16_column": 1
+        }
+      },
+      "split": "dev",
+      "terms": [
+        "CLI"
+      ],
+      "verdict": "errors"
+    },
+    {
+      "annotation": {
+        "actor": "contract-author",
+        "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+        "history": [
+          {
+            "actor": "contract-author",
+            "decision": "synthetic fixture",
+            "revision": "1"
+          }
+        ],
+        "method": "synthetic_contract",
+        "status": "independently_verified"
+      },
+      "applicable": true,
+      "categories": [
+        "untranslated_english"
+      ],
+      "context": "message",
+      "document": "english",
+      "exceptions": [],
+      "exhaustive": true,
+      "id": "english",
+      "labels": [
+        {
+          "anchors": [
+            {
+              "end": {
+                "byte_offset": 45,
+                "column": 46,
+                "line": 1,
+                "utf16_column": 46
+              },
+              "start": {
+                "byte_offset": 22,
+                "column": 23,
+                "line": 1,
+                "utf16_column": 23
+              }
+            }
+          ],
+          "annotation": {
+            "actor": "contract-author",
+            "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+            "history": [
+              {
+                "actor": "contract-author",
+                "decision": "synthetic fixture",
+                "revision": "1"
+              }
+            ],
+            "method": "synthetic_contract",
+            "status": "independently_verified"
+          },
+          "category": "untranslated_english",
+          "context": "Synthetic controlled diagnosis",
+          "corrections": [
+            {
+              "range": {
+                "end": {
+                  "byte_offset": 45,
+                  "column": 46,
+                  "line": 1,
+                  "utf16_column": 46
+                },
+                "start": {
+                  "byte_offset": 22,
+                  "column": 23,
+                  "line": 1,
+                  "utf16_column": 23
+                }
+              },
+              "text": "Файл не найден."
+            }
+          ],
+          "id": "gold-1"
+        }
+      ],
+      "languages": [
+        "ru"
+      ],
+      "profile": null,
+      "protected_ranges": [],
+      "range": {
+        "end": {
+          "byte_offset": 45,
+          "column": 46,
+          "line": 1,
+          "utf16_column": 46
+        },
+        "start": {
+          "byte_offset": 22,
+          "column": 23,
+          "line": 1,
+          "utf16_column": 23
+        }
+      },
+      "split": "dev",
+      "terms": [
+        "CLI"
+      ],
+      "verdict": "errors"
+    },
+    {
+      "annotation": {
+        "actor": "contract-author",
+        "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+        "history": [
+          {
+            "actor": "contract-author",
+            "decision": "synthetic fixture",
+            "revision": "1"
+          }
+        ],
+        "method": "synthetic_contract",
+        "status": "independently_verified"
+      },
+      "applicable": true,
+      "categories": [
+        "untranslated_english"
+      ],
+      "context": "message",
+      "document": "short-english",
+      "exceptions": [],
+      "exhaustive": true,
+      "id": "short-english",
+      "labels": [],
+      "languages": [
+        "ru"
+      ],
+      "profile": null,
+      "protected_ranges": [],
+      "range": {
+        "end": {
+          "byte_offset": 7,
+          "column": 8,
+          "line": 1,
+          "utf16_column": 8
+        },
+        "start": {
+          "byte_offset": 0,
+          "column": 1,
+          "line": 1,
+          "utf16_column": 1
+        }
+      },
+      "split": "dev",
+      "terms": [
+        "CLI"
+      ],
+      "verdict": "clean"
+    },
+    {
+      "annotation": {
+        "actor": "contract-author",
+        "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+        "history": [
+          {
+            "actor": "contract-author",
+            "decision": "synthetic fixture",
+            "revision": "1"
+          }
+        ],
+        "method": "synthetic_contract",
+        "status": "independently_verified"
+      },
+      "applicable": true,
+      "categories": [
+        "style"
+      ],
+      "context": "documentation",
+      "document": "technical",
+      "exceptions": [],
+      "exhaustive": true,
+      "id": "technical",
+      "labels": [],
+      "languages": [
+        "ru"
+      ],
+      "profile": null,
+      "protected_ranges": [
+        {
+          "end": {
+            "byte_offset": 34,
+            "column": 24,
+            "line": 1,
+            "utf16_column": 24
+          },
+          "start": {
+            "byte_offset": 23,
+            "column": 13,
+            "line": 1,
+            "utf16_column": 13
+          }
+        },
+        {
+          "end": {
+            "byte_offset": 39,
+            "column": 29,
+            "line": 1,
+            "utf16_column": 29
+          },
+          "start": {
+            "byte_offset": 36,
+            "column": 26,
+            "line": 1,
+            "utf16_column": 26
+          }
+        },
+        {
+          "end": {
+            "byte_offset": 50,
+            "column": 39,
+            "line": 1,
+            "utf16_column": 39
+          },
+          "start": {
+            "byte_offset": 43,
+            "column": 32,
+            "line": 1,
+            "utf16_column": 32
+          }
+        }
+      ],
+      "range": {
+        "end": {
+          "byte_offset": 51,
+          "column": 40,
+          "line": 1,
+          "utf16_column": 40
+        },
+        "start": {
+          "byte_offset": 0,
+          "column": 1,
+          "line": 1,
+          "utf16_column": 1
+        }
+      },
+      "split": "dev",
+      "terms": [
+        "CLI"
+      ],
+      "verdict": "clean"
+    },
+    {
+      "annotation": {
+        "actor": "contract-author",
+        "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+        "history": [
+          {
+            "actor": "contract-author",
+            "decision": "synthetic fixture",
+            "revision": "1"
+          }
+        ],
+        "method": "synthetic_contract",
+        "status": "independently_verified"
+      },
+      "applicable": true,
+      "categories": [
+        "grammar"
+      ],
+      "context": "log",
+      "document": "log",
+      "exceptions": [],
+      "exhaustive": true,
+      "id": "log",
+      "labels": [],
+      "languages": [
+        "ru"
+      ],
+      "profile": null,
+      "protected_ranges": [],
+      "range": {
+        "end": {
+          "byte_offset": 62,
+          "column": 41,
+          "line": 1,
+          "utf16_column": 41
+        },
+        "start": {
+          "byte_offset": 14,
+          "column": 15,
+          "line": 1,
+          "utf16_column": 15
+        }
+      },
+      "split": "dev",
+      "terms": [
+        "CLI"
+      ],
+      "verdict": "clean"
+    },
+    {
+      "annotation": {
+        "actor": "contract-author",
+        "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+        "history": [
+          {
+            "actor": "contract-author",
+            "decision": "synthetic fixture",
+            "revision": "1"
+          }
+        ],
+        "method": "synthetic_contract",
+        "status": "independently_verified"
+      },
+      "applicable": true,
+      "categories": [
+        "spelling"
+      ],
+      "context": "documentation",
+      "document": "unicode",
+      "exceptions": [],
+      "exhaustive": true,
+      "id": "unicode",
+      "labels": [
+        {
+          "anchors": [
+            {
+              "end": {
+                "byte_offset": 28,
+                "column": 13,
+                "line": 1,
+                "utf16_column": 14
+              },
+              "start": {
+                "byte_offset": 16,
+                "column": 7,
+                "line": 1,
+                "utf16_column": 8
+              }
+            }
+          ],
+          "annotation": {
+            "actor": "contract-author",
+            "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+            "history": [
+              {
+                "actor": "contract-author",
+                "decision": "synthetic fixture",
+                "revision": "1"
+              }
+            ],
+            "method": "synthetic_contract",
+            "status": "independently_verified"
+          },
+          "category": "spelling",
+          "context": "Synthetic controlled diagnosis",
+          "corrections": [
+            {
+              "range": {
+                "end": {
+                  "byte_offset": 28,
+                  "column": 13,
+                  "line": 1,
+                  "utf16_column": 14
+                },
+                "start": {
+                  "byte_offset": 16,
+                  "column": 7,
+                  "line": 1,
+                  "utf16_column": 8
+                }
+              },
+              "text": "ошибка"
+            }
+          ],
+          "id": "gold-1"
+        }
+      ],
+      "languages": [
+        "ru"
+      ],
+      "profile": null,
+      "protected_ranges": [],
+      "range": {
+        "end": {
+          "byte_offset": 60,
+          "column": 29,
+          "line": 1,
+          "utf16_column": 30
+        },
+        "start": {
+          "byte_offset": 2,
+          "column": 1,
+          "line": 1,
+          "utf16_column": 1
+        }
+      },
+      "split": "dev",
+      "terms": [
+        "CLI"
+      ],
+      "verdict": "errors"
+    },
+    {
+      "annotation": {
+        "actor": "contract-author",
+        "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+        "history": [
+          {
+            "actor": "contract-author",
+            "decision": "synthetic fixture",
+            "revision": "1"
+          }
+        ],
+        "method": "synthetic_contract",
+        "status": "independently_verified"
+      },
+      "applicable": true,
+      "categories": [
+        "grammar"
+      ],
+      "context": "documentation",
+      "document": "alternatives",
+      "exceptions": [],
+      "exhaustive": true,
+      "id": "alternatives",
+      "labels": [
+        {
+          "anchors": [
+            {
+              "end": {
+                "byte_offset": 15,
+                "column": 9,
+                "line": 1,
+                "utf16_column": 9
+              },
+              "start": {
+                "byte_offset": 0,
+                "column": 1,
+                "line": 1,
+                "utf16_column": 1
+              }
+            }
+          ],
+          "annotation": {
+            "actor": "contract-author",
+            "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+            "history": [
+              {
+                "actor": "contract-author",
+                "decision": "synthetic fixture",
+                "revision": "1"
+              }
+            ],
+            "method": "synthetic_contract",
+            "status": "independently_verified"
+          },
+          "category": "grammar",
+          "context": "Synthetic controlled diagnosis",
+          "corrections": [
+            {
+              "range": {
+                "end": {
+                  "byte_offset": 15,
+                  "column": 9,
+                  "line": 1,
+                  "utf16_column": 9
+                },
+                "start": {
+                  "byte_offset": 0,
+                  "column": 1,
+                  "line": 1,
+                  "utf16_column": 1
+                }
+              },
+              "text": "Эти файлы"
+            },
+            {
+              "range": {
+                "end": {
+                  "byte_offset": 15,
+                  "column": 9,
+                  "line": 1,
+                  "utf16_column": 9
+                },
+                "start": {
+                  "byte_offset": 0,
+                  "column": 1,
+                  "line": 1,
+                  "utf16_column": 1
+                }
+              },
+              "text": "Эти документы"
+            }
+          ],
+          "id": "gold-1"
+        }
+      ],
+      "languages": [
+        "ru"
+      ],
+      "profile": null,
+      "protected_ranges": [],
+      "range": {
+        "end": {
+          "byte_offset": 31,
+          "column": 18,
+          "line": 1,
+          "utf16_column": 18
+        },
+        "start": {
+          "byte_offset": 0,
+          "column": 1,
+          "line": 1,
+          "utf16_column": 1
+        }
+      },
+      "split": "dev",
+      "terms": [
+        "CLI"
+      ],
+      "verdict": "errors"
+    },
+    {
+      "annotation": {
+        "actor": "contract-author",
+        "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+        "history": [
+          {
+            "actor": "contract-author",
+            "decision": "synthetic fixture",
+            "revision": "1"
+          }
+        ],
+        "method": "synthetic_contract",
+        "status": "independently_verified"
+      },
+      "applicable": true,
+      "categories": [
+        "spelling"
+      ],
+      "context": "documentation",
+      "document": "multiple",
+      "exceptions": [],
+      "exhaustive": true,
+      "id": "multiple",
+      "labels": [
+        {
+          "anchors": [
+            {
+              "end": {
+                "byte_offset": 25,
+                "column": 14,
+                "line": 1,
+                "utf16_column": 14
+              },
+              "start": {
+                "byte_offset": 13,
+                "column": 8,
+                "line": 1,
+                "utf16_column": 8
+              }
+            }
+          ],
+          "annotation": {
+            "actor": "contract-author",
+            "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+            "history": [
+              {
+                "actor": "contract-author",
+                "decision": "synthetic fixture",
+                "revision": "1"
+              }
+            ],
+            "method": "synthetic_contract",
+            "status": "independently_verified"
+          },
+          "category": "spelling",
+          "context": "Synthetic controlled diagnosis",
+          "corrections": [
+            {
+              "range": {
+                "end": {
+                  "byte_offset": 25,
+                  "column": 14,
+                  "line": 1,
+                  "utf16_column": 14
+                },
+                "start": {
+                  "byte_offset": 13,
+                  "column": 8,
+                  "line": 1,
+                  "utf16_column": 8
+                }
+              },
+              "text": "ошибка"
+            }
+          ],
+          "id": "gold-1"
+        },
+        {
+          "anchors": [
+            {
+              "end": {
+                "byte_offset": 52,
+                "column": 29,
+                "line": 1,
+                "utf16_column": 29
+              },
+              "start": {
+                "byte_offset": 40,
+                "column": 23,
+                "line": 1,
+                "utf16_column": 23
+              }
+            }
+          ],
+          "annotation": {
+            "actor": "contract-author",
+            "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+            "history": [
+              {
+                "actor": "contract-author",
+                "decision": "synthetic fixture",
+                "revision": "1"
+              }
+            ],
+            "method": "synthetic_contract",
+            "status": "independently_verified"
+          },
+          "category": "spelling",
+          "context": "Synthetic controlled diagnosis",
+          "corrections": [
+            {
+              "range": {
+                "end": {
+                  "byte_offset": 52,
+                  "column": 29,
+                  "line": 1,
+                  "utf16_column": 29
+                },
+                "start": {
+                  "byte_offset": 40,
+                  "column": 23,
+                  "line": 1,
+                  "utf16_column": 23
+                }
+              },
+              "text": "ошибка"
+            }
+          ],
+          "id": "gold-2"
+        }
+      ],
+      "languages": [
+        "ru"
+      ],
+      "profile": null,
+      "protected_ranges": [],
+      "range": {
+        "end": {
+          "byte_offset": 53,
+          "column": 30,
+          "line": 1,
+          "utf16_column": 30
+        },
+        "start": {
+          "byte_offset": 0,
+          "column": 1,
+          "line": 1,
+          "utf16_column": 1
+        }
+      },
+      "split": "dev",
+      "terms": [
+        "CLI"
+      ],
+      "verdict": "errors"
+    },
+    {
+      "annotation": {
+        "actor": "contract-author",
+        "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+        "history": [
+          {
+            "actor": "contract-author",
+            "decision": "synthetic fixture",
+            "revision": "1"
+          }
+        ],
+        "method": "synthetic_contract",
+        "status": "independently_verified"
+      },
+      "applicable": true,
+      "categories": [
+        "style"
+      ],
+      "context": "documentation",
+      "document": "clean",
+      "exceptions": [],
+      "exhaustive": true,
+      "id": "clean",
+      "labels": [],
+      "languages": [
+        "ru"
+      ],
+      "profile": null,
+      "protected_ranges": [],
+      "range": {
+        "end": {
+          "byte_offset": 80,
+          "column": 44,
+          "line": 1,
+          "utf16_column": 44
+        },
+        "start": {
+          "byte_offset": 0,
+          "column": 1,
+          "line": 1,
+          "utf16_column": 1
+        }
+      },
+      "split": "dev",
+      "terms": [
+        "CLI"
+      ],
+      "verdict": "clean"
+    },
+    {
+      "annotation": {
+        "actor": "contract-author",
+        "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+        "history": [
+          {
+            "actor": "contract-author",
+            "decision": "synthetic fixture",
+            "revision": "1"
+          }
+        ],
+        "method": "synthetic_contract",
+        "status": "disputed"
+      },
+      "applicable": true,
+      "categories": [
+        "style"
+      ],
+      "context": "documentation",
+      "document": "disputed",
+      "exceptions": [],
+      "exhaustive": true,
+      "id": "disputed",
+      "labels": [],
+      "languages": [
+        "ru"
+      ],
+      "profile": null,
+      "protected_ranges": [],
+      "range": {
+        "end": {
+          "byte_offset": 60,
+          "column": 33,
+          "line": 1,
+          "utf16_column": 33
+        },
+        "start": {
+          "byte_offset": 0,
+          "column": 1,
+          "line": 1,
+          "utf16_column": 1
+        }
+      },
+      "split": "dev",
+      "terms": [
+        "CLI"
+      ],
+      "verdict": "disputed"
+    },
+    {
+      "annotation": {
+        "actor": "contract-author",
+        "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+        "history": [
+          {
+            "actor": "contract-author",
+            "decision": "synthetic fixture",
+            "revision": "1"
+          }
+        ],
+        "method": "synthetic_contract",
+        "status": "independently_verified"
+      },
+      "applicable": true,
+      "categories": [
+        "grammar"
+      ],
+      "context": "documentation",
+      "document": "validation",
+      "exceptions": [],
+      "exhaustive": true,
+      "id": "validation",
+      "labels": [],
+      "languages": [
+        "ru"
+      ],
+      "profile": null,
+      "protected_ranges": [],
+      "range": {
+        "end": {
+          "byte_offset": 66,
+          "column": 36,
+          "line": 1,
+          "utf16_column": 36
+        },
+        "start": {
+          "byte_offset": 0,
+          "column": 1,
+          "line": 1,
+          "utf16_column": 1
+        }
+      },
+      "split": "validation",
+      "terms": [
+        "CLI"
+      ],
+      "verdict": "clean"
+    },
+    {
+      "annotation": {
+        "actor": "contract-author",
+        "evidence": "Рукотворный контроль арифметики и контрактов; не независимая языковая оценка.",
+        "history": [
+          {
+            "actor": "contract-author",
+            "decision": "synthetic fixture",
+            "revision": "1"
+          }
+        ],
+        "method": "synthetic_contract",
+        "status": "independently_verified"
+      },
+      "applicable": true,
+      "categories": [
+        "grammar"
+      ],
+      "context": "documentation",
+      "document": "test",
+      "exceptions": [],
+      "exhaustive": true,
+      "id": "test",
+      "labels": [],
+      "languages": [
+        "ru"
+      ],
+      "profile": null,
+      "protected_ranges": [],
+      "range": {
+        "end": {
+          "byte_offset": 102,
+          "column": 55,
+          "line": 1,
+          "utf16_column": 55
+        },
+        "start": {
+          "byte_offset": 0,
+          "column": 1,
+          "line": 1,
+          "utf16_column": 1
+        }
+      },
+      "split": "test",
+      "terms": [
+        "CLI"
+      ],
+      "verdict": "clean"
+    }
+  ],
+  "documents": [
+    {
+      "bom": null,
+      "content_base64": "Ly8g0K3RgtCwINC+0YjRi9Cx0LrQsCDQstC40LTQvdCwINCyINC60L7QvNC80LXQvdGC0LDRgNC40LguCg==",
+      "data_kind": "synthetic",
+      "encoding": "utf-8",
+      "id": "spelling",
+      "origin": "Original synthetic material created for Language Review contracts",
+      "path": "sample.rs",
+      "repository": "demo",
+      "revision": "fixture-1",
+      "rights": {
+        "basis": "Project-owned synthetic fixture",
+        "publish": "permitted",
+        "use": "permitted"
+      },
+      "sha256": "4dacd780874a2a9ee3db8403435dfcac92457ed3835f0d7b8ec70894f2046dfc"
+    },
+    {
+      "bom": null,
+      "content_base64": "Y2xhc3MgRXhhbXBsZSB7IC8qINCS0LDQttC90YvQtSDRhNCw0LnQuyDRg9C20LUg0L7RgtC60YDRi9GCLiAqLyB9Cg==",
+      "data_kind": "synthetic",
+      "encoding": "utf-8",
+      "id": "agreement",
+      "origin": "Original synthetic material created for Language Review contracts",
+      "path": "sample.cs",
+      "repository": "demo",
+      "revision": "fixture-1",
+      "rights": {
+        "basis": "Project-owned synthetic fixture",
+        "publish": "permitted",
+        "use": "permitted"
+      },
+      "sha256": "edec3dcb75b7bdf9e9e4d99bc0b816d269347b08867d14c6a9b02994a2249873"
+    },
+    {
+      "bom": null,
+      "content_base64": "Ly8g0JXRgdC70Lgg0YTQsNC50Lsg0L7RgtC60YDRi9GCINC30LDQutGA0L7QudGC0LUg0L7QutC90L4uCg==",
+      "data_kind": "synthetic",
+      "encoding": "utf-8",
+      "id": "punctuation",
+      "origin": "Original synthetic material created for Language Review contracts",
+      "path": "sample.cpp",
+      "repository": "demo",
+      "revision": "fixture-1",
+      "rights": {
+        "basis": "Project-owned synthetic fixture",
+        "publish": "permitted",
+        "use": "permitted"
+      },
+      "sha256": "1ea0d59efc4f035da688242ca25d325a2224593b040acbd14533cede5a13da00"
+    },
+    {
+      "bom": null,
+      "content_base64": "IyDQpNCw0LnQuyDRhNCw0LnQuyDRg9C20LUg0YHRg9GJ0LXRgdGC0LLRg9C10YIuCg==",
+      "data_kind": "synthetic",
+      "encoding": "utf-8",
+      "id": "repetition",
+      "origin": "Original synthetic material created for Language Review contracts",
+      "path": "sample.ps1",
+      "repository": "demo",
+      "revision": "fixture-1",
+      "rights": {
+        "basis": "Project-owned synthetic fixture",
+        "publish": "permitted",
+        "use": "permitted"
+      },
+      "sha256": "cccf24d08af5669bfff476d10f15dac320c10444fc936bca1ca398fcbb779c9d"
+    },
+    {
+      "bom": null,
+      "content_base64": "0JIg0YbQtdC70Y/RhSDQv9GA0L7QstC10YDQutC4INC+0YLQutGA0L7QudGC0LUg0YTQsNC50LsuCg==",
+      "data_kind": "synthetic",
+      "encoding": "utf-8",
+      "id": "style",
+      "origin": "Original synthetic material created for Language Review contracts",
+      "path": "style.md",
+      "repository": "demo",
+      "revision": "fixture-1",
+      "rights": {
+        "basis": "Project-owned synthetic fixture",
+        "publish": "permitted",
+        "use": "permitted"
+      },
+      "sha256": "b3e9bd188df5480abf1553d5cdc386f6b3d35b565cd1c2a5f2a62504f2581910"
+    },
+    {
+      "bom": null,
+      "content_base64": "0K7Qt9C10YAg0L7RgtC60YDRi9C7INGE0LDQudC7Lgo=",
+      "data_kind": "synthetic",
+      "encoding": "utf-8",
+      "id": "terminology",
+      "origin": "Original synthetic material created for Language Review contracts",
+      "path": "terms.txt",
+      "repository": "demo",
+      "revision": "fixture-1",
+      "rights": {
+        "basis": "Project-owned synthetic fixture",
+        "publish": "permitted",
+        "use": "permitted"
+      },
+      "sha256": "0ee0e8a77569ef350de0992b5607eb731745139b11e7c1cf72355a5ed28781ce"
+    },
+    {
+      "bom": null,
+      "content_base64": "Zm4gbWFpbigpIHsgcHJpbnRsbiEoIlRoZSBmaWxlIHdhcyBub3QgZm91bmQuIik7IH0K",
+      "data_kind": "synthetic",
+      "encoding": "utf-8",
+      "id": "english",
+      "origin": "Original synthetic material created for Language Review contracts",
+      "path": "english.rs",
+      "repository": "demo",
+      "revision": "fixture-1",
+      "rights": {
+        "basis": "Project-owned synthetic fixture",
+        "publish": "permitted",
+        "use": "permitted"
+      },
+      "sha256": "e443505df338c9fdb28e22796bb20332ec70b5cf86c9d58b5a0ed5bc0e400e32"
+    },
+    {
+      "bom": null,
+      "content_base64": "RmFpbGVkIQo=",
+      "data_kind": "synthetic",
+      "encoding": "utf-8",
+      "id": "short-english",
+      "origin": "Original synthetic material created for Language Review contracts",
+      "path": "short.txt",
+      "repository": "demo",
+      "revision": "fixture-1",
+      "rights": {
+        "basis": "Project-owned synthetic fixture",
+        "publish": "permitted",
+        "use": "permitted"
+      },
+      "sha256": "ac48a2a783e943bce2e7c2b6cd37329927d602f6542d81a8910d8c7720ca3b62"
+    },
+    {
+      "bom": null,
+      "content_base64": "0JjRgdC/0L7Qu9GM0LfRg9C50YLQtSBgLS1kcnktcnVuYCwgQVBJINC4IGZvb19iYXIuCg==",
+      "data_kind": "synthetic",
+      "encoding": "utf-8",
+      "id": "technical",
+      "origin": "Original synthetic material created for Language Review contracts",
+      "path": "technical.md",
+      "repository": "demo",
+      "revision": "fixture-1",
+      "rights": {
+        "basis": "Project-owned synthetic fixture",
+        "publish": "permitted",
+        "use": "permitted"
+      },
+      "sha256": "1b73f8026c4a0eac12ebcada9a6dc60340bf0159c0b46f9ae3fc244d7a3373e7"
+    },
+    {
+      "bom": null,
+      "content_base64": "V3JpdGUtT3V0cHV0ICLQntC/0LXRgNCw0YbQuNGPINC90LUg0LjQt9C80LXQvdC40LvQsCDRhNCw0LnQuy4iCg==",
+      "data_kind": "synthetic",
+      "encoding": "utf-8",
+      "id": "log",
+      "origin": "Original synthetic material created for Language Review contracts",
+      "path": "log.ps1",
+      "repository": "demo",
+      "revision": "fixture-1",
+      "rights": {
+        "basis": "Project-owned synthetic fixture",
+        "publish": "permitted",
+        "use": "permitted"
+      },
+      "sha256": "96caf89602530745e0cebbc40ed9397930110a3c80723a2062eac490cc0a10f8"
+    },
+    {
+      "bom": "utf-16-le",
+      "content_base64": "//492ADeIAAtBEIEMAQgAD4ESARLBDEEOgQwBCAANwQwBD8EOARBBDAEPQQwBCAANwQ0BDUEQQRMBC4ADQAKAA==",
+      "data_kind": "synthetic",
+      "encoding": "utf-16-le",
+      "id": "unicode",
+      "origin": "Original synthetic material created for Language Review contracts",
+      "path": "unicode.md",
+      "repository": "demo",
+      "revision": "fixture-1",
+      "rights": {
+        "basis": "Project-owned synthetic fixture",
+        "publish": "permitted",
+        "use": "permitted"
+      },
+      "sha256": "f69e58fa4785b9a738e7a2dff276b1dfbaaec45bc81b0ae9d3a9c66b630d31ec"
+    },
+    {
+      "bom": null,
+      "content_base64": "0K3RgtC4INGE0LDQudC7INC+0YLQutGA0YvRgtGLLgo=",
+      "data_kind": "synthetic",
+      "encoding": "utf-8",
+      "id": "alternatives",
+      "origin": "Original synthetic material created for Language Review contracts",
+      "path": "alternatives.md",
+      "repository": "demo",
+      "revision": "fixture-1",
+      "rights": {
+        "basis": "Project-owned synthetic fixture",
+        "publish": "permitted",
+        "use": "permitted"
+      },
+      "sha256": "156703a4d41c0c974e16d1139fea731c15e34b5bbb3b19d56339b9856d334768"
+    },
+    {
+      "bom": null,
+      "content_base64": "0J/QtdGA0LLQsNGPINC+0YjRi9Cx0LrQsCwg0LLRgtC+0YDQsNGPINCw0YjQuNCx0LrQsC4K",
+      "data_kind": "synthetic",
+      "encoding": "utf-8",
+      "id": "multiple",
+      "origin": "Original synthetic material created for Language Review contracts",
+      "path": "multiple.md",
+      "repository": "demo",
+      "revision": "fixture-1",
+      "rights": {
+        "basis": "Project-owned synthetic fixture",
+        "publish": "permitted",
+        "use": "permitted"
+      },
+      "sha256": "3be0e267a4330f0caf29760b2ee652656df153d32ed64617ed2aee291439051a"
+    },
+    {
+      "bom": null,
+      "content_base64": "0JrQvtGA0YDQtdC60YLQvdGL0Lkg0YDRg9GB0YHQutC40Lkg0YLQtdC60YHRgiDQvdC1INGB0LvQtdC00YPQtdGCINC80LXQvdGP0YLRjC4K",
+      "data_kind": "synthetic",
+      "encoding": "utf-8",
+      "id": "clean",
+      "origin": "Original synthetic material created for Language Review contracts",
+      "path": "clean.md",
+      "repository": "demo",
+      "revision": "fixture-1",
+      "rights": {
+        "basis": "Project-owned synthetic fixture",
+        "publish": "permitted",
+        "use": "permitted"
+      },
+      "sha256": "b0ea7a5a44348fc911c6150bdfdd68e9b95037bf4f4dd06b5be7080b43072fbb"
+    },
+    {
+      "bom": null,
+      "content_base64": "0JTQsNC90L3Ri9C5INGA0LXQttC40Lwg0LLRi9C/0L7Qu9C90Y/QtdGCINC/0YDQvtCy0LXRgNC60YMuCg==",
+      "data_kind": "synthetic",
+      "encoding": "utf-8",
+      "id": "disputed",
+      "origin": "Original synthetic material created for Language Review contracts",
+      "path": "disputed.txt",
+      "repository": "demo",
+      "revision": "fixture-1",
+      "rights": {
+        "basis": "Project-owned synthetic fixture",
+        "publish": "permitted",
+        "use": "permitted"
+      },
+      "sha256": "8af0281b0adf84f75e19895fbba264a732f044090cf98a30e56559b21be13c94"
+    },
+    {
+      "bom": null,
+      "content_base64": "0J/RgNC+0LLQtdGA0LrQsCDQt9Cw0LLQtdGA0YjQuNC70LDRgdGMINCx0LXQtyDQt9Cw0LzQtdGH0LDQvdC40LkuCg==",
+      "data_kind": "synthetic",
+      "encoding": "utf-8",
+      "id": "validation",
+      "origin": "Original synthetic material created for Language Review contracts",
+      "path": "validation.md",
+      "repository": "demo-validation",
+      "revision": "fixture-1",
+      "rights": {
+        "basis": "Project-owned synthetic fixture",
+        "publish": "permitted",
+        "use": "permitted"
+      },
+      "sha256": "b22557259b68000343f54ffada3e530dac975a9f35a3da5ace6c2e333ead83ab"
+    },
+    {
+      "bom": null,
+      "content_base64": "0KDQtdC30LXRgNCy0L3QvtC1INGF0YDQsNC90LjQu9C40YnQtSDQtNC+0YHRgtGD0L/QvdC+INC40YHQutC70Y7Rh9C40YLQtdC70YzQvdC+INC00LvRjyDRh9GC0LXQvdC40Y8uCg==",
+      "data_kind": "synthetic",
+      "encoding": "utf-8",
+      "id": "test",
+      "origin": "Original synthetic material created for Language Review contracts",
+      "path": "test.md",
+      "repository": "demo-test",
+      "revision": "fixture-1",
+      "rights": {
+        "basis": "Project-owned synthetic fixture",
+        "publish": "permitted",
+        "use": "permitted"
+      },
+      "sha256": "ef2ea77d13b76a54b318d300b25c9fc1a2e4052195d3ff20b92abfc4c2268179"
+    }
+  ],
+  "id": "synthetic-contract",
+  "schema": "language-review.corpus",
+  "schema_version": "1.0",
+  "split_policy": {
+    "holdout_policy": "No answers in prompts or retrieval",
+    "strategy": "repository grouping; normalized shingles/containment; manual audit",
+    "test_frozen": true,
+    "test_sha256": "f22185edc668097d6f8b3d7ae3670939589169af228f17debb549d14df526a08"
+  },
+  "version": "1"
+}

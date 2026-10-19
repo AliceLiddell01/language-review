@@ -1,0 +1,16 @@
+{
+  "compatibility": {
+    "annotation_version": "1",
+    "corpus_id": "synthetic-contract",
+    "corpus_sha256": "ecea64c50b5819d4ae4904c01f508e9e89f81ca6f54f8355ffde4b00c3196b03",
+    "corpus_version": "1",
+    "judgment_policy": "reference_only",
+    "metric_version": "exact-bijective-1",
+    "report_kind": "synthetic_contract_check",
+    "scorer_version": "1.0",
+    "split": "dev"
+  },
+  "projection_sha256": "93fb95c2d3b58ace524e66d94c4c33944c5c4137a3f8dcd7f22ea0de9a47ffde",
+  "schema": "language-review.eval-expectations",
+  "schema_version": "1.0"
+}

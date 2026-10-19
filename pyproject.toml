@@ -22,6 +22,7 @@ dependencies = [
 
 [project.scripts]
 language-review = "language_review.cli:main"
+language-review-eval = "language_review.evaluation.cli:main"
 
 [dependency-groups]
 dev = [

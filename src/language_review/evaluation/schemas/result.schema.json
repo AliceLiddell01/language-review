@@ -1,0 +1,827 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://language-review.invalid/schemas/eval-result-1.0.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "scorer_version",
+    "metric_version",
+    "report_kind",
+    "status",
+    "compatibility",
+    "manifest",
+    "summary",
+    "cases",
+    "engines",
+    "strata",
+    "contribution",
+    "diagnostics",
+    "cost"
+  ],
+  "properties": {
+    "schema": {
+      "const": "language-review.evaluation"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "scorer_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metric_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "report_kind": {
+      "enum": [
+        "synthetic_contract_check",
+        "independent_baseline",
+        "exploratory"
+      ]
+    },
+    "status": {
+      "enum": [
+        "PASS",
+        "PARTIAL",
+        "NOT_RUN"
+      ]
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "corpus_id",
+        "corpus_version",
+        "annotation_version",
+        "corpus_sha256",
+        "split",
+        "metric_version",
+        "scorer_version",
+        "report_kind",
+        "judgment_policy"
+      ],
+      "properties": {
+        "corpus_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "corpus_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "annotation_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "corpus_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "split": {
+          "enum": [
+            "dev",
+            "validation",
+            "test"
+          ]
+        },
+        "metric_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scorer_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "report_kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "judgment_policy": {
+          "enum": [
+            "reference_only",
+            "independent_judgments"
+          ]
+        }
+      }
+    },
+    "manifest": {
+      "type": "object"
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "detection",
+        "pipeline_detection",
+        "correction",
+        "cases",
+        "eligible_cases",
+        "evaluated_applicable_cases",
+        "incomplete_cases",
+        "not_evaluated_cases",
+        "tn_clean_cases",
+        "clean_cases_with_fp",
+        "fp_per_1000_evaluated_applicable_cases",
+        "overediting",
+        "needs_adjudication",
+        "unknown_corrections",
+        "coverage"
+      ],
+      "properties": {
+        "detection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tp",
+            "fp",
+            "fn",
+            "precision",
+            "recall",
+            "f1",
+            "f0_5",
+            "denominators",
+            "undefined"
+          ],
+          "properties": {
+            "tp": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "fp": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "fn": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "precision": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            },
+            "recall": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            },
+            "f1": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            },
+            "f0_5": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            },
+            "denominators": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "precision",
+                "recall",
+                "f1",
+                "f0_5"
+              ],
+              "properties": {
+                "precision": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "recall": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "f1": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "f0_5": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              }
+            },
+            "undefined": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "pipeline_detection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tp",
+            "fp",
+            "fn",
+            "precision",
+            "recall",
+            "f1",
+            "f0_5",
+            "denominators",
+            "undefined"
+          ],
+          "properties": {
+            "tp": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "fp": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "fn": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "precision": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            },
+            "recall": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            },
+            "f1": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            },
+            "f0_5": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            },
+            "denominators": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "precision",
+                "recall",
+                "f1",
+                "f0_5"
+              ],
+              "properties": {
+                "precision": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "recall": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "f1": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "f0_5": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              }
+            },
+            "undefined": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "correction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tp",
+            "fp",
+            "fn",
+            "precision",
+            "recall",
+            "f1",
+            "f0_5",
+            "denominators",
+            "undefined"
+          ],
+          "properties": {
+            "tp": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "fp": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "fn": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "precision": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            },
+            "recall": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            },
+            "f1": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            },
+            "f0_5": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            },
+            "denominators": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "precision",
+                "recall",
+                "f1",
+                "f0_5"
+              ],
+              "properties": {
+                "precision": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "recall": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "f1": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "f0_5": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              }
+            },
+            "undefined": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "cases": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "eligible_cases": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evaluated_applicable_cases": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "incomplete_cases": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "not_evaluated_cases": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tn_clean_cases": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clean_cases_with_fp": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fp_per_1000_evaluated_applicable_cases": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "overediting": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "needs_adjudication": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unknown_corrections": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "coverage": {
+          "type": "object"
+        }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "document",
+          "data_kind",
+          "format",
+          "context",
+          "categories",
+          "label_status",
+          "state",
+          "reasons",
+          "eligible",
+          "gold",
+          "tp",
+          "fn",
+          "clean",
+          "candidates",
+          "coverage",
+          "engine"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "document": {
+            "type": "string",
+            "minLength": 1
+          },
+          "data_kind": {
+            "enum": [
+              "synthetic",
+              "real"
+            ]
+          },
+          "format": {
+            "type": "string",
+            "minLength": 1
+          },
+          "context": {
+            "type": "string",
+            "minLength": 1
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "label_status": {
+            "enum": [
+              "draft",
+              "independently_verified",
+              "disputed"
+            ]
+          },
+          "state": {
+            "enum": [
+              "evaluated",
+              "incomplete",
+              "not_evaluated"
+            ]
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "eligible": {
+            "type": "boolean"
+          },
+          "gold": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "category",
+                "correction_known"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "category": {
+                  "enum": [
+                    "spelling",
+                    "grammar",
+                    "punctuation",
+                    "style",
+                    "bureaucratese",
+                    "terminology",
+                    "untranslated_english",
+                    "typography",
+                    "other"
+                  ]
+                },
+                "correction_known": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "tp": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "fn": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "clean": {
+            "type": "boolean"
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "key",
+                "category",
+                "range",
+                "engines",
+                "outcome",
+                "label",
+                "duplicate",
+                "correction",
+                "edits",
+                "risks",
+                "harm",
+                "decision_provenance"
+              ],
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "category": {
+                  "enum": [
+                    "spelling",
+                    "grammar",
+                    "punctuation",
+                    "style",
+                    "bureaucratese",
+                    "terminology",
+                    "untranslated_english",
+                    "typography",
+                    "other"
+                  ]
+                },
+                "range": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "start",
+                    "end"
+                  ],
+                  "properties": {
+                    "start": {
+                      "$ref": "#/$defs/position"
+                    },
+                    "end": {
+                      "$ref": "#/$defs/position"
+                    }
+                  }
+                },
+                "engines": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "outcome": {
+                  "enum": [
+                    "tp",
+                    "fp",
+                    "needs_adjudication",
+                    "not_evaluated"
+                  ]
+                },
+                "label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "duplicate": {
+                  "type": "boolean"
+                },
+                "correction": {
+                  "enum": [
+                    "correct",
+                    "incorrect",
+                    "unknown",
+                    "absent",
+                    "needs_adjudication"
+                  ]
+                },
+                "edits": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "range",
+                      "text"
+                    ],
+                    "properties": {
+                      "range": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "start",
+                          "end"
+                        ],
+                        "properties": {
+                          "start": {
+                            "$ref": "#/$defs/position"
+                          },
+                          "end": {
+                            "$ref": "#/$defs/position"
+                          }
+                        }
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "risks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "harm": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "enum": [
+                      "meaning",
+                      "negation",
+                      "technical_tokens"
+                    ]
+                  },
+                  "uniqueItems": true
+                },
+                "decision_provenance": {
+                  "enum": [
+                    "reference_matching",
+                    "independent_judgment"
+                  ]
+                }
+              }
+            }
+          },
+          "coverage": {
+            "type": "object"
+          },
+          "engine": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "engines": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "strata": {
+      "type": "object"
+    },
+    "contribution": {
+      "type": "object"
+    },
+    "diagnostics": {
+      "type": "object"
+    },
+    "cost": {
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/position"
+        },
+        "end": {
+          "$ref": "#/$defs/position"
+        }
+      }
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "byte_offset",
+        "line",
+        "column",
+        "utf16_column"
+      ],
+      "properties": {
+        "byte_offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "utf16_column": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

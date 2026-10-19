@@ -11,7 +11,7 @@ from typing import Any
 import jsonschema
 import pytest
 from conftest import JsonServer
-from test_check import (
+from support.check_helpers import (
     _config,
     _findings,
     _languagetool_config,

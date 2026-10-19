@@ -288,9 +288,16 @@ class ValeEngine:
             return valid
         region_start, _region_end, unit = region
         outcome = outcomes[unit.index]
-        if isinstance(match, str) and match and combined[start:end] != match:
+        if not isinstance(match, str) or combined[start:end] != match:
             outcome.rejected.append(
-                RejectedOutput(self.name, unit.index, "position_mismatch", check, message, match)
+                RejectedOutput(
+                    self.name,
+                    unit.index,
+                    "position_mismatch",
+                    check,
+                    message,
+                    match if isinstance(match, str) else None,
+                )
             )
             outcome.status = "failed"
             outcome.reason = "vale_schema_violation"

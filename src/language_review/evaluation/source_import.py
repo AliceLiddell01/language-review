@@ -15,7 +15,7 @@ from typing import Any
 from language_review.config import CHECK_CATEGORIES, ExtractSettings
 from language_review.coordinates import SourceMap
 from language_review.errors import InputError
-from language_review.evaluation.contracts import MAX_BYTES, digest, save_new
+from language_review.evaluation.contracts import MAX_BYTES, digest, jsonl_lines, save_new
 from language_review.evaluation.corpus import safe_path, source_map, validate_corpus
 from language_review.extract_code import extract_code
 from language_review.extract_docs import extract_markdown
@@ -238,7 +238,7 @@ def _candidates(
     else:
         path = "data/GitHubTypoCorpusRu/test.json"
         references["unsupported_rows"] = []
-        for number, line in enumerate(files[path].decode("utf-8-sig").splitlines(), 1):
+        for number, line in enumerate(jsonl_lines(files[path].decode("utf-8-sig")), 1):
             row = json.loads(
                 line, object_pairs_hook=_unique_objects, parse_constant=_invalid_constant
             )

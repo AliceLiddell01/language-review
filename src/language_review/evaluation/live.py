@@ -114,26 +114,38 @@ def capture(
             # CLI stdout сохраняется как есть; stderr с частными путями не публикуется.
             with report_path.open("x", encoding="utf-8", newline="") as stream:
                 stream.write(completed.stdout)
-            report = load_product_report(report_path)
-            manifest = {
-                "schema": "language-review.eval-run",
-                "schema_version": "1.0",
-                "corpus_sha256": digest(corpus),
-                "split": split,
-                "report_sha256": digest(report),
-                "root_bindings": bindings,
-                "product_commit": product_commit,
-                "configuration_sha256": hashlib.sha256(config.read_bytes()).hexdigest()
-                if config
-                else None,
-                "wall_clock_ms": elapsed,
-                "exit_code": completed.returncode,
-                "capture": "live_public_cli",
-                "parameters": {"engines": engines, "view": "review"},
-                "repetition": repetition,
-            }
+            try:
+                report = load_product_report(report_path)
+                manifest = {
+                    "schema": "language-review.eval-run",
+                    "schema_version": "1.0",
+                    "corpus_sha256": digest(corpus),
+                    "split": split,
+                    "report_sha256": digest(report),
+                    "root_bindings": bindings,
+                    "product_commit": product_commit,
+                    "configuration_sha256": hashlib.sha256(config.read_bytes()).hexdigest()
+                    if config
+                    else None,
+                    "wall_clock_ms": elapsed,
+                    "exit_code": completed.returncode,
+                    "capture": "live_public_cli",
+                    "parameters": {"engines": engines, "view": "review"},
+                    "repetition": repetition,
+                }
+                result = score(corpus, report, bindings, split, manifest)
+            except InputError:
+                save_new(
+                    destination / f"not-run-{repetition}.json",
+                    {
+                        "status": "NOT_RUN",
+                        "reason": "public_check_invalid_report",
+                        "exit_code": completed.returncode,
+                        "repetition": repetition,
+                    },
+                )
+                continue
             save_new(destination / f"run-{repetition}.json", manifest)
-            result = score(corpus, report, bindings, split, manifest)
             save_new(destination / f"evaluation-{repetition}.json", result)
             results.append(result)
     aggregate = distribution(results)

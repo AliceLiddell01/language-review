@@ -11,7 +11,14 @@ from pathlib import Path
 from typing import Any
 
 from language_review.errors import InputError
-from language_review.evaluation.contracts import MAX_BYTES, canonical, digest, read_json, save_new
+from language_review.evaluation.contracts import (
+    MAX_BYTES,
+    canonical,
+    digest,
+    jsonl_lines,
+    read_json,
+    save_new,
+)
 from language_review.evaluation.corpus import source_map, span, validate_corpus
 from language_review.review_verify import _invalid_constant, _unique_objects
 
@@ -134,7 +141,7 @@ def import_annotations(
         len(raw) > MAX_BYTES
         or [
             json.loads(line, object_pairs_hook=_unique_objects, parse_constant=_invalid_constant)
-            for line in raw.decode("utf-8").splitlines()
+            for line in jsonl_lines(raw.decode("utf-8"))
         ]
         != records
     ):

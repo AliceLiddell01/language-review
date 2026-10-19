@@ -14,7 +14,13 @@ from typing import Any
 from language_review.coordinates import SourceMap
 from language_review.errors import InputError
 from language_review.evaluation import source_import
-from language_review.evaluation.contracts import MAX_BYTES, digest, read_json, validate
+from language_review.evaluation.contracts import (
+    MAX_BYTES,
+    digest,
+    jsonl_lines,
+    read_json,
+    validate,
+)
 from language_review.evaluation.corpus import (
     contains,
     load_corpus,
@@ -50,7 +56,7 @@ def verified_references(bundle: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         files[item["path"]] = raw
     rows = [
         json.loads(line, object_pairs_hook=_unique_objects, parse_constant=_invalid_constant)
-        for line in files["data/GitHubTypoCorpusRu/test.json"].decode("utf-8-sig").splitlines()
+        for line in jsonl_lines(files["data/GitHubTypoCorpusRu/test.json"].decode("utf-8-sig"))
     ]
     references = read_json(bundle / "references.json")
     corpus = load_corpus(bundle / "corpus.json")

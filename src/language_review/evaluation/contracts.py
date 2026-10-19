@@ -17,6 +17,14 @@ from language_review.review_verify import _invalid_constant, _unique_objects
 MAX_BYTES = 32 * 1024 * 1024
 
 
+def jsonl_lines(text: str) -> list[str]:
+    """Split JSONL at LF delimiters while preserving Unicode separators inside JSON strings."""
+    lines = text.split("\n")
+    if lines and not lines[-1]:
+        lines.pop()
+    return lines
+
+
 def canonical(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n"
 

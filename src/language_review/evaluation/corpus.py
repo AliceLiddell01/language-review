@@ -162,6 +162,18 @@ def validate_corpus(corpus: dict[str, Any]) -> dict[str, Any]:
                 raise InputError("Чистый случай не может содержать метки ошибок.")
             if case["verdict"] == "errors" and not case["labels"]:
                 raise InputError("Случай errors требует меток.")
+        # Нормализация зависит только от случая, а не от пары.
+        case_texts: dict[str, tuple[str, set[str]]] = {}
+        if len({case["split"] for case in corpus["cases"]}) > 1:
+            for case in corpus["cases"]:
+                source = maps[case["document"]]
+                start, end = span(source, case["range"])
+                text = unicodedata.normalize("NFKC", source.raw[start:end].decode(source.encoding))
+                normalized = " ".join(re.findall(r"\w+", text.casefold()))
+                case_texts[case["id"]] = (
+                    normalized,
+                    {normalized[i : i + 5] for i in range(max(0, len(normalized) - 4))},
+                )
         # Консервативный запрет пересечения репозитория/файла/точных и близких текстов.
         for first, second in combinations(corpus["cases"], 2):
             if first["split"] == second["split"]:
@@ -169,16 +181,12 @@ def validate_corpus(corpus: dict[str, Any]) -> dict[str, Any]:
             a, b = documents[first["document"]], documents[second["document"]]
             if a["repository"].casefold() == b["repository"].casefold():
                 raise InputError("Утечка репозитория между split.")
-            texts = []
-            for case, doc in ((first, a), (second, b)):
-                source = maps[doc["id"]]
-                start, end = span(source, case["range"])
-                text = unicodedata.normalize("NFKC", source.raw[start:end].decode(source.encoding))
-                texts.append(" ".join(re.findall(r"\w+", text.casefold())))
-            left, right = texts
-            shingles = [{text[i : i + 5] for i in range(max(0, len(text) - 4))} for text in texts]
-            union = shingles[0] | shingles[1]
-            similarity = len(shingles[0] & shingles[1]) / len(union) if union else 0
+            (left, left_shingles), (right, right_shingles) = (
+                case_texts[first["id"]],
+                case_texts[second["id"]],
+            )
+            union = left_shingles | right_shingles
+            similarity = len(left_shingles & right_shingles) / len(union) if union else 0
             if (
                 a["sha256"] == b["sha256"]
                 or left == right
@@ -241,6 +249,8 @@ def annotation_agreement(first: dict[str, Any], second: dict[str, Any]) -> dict[
         def signature(case: dict[str, Any]) -> Any:
             return [
                 case["verdict"],
+                sorted(case["categories"]),
+                case["exhaustive"],
                 sorted(
                     digest({k: label[k] for k in ("category", "anchors", "corrections")})
                     for label in case["labels"]

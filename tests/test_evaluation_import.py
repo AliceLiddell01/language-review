@@ -23,7 +23,7 @@ from language_review.evaluation.annotation_io import (
     import_annotations,
 )
 from language_review.evaluation.cli import main
-from language_review.evaluation.contracts import read_json, save_new
+from language_review.evaluation.contracts import jsonl_lines, read_json, save_new
 from language_review.evaluation.corpus import (
     annotation_agreement,
     eligible,
@@ -53,6 +53,11 @@ def wire_source(monkeypatch: pytest.MonkeyPatch, kind: str = "pairs") -> dict[st
             {
                 "source": "Невидимый\u200bсимвол.",
                 "correction": "Невидимый символ.",
+                "domain": "GitHubTypoCorpusRu",
+            },
+            {
+                "source": "Разделители\u2028\u2029\u0085в строке.",
+                "correction": "Разделители в строке.",
                 "domain": "GitHubTypoCorpusRu",
             },
         ]
@@ -112,7 +117,7 @@ def test_real_pair_wire_import_preserves_test_and_never_promotes_gold(
     corpus = read_json(destination / "corpus.json")
     manifest = read_json(destination / "provenance.json")
     assert manifest["candidates"] == 3 and manifest["unique_candidates"] == 2
-    assert manifest["unsupported_rows"][0]["row"] == 4
+    assert [item["row"] for item in manifest["unsupported_rows"]] == [4, 5]
     assert all(
         case["split"] == "test" and not eligible(case) and not case["labels"]
         for case in corpus["cases"]
@@ -267,6 +272,18 @@ def test_blind_packet_excludes_gold_reference_and_predictions(tmp_path: Path) ->
     assert "HIDDEN_" not in content and "independently_verified" not in content
     restored = import_annotations(corpus, tmp_path / "packet", "", "", False)
     assert restored == corpus  # no new confirmation from an untouched packet
+
+
+def test_jsonl_lines_preserves_unicode_separators_inside_records() -> None:
+    value = "До\u2028после\u2029далее\u0085финал"
+    contents = json.dumps({"text": value}, ensure_ascii=False) + "\n"
+    contents += json.dumps({"text": "следующая запись"}, ensure_ascii=False) + "\n"
+    lines = jsonl_lines(contents)
+    assert len(lines) == 2
+    assert [json.loads(line) for line in lines] == [
+        {"text": value},
+        {"text": "следующая запись"},
+    ]
 
 
 def test_clean_and_incomplete_require_actual_explicit_attestation(tmp_path: Path) -> None:

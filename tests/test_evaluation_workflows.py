@@ -367,6 +367,27 @@ def test_timeout_is_not_a_successful_live_baseline(
     assert read_json(tmp_path / "timeout" / "not-run-1.json")["reason"] == "public_check_timeout"
 
 
+def test_invalid_live_report_does_not_abort_remaining_repetitions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+
+    def invalid_report(command: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        nonlocal calls
+        calls += 1
+        return subprocess.CompletedProcess(command, 0, stdout='{"schema":"invalid"}', stderr="")
+
+    monkeypatch.setattr(subprocess, "run", invalid_report)
+    destination = tmp_path / "invalid-runs"
+    result = capture(make_corpus(), "dev", ["vale"], None, destination, "a" * 40, repetitions=2)
+    assert calls == 2
+    assert result["status"] == "NOT_RUN"
+    assert result["requested_repetitions"] == 2
+    assert read_json(destination / "not-run-1.json")["reason"] == "public_check_invalid_report"
+    assert read_json(destination / "not-run-2.json")["reason"] == "public_check_invalid_report"
+    assert read_json(destination / "distribution.json")["status"] == "NOT_RUN"
+
+
 @pytest.mark.parametrize(
     "mutation", ["hash", "bom", "overlap", "unscoped_label", "rights", "schema"]
 )

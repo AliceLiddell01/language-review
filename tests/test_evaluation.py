@@ -321,6 +321,12 @@ def test_split_leakage_freeze_and_annotation_agreement() -> None:
     second["cases"][0]["annotation"]["method"] = "human"
     second["cases"][0]["annotation"]["actor"] = "independent-second"
     assert annotation_agreement(first, second)["agreement"] == 1
+    second["cases"][0]["categories"] = ["spelling"]
+    assert annotation_agreement(first, second)["conflicts"] == ["case-1"]
+    second["cases"][0]["categories"] = first["cases"][0]["categories"]
+    second["cases"][0]["exhaustive"] = False
+    assert annotation_agreement(first, second)["conflicts"] == ["case-1"]
+    second["cases"][0]["exhaustive"] = first["cases"][0]["exhaustive"]
     add_label(second, "ошыбка")
     second["cases"][0]["labels"][0]["annotation"]["method"] = "human"
     assert annotation_agreement(first, second)["conflicts"] == ["case-1"]

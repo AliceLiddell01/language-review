@@ -66,11 +66,11 @@ def _coverage(
     coverage["extracted"] = bool(relevant)
     source = source_map(document)
     first, last = span(source, case["range"])
-    offset = source.position(0).byte_offset
+    offset = first
     missing = 0
-    for character in source.text:
+    for character in source.raw[first:last].decode(source.encoding):
         end = offset + len(character.encode(source.encoding))
-        if first <= offset < last and not character.isspace():
+        if not character.isspace():
             protected = any(
                 value["start"]["byte_offset"] <= offset < value["end"]["byte_offset"]
                 for value in case["protected_ranges"]

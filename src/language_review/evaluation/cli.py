@@ -30,6 +30,7 @@ from language_review.evaluation.corpus import (
     validate_corpus,
 )
 from language_review.evaluation.live import capture, materialize
+from language_review.evaluation.reference import reference_score
 from language_review.evaluation.reports import load_product_report
 from language_review.evaluation.scoring import score
 from language_review.evaluation.source_import import import_source, recipes
@@ -50,6 +51,21 @@ def parser() -> argparse.ArgumentParser:
     source.add_argument("--output", type=Path, required=True, help="новый внешний каталог")
     source.add_argument("--limit", type=int, default=250)
     source.add_argument("--cache", type=Path, help="исходные файлы с теми же pinned hashes")
+    source.add_argument(
+        "--pair-format",
+        choices=("plain", "markdown"),
+        default="plain",
+        help="адаптер source-поля; Markdown только для сравнения старого пилота",
+    )
+    reference = commands.add_parser(
+        "reference-score", help="совпадение с pinned опубликованными correction; не gold metrics"
+    )
+    reference.add_argument("corpus", type=Path)
+    reference.add_argument("report", type=Path)
+    reference.add_argument("--source-bundle", type=Path, required=True)
+    reference.add_argument("--run-manifest", type=Path, required=True)
+    reference.add_argument("--split", choices=("dev", "validation", "test"), required=True)
+    reference.add_argument("--output", type=Path)
     for name in ("annotation-export", "annotation-import"):
         annotation = commands.add_parser(name, help="слепая разметка JSONL/CSV")
         annotation.add_argument("corpus", type=Path)
@@ -269,8 +285,23 @@ def _init(args: argparse.Namespace) -> dict[str, Any]:
 
 def _run(args: argparse.Namespace) -> int:
     if args.command == "import-source":
-        print(canonical(import_source(args.source, args.output, args.limit, args.cache)), end="")
+        print(
+            canonical(
+                import_source(args.source, args.output, args.limit, args.cache, args.pair_format)
+            ),
+            end="",
+        )
         return 0
+    if args.command == "reference-score":
+        result = reference_score(
+            load_corpus(args.corpus),
+            load_product_report(args.report),
+            args.source_bundle,
+            args.split,
+            read_json(args.run_manifest),
+        )
+        _emit(result, args)
+        return 0 if result["scopes"]["pipeline"]["summary"]["status"] == "PASS" else 4
     if args.command in {"annotation-export", "annotation-import"}:
         corpus = load_corpus(args.corpus)
         if args.command == "annotation-export":

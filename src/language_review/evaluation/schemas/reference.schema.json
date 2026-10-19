@@ -1,0 +1,280 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "report_kind",
+    "protocol",
+    "inputs",
+    "source",
+    "scopes",
+    "limitations"
+  ],
+  "properties": {
+    "schema": {
+      "const": "language-review.reference-assessment"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "report_kind": {
+      "const": "external_reference_assessment"
+    },
+    "protocol": {
+      "type": "string"
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "corpus_sha256",
+        "report_sha256",
+        "references_sha256",
+        "provenance_sha256",
+        "manifest_sha256",
+        "split"
+      ],
+      "properties": {
+        "corpus_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "report_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "references_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "provenance_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "manifest_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "split": {
+          "enum": [
+            "dev",
+            "validation",
+            "test"
+          ]
+        }
+      }
+    },
+    "source": {
+      "type": "object"
+    },
+    "scopes": {
+      "type": "object",
+      "required": [
+        "pipeline"
+      ],
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "summary",
+          "pairs"
+        ],
+        "properties": {
+          "summary": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "pairs",
+              "applicable",
+              "evaluated",
+              "undetermined",
+              "rejected",
+              "exact_matches",
+              "denominator",
+              "exact_match_rate",
+              "reasons",
+              "heuristic_shapes",
+              "human_category_counts",
+              "status"
+            ],
+            "properties": {
+              "pairs": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "applicable": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "evaluated": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "undetermined": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "rejected": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "exact_matches": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "denominator": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "exact_match_rate": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              },
+              "reasons": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "heuristic_shapes": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "human_category_counts": {
+                "type": "object",
+                "maxProperties": 0
+              },
+              "status": {
+                "enum": [
+                  "PASS",
+                  "PARTIAL",
+                  "NOT_RUN"
+                ]
+              }
+            }
+          },
+          "pairs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "row",
+                "state",
+                "reason",
+                "applicable",
+                "exact",
+                "candidate_edits",
+                "change_shape",
+                "coverage",
+                "coverage_reasons"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "row": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 1
+                },
+                "state": {
+                  "enum": [
+                    "evaluated",
+                    "undetermined",
+                    "rejected"
+                  ]
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "applicable": {
+                  "type": "boolean"
+                },
+                "exact": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "candidate_edits": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "change_shape": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "proposal_status",
+                        "shapes",
+                        "changes"
+                      ],
+                      "properties": {
+                        "proposal_status": {
+                          "type": "string"
+                        },
+                        "shapes": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "changes": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0
+                        }
+                      }
+                    }
+                  ]
+                },
+                "coverage": {
+                  "type": "object"
+                },
+                "coverage_reasons": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    }
+  }
+}

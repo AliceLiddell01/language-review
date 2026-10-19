@@ -12,6 +12,11 @@
   hashes/основания прав; upstream bytes/references/provenance остаются вне Git.
   Rust Book — одна dev семья; SAGE сохраняет upstream test. Пары и отсутствие исправления
   не подтверждают gold/clean. Автоматические proposals только draft.
+- `reference-score` оценивает только точное строковое совпадение с pinned correction,
+  отдельно от gold scoring. Альтернативы/конфликты candidate-правок неопределённы;
+  нулевой знаменатель null. SAGE `.txt` — явный адаптер неизвестного source-формата;
+  legacy Markdown доступен для сравнения. Native code recipes сохраняют bytes/суффиксы
+  и отдельные draft validation семьи; SAGE родство/contamination не доказаны.
 - `annotation-export/import` — слепой JSONL/CSV round-trip с codepoint offsets,
   точными quote/hash/protected ranges и явным человеческим свидетельством. Verified
   требует exhaustive по указанным категориям; untouched/disputed не повышаются.

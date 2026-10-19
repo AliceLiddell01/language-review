@@ -196,7 +196,8 @@
               "license": {
                 "enum": [
                   "MIT",
-                  "MIT-card/Apache-2.0-script"
+                  "MIT-card/Apache-2.0-script",
+                  "BSD-3-Clause"
                 ]
               },
               "license_url": {

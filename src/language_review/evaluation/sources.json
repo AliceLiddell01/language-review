@@ -88,5 +88,105 @@
         "sha256": "3d07df181fdd625590628d359e1c695f5a68052a20fddd221ec709bf3439daf3"
       }
     ]
+  },
+  {
+    "id": "cubic-spline-ru",
+    "revision": "8c7b0ad85057989930a2953051c43699b4fea453",
+    "base_url": "https://raw.githubusercontent.com/emgyrz/cubic_spline",
+    "license": "MIT",
+    "rights_basis": "Pinned LICENSE permits use of the listed project-owned source files; preserve copyright/license notices. Third-party subtrees excluded. Local private-only policy; no redistribution of source or results in this repository. No linguistic clean/exhaustive attestation.",
+    "attribution": "Copyright (c) 2019 mz; cubic_spline contributors",
+    "split": "validation",
+    "license_path": "LICENSE",
+    "kind": "code",
+    "files": [
+      {
+        "path": "LICENSE",
+        "sha256": "ddf20791e3d73efbb88ad422c886f0af5491f40a5c75ad94d8b61c4007a8347f"
+      },
+      {
+        "path": "src/calc.rs",
+        "sha256": "a50b14ecf229f55255c5e8c9e8e56059fef4f770a04b547d07fad616776616fb"
+      },
+      {
+        "path": "src/points.rs",
+        "sha256": "b6f0486f33bf673f869e3043b7edd9e63b82c4c5b4038bb4b99cc5311f6f9bce"
+      }
+    ]
+  },
+  {
+    "id": "xnet-ru",
+    "revision": "36b2af4bd596628423b416dd737f0052b508258a",
+    "base_url": "https://raw.githubusercontent.com/X-rus/xNet",
+    "license": "MIT",
+    "rights_basis": "Pinned LICENSE.txt permits use of the listed project-owned source files; preserve copyright/license notices. Third-party subtrees excluded. Local private-only policy; no redistribution of source or results in this repository. No linguistic clean/exhaustive attestation.",
+    "attribution": "Copyright 2012-2015 Ruslan Khuduev; xNet contributors",
+    "split": "validation",
+    "license_path": "LICENSE.txt",
+    "kind": "code",
+    "files": [
+      {
+        "path": "LICENSE.txt",
+        "sha256": "7472ba8e663960c033e900ab0201d9cfd395a1f740be4620fcf0639ab077d229"
+      },
+      {
+        "path": "xNet/Html.cs",
+        "sha256": "2a5bd30ea930f76d724da6d77e26d4a2513d3d4d18120caff9cd2aed244baefd"
+      },
+      {
+        "path": "xNet/~Http/HttpRequest.cs",
+        "sha256": "aecd094ffb94cd78a581bb036de107ba2da82282d8b44c63064985c6c72e2d38"
+      }
+    ]
+  },
+  {
+    "id": "far-ru",
+    "revision": "16855d3a92e55dea9e53658cfb70f9de127b3b27",
+    "base_url": "https://raw.githubusercontent.com/FarGroup/FarManager",
+    "license": "BSD-3-Clause",
+    "rights_basis": "Pinned LICENSE permits use of the listed project-owned source files; preserve copyright/license notices. Third-party subtrees excluded. Local private-only policy; no redistribution of source or results in this repository. No linguistic clean/exhaustive attestation.",
+    "attribution": "Copyright (c) 1996 Eugene Roshal; Copyright (c) 2000 Far Group; contributors",
+    "split": "validation",
+    "license_path": "LICENSE",
+    "kind": "code",
+    "files": [
+      {
+        "path": "LICENSE",
+        "sha256": "a8432a89b6749c7af698ca010b8068473ad9cac16a71a60d6a78bce04a438ff8"
+      },
+      {
+        "path": "far/filefilter.cpp",
+        "sha256": "dd3999abd7498f18dacb943c85dcf9b979430d05a098ec800a4589eb6f8b4bc3"
+      },
+      {
+        "path": "far/filefilter.hpp",
+        "sha256": "7d71e2f968a86a2e3bc3c045fea8a709218b1f238146c40225f7594771c0b824"
+      },
+      {
+        "path": "far/filelist.hpp",
+        "sha256": "0350cbfe1eed10fd2f173a81d783545710409c5f9678bacce5cc27cac424ff77"
+      }
+    ]
+  },
+  {
+    "id": "tglock-cli-ru",
+    "revision": "05ce9566a86cb9ad81e647c2e07f04fb0a0e7e6f",
+    "base_url": "https://raw.githubusercontent.com/by-sonic/tglock",
+    "license": "MIT",
+    "rights_basis": "Pinned LICENSE permits use of the listed project-owned CLI source. Preserve notice. Local private-only policy; unreviewed public code, authorship and linguistic correctness not certified. No real runtime logs collected.",
+    "attribution": "Copyright (c) 2026 by sonic; tglock contributors",
+    "split": "validation",
+    "license_path": "LICENSE",
+    "kind": "code",
+    "files": [
+      {
+        "path": "LICENSE",
+        "sha256": "412bff26064b5685c05e822e55325c6c5f1f88f2af59fdc832067e507d6fd55e"
+      },
+      {
+        "path": "src/bin/cli.rs",
+        "sha256": "c08ac387a130c2d0eab1274d444bbbfa8a4d063465918d852f261dc6304c4164"
+      }
+    ]
   }
 ]

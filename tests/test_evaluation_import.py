@@ -150,6 +150,51 @@ def test_book_bytes_coordinates_protection_and_reproducible_cache(
 
 
 @pytest.mark.parametrize(
+    "extension,text",
+    [
+        (".rs", '// Комментарий о входных данных.\nfn main() { println!("Готово к работе."); }\n'),
+        (
+            ".cs",
+            "// Комментарий о входных данных.\n"
+            'class A { void Run() { Console.WriteLine("Готово к работе."); } }\n',
+        ),
+        (".cpp", '// Комментарий о входных данных.\nvoid run() { printf("Готово к работе."); }\n'),
+        (".h", "// Комментарий о входных данных.\nnamespace app { void run(); }\n"),
+    ],
+)
+def test_native_code_import_preserves_original_extension_bytes_and_draft_split(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    extension: str,
+    text: str,
+) -> None:
+    recipe = copy.deepcopy(source_import.recipes()["cubic-spline-ru"])
+    path = "src/input" + extension
+    raw = b"\xef\xbb\xbf" + text.replace("\n", "\r\n").encode()
+    files = {"LICENSE": b"synthetic permission fixture", path: raw}
+    recipe["files"] = [
+        {"path": p, "sha256": hashlib.sha256(b).hexdigest()} for p, b in files.items()
+    ]
+    monkeypatch.setattr(source_import, "recipes", lambda: {recipe["id"]: recipe})
+    monkeypatch.setattr(
+        source_import,
+        "_download",
+        lambda url: next(b for p, b in files.items() if url.endswith("/" + p)),
+    )
+    source_import.import_source(recipe["id"], tmp_path / "import")
+    corpus = read_json(tmp_path / "import/corpus.json")
+    document = corpus["documents"][0]
+    assert document["path"] == path and source_map(document).raw == raw
+    assert document["provenance"]["source_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert all(case["split"] == "validation" and not eligible(case) for case in corpus["cases"])
+    assert any(case["context"] == "comment" for case in corpus["cases"])
+    if extension != ".h":
+        assert any(case["context"] == "message" for case in corpus["cases"])
+    materialize(corpus, "validation", tmp_path / "materialized")
+    assert (tmp_path / "materialized" / recipe["id"] / path).read_bytes() == raw
+
+
+@pytest.mark.parametrize(
     "field,value",
     [
         ("revision", "main"),

@@ -330,7 +330,9 @@ def test_split_leakage_freeze_and_annotation_agreement() -> None:
     add_label(second, "ошыбка")
     second["cases"][0]["labels"][0]["annotation"]["method"] = "human"
     assert annotation_agreement(first, second)["conflicts"] == ["case-1"]
-    assert annotation_agreement(first, first)["agreement"] is None
+    same_actor = annotation_agreement(first, first)
+    assert same_actor["agreement"] is None
+    assert same_actor["excluded_same_actor"] == ["case-1"]
     second["cases"][0]["annotation"].update(status="draft", method="model")
     assert annotation_agreement(first, second)["agreement"] is None
     assert annotation_agreement(first, second)["excluded_nonindependent_method"] == ["case-1"]

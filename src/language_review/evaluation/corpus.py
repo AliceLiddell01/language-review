@@ -231,11 +231,13 @@ def annotation_agreement(first: dict[str, Any], second: dict[str, Any]) -> dict[
     pairs = sorted(left.keys() & right.keys())
     comparable, equal, conflicts = 0, 0, []
     excluded_methods = []
+    excluded_same_actor = []
     for key in pairs:
         a, b = left[key], right[key]
         if a["range"] != b["range"] or a["document"] != b["document"]:
             raise InputError("Изменена единица аннотации.")
         if a["annotation"]["actor"] == b["annotation"]["actor"]:
+            excluded_same_actor.append(key)
             continue
         annotations = [
             a["annotation"],
@@ -269,5 +271,6 @@ def annotation_agreement(first: dict[str, Any], second: dict[str, Any]) -> dict[
         "conflicts": conflicts,
         "unpaired": sorted(left.keys() ^ right.keys()),
         "excluded_nonindependent_method": excluded_methods,
+        "excluded_same_actor": excluded_same_actor,
         "method": "exact-case-agreement; no chance correction; no automatic truth assignment",
     }

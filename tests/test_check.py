@@ -1180,9 +1180,9 @@ def _vale_engine_factory(stdout: str) -> Any:
     [
         ({"Check": "X.Y", "Message": "m", "Line": "1", "Span": [1, 3]}, False),
         ({"Check": "X.Y", "Message": "m", "Line": 1, "Span": [1]}, False),
-        ({"Check": "X.Y", "Message": "m", "Line": 1, "Span": [1, 3], "Match": "нет"}, True),
+        ({"Check": "X.Y", "Message": "m", "Line": 1, "Span": [1, 3], "Match": "нет"}, False),
     ],
-    ids=["line_not_int", "span_short", "match_mismatch_is_semantic_rejection"],
+    ids=["line_not_int", "span_short", "match_mismatch_fails_closed"],
 )
 def test_vale_malformed_alert_is_not_clean(
     tmp_path: Path, alert: dict[str, Any], clean: bool

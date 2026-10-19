@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import time
 from collections import Counter
 from collections.abc import Callable, Sequence
+from dataclasses import asdict
 from typing import Any
 
 from language_review.check_models import (
@@ -44,7 +46,7 @@ _SENTENCE_CONTEXTS = {
     "asciidoc:heading",
 }
 # Категории, которые разные движки назначают одной и той же ошибке («не не» — повтор слова
-# у Vale, опечатка у модели). Объединяются только реально пересекающиеся диапазоны.
+# у Vale, опечатка у модели). Совместимость сама по себе не доказывает общий дефект.
 CATEGORY_GROUPS = {
     "spelling": "language",
     "grammar": "language",
@@ -339,7 +341,7 @@ def map_finding(raw: RawFinding, unit: CheckUnit) -> Candidate | RejectedOutput:
 
     def reject(reason: str) -> RejectedOutput:
         return RejectedOutput(
-            raw.engine, unit.index, reason, raw.rule_id, raw.message, raw.engine_excerpt
+            raw.engine, unit.index, reason, raw.rule_id, raw.message, raw.engine_excerpt, raw
         )
 
     if not 0 <= raw.start < raw.end <= len(view.text):
@@ -379,19 +381,22 @@ def map_finding(raw: RawFinding, unit: CheckUnit) -> Candidate | RejectedOutput:
 
 
 def _finding_id(document: ExtractDocument, finding: Finding) -> str:
-    payload = "\0".join(
-        [
-            document.id,
-            str(finding.source_start),
-            str(finding.source_end),
-            finding.category,
-            *sorted(
-                f"{item.raw.engine}:{item.raw.rule_id}:{item.source_start}:{item.source_end}"
-                for item in finding.candidates
-            ),
-        ]
+    payload = json.dumps(
+        {
+            "document": document.id,
+            "start": finding.source_start,
+            "end": finding.source_end,
+            "category": finding.category,
+            "evidence": sorted(_raw_key(item.raw) for item in finding.candidates),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
     )
     return "find-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+
+def _raw_key(raw: RawFinding) -> str:
+    return json.dumps(asdict(raw), ensure_ascii=False, sort_keys=True)
 
 
 def _compatible(first: str, second: str) -> bool:
@@ -417,8 +422,21 @@ def _cluster_category(members: list[Candidate]) -> str:
     )
 
 
+def _same_defect(first: Candidate, second: Candidate) -> bool:
+    """Общая минимальная правка — свидетельство общей гипотезы, не её правильности."""
+    if first.unit is not second.unit or not _compatible(first.raw.category, second.raw.category):
+        return False
+    if first.raw == second.raw:
+        return True
+    # Разные правила одного движка остаются самостоятельными диагнозами.
+    if first.raw.engine == second.raw.engine and first.raw.rule_id != second.raw.rule_id:
+        return False
+    edits = {item.edit for item in first.suggestions if item.edit is not None}
+    return bool(edits & {item.edit for item in second.suggestions if item.edit is not None})
+
+
 def reconcile(document_index: int, candidates: list[Candidate]) -> list[Finding]:
-    """Объединить замечания одной категории с реально пересекающимися диапазонами."""
+    """Консервативное полное связывание: пересечение и транзитивность не доказательства дубля."""
     ordered = sorted(
         candidates,
         key=lambda item: (
@@ -426,28 +444,32 @@ def reconcile(document_index: int, candidates: list[Candidate]) -> list[Finding]
             item.source_end,
             ENGINE_ORDER.index(item.raw.engine) if item.raw.engine in ENGINE_ORDER else 99,
             item.raw.rule_id or "",
+            item.raw.category,
+            item.raw.message,
+            item.raw.replacements,
+            item.raw.confidence or "",
+            item.raw.severity or "",
+            item.raw.view,
+            item.raw.start,
+            item.raw.end,
+            item.raw.rule_category or "",
+            item.raw.engine_excerpt or "",
+            item.raw.replacement_origin,
+            _raw_key(item.raw),
         ),
     )
-    parent = list(range(len(ordered)))
-
-    def root(index: int) -> int:
-        while parent[index] != index:
-            parent[index] = parent[parent[index]]
-            index = parent[index]
-        return index
-
-    for left in range(len(ordered)):
-        for right in range(left + 1, len(ordered)):
-            first, second = ordered[left], ordered[right]
-            if second.source_start >= first.source_end:
-                break
-            if first.unit is second.unit and _compatible(first.raw.category, second.raw.category):
-                parent[root(right)] = root(left)
-    clusters: dict[int, list[Candidate]] = {}
-    for index, candidate in enumerate(ordered):
-        clusters.setdefault(root(index), []).append(candidate)
+    clusters: list[list[Candidate]] = []
+    for candidate in ordered:
+        cluster = next(
+            (group for group in clusters if all(_same_defect(item, candidate) for item in group)),
+            None,
+        )
+        if cluster is None:
+            clusters.append([candidate])
+        elif not any(item.raw == candidate.raw for item in cluster):
+            cluster.append(candidate)
     findings: list[Finding] = []
-    for members in clusters.values():
+    for members in clusters:
         suggestions: list[Suggestion] = []
         for candidate in members:
             for suggestion in candidate.suggestions:
@@ -681,6 +703,7 @@ def _record_outcome(
     for raw in outcome.findings:
         if categories and raw.category not in categories:
             run.filtered += 1
+            document.filtered.append(raw)
             continue
         mapped = map_finding(raw, unit)
         if isinstance(mapped, RejectedOutput):

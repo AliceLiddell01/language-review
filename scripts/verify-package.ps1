@@ -149,9 +149,34 @@ try {
         elseif ($checkExitCode -ne 5 -or $checkReport.status -ne 'unavailable') {
             throw "Установленная команда $kind check без Vale вернула код $checkExitCode."
         }
+        $reviewPath = Join-Path $tempRoot ('review-' + $kind + '.json')
+        & $launcher check $sampleFile --engine vale --view review --format json --output $reviewPath
+        if ($LASTEXITCODE -ne $checkExitCode) {
+            throw "Review $kind изменил код завершения анализа."
+        }
+        $reviewReport = Get-Content -LiteralPath $reviewPath -Raw | ConvertFrom-Json
+        if ($reviewReport.schema -ne 'language-review.review' -or
+            $reviewReport.schema_version -ne '1.0' -or $reviewReport.suggestions_applied -or
+            $reviewReport.analysis.schema -ne 'language-review.check') {
+            throw "Review $kind вернул неожиданный контракт."
+        }
+        $reviewHuman = (& $launcher show-review $reviewPath --all) -join [Environment]::NewLine
+        if ($LASTEXITCODE -ne 0 -or $reviewHuman -notmatch 'Языковое ревью:') {
+            throw "Show-review $kind не прочитал сохранённый результат."
+        }
+        $verificationOutput = (
+            & $environmentPython -m language_review verify-review $reviewPath `
+                --root ('root-0001=' + $sampleFile) --format json
+        ) -join [Environment]::NewLine
+        if ($LASTEXITCODE -ne 0 -or ($verificationOutput | ConvertFrom-Json).status -ne 'current') {
+            throw "Verify-review $kind не подтвердил исходные байты."
+        }
+        if ((Get-FileHash -LiteralPath $sampleFile -Algorithm SHA256).Hash -ne $sampleHash) {
+            throw "Установленный пакет $kind review изменил исходный файл."
+        }
         # Ожидаемый код 5 проверен выше; он не должен стать кодом завершения всего скрипта.
         $global:LASTEXITCODE = 0
-        Write-Output "${kind}: установка, точка входа, python -m, scan, extract и check прошли."
+        Write-Output "${kind}: установка, CLI, python -m, scan, extract, check и review прошли."
     }
 }
 finally {

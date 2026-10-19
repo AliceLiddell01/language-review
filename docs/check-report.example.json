@@ -54,7 +54,7 @@
           "fragment_ids": [
             "frag-d97ad56d14a42b3599e29417"
           ],
-          "id": "find-b6ed36874fdc336634447b78",
+          "id": "find-80b9854765dd3bb411e001ed",
           "range": {
             "end": {
               "byte_offset": 109,
@@ -139,7 +139,7 @@
           "fragment_ids": [
             "frag-f552921cc137d2c0c8926621"
           ],
-          "id": "find-1edd2738ccb5edf16b479bba",
+          "id": "find-8ada68d13df5d19108e3a9e9",
           "range": {
             "end": {
               "byte_offset": 229,
@@ -196,7 +196,7 @@
           "fragment_ids": [
             "frag-f552921cc137d2c0c8926621"
           ],
-          "id": "find-6dcc94d531a2bf5501f4e58c",
+          "id": "find-a4b8f97b60cd686dd5c0aa38",
           "range": {
             "end": {
               "byte_offset": 252,
@@ -416,7 +416,7 @@
           "fragment_ids": [
             "frag-96651b0a15411653fde082fd"
           ],
-          "id": "find-a54ff115a8396af158db3033",
+          "id": "find-c1d47ea5309c2c1545c8267c",
           "range": {
             "end": {
               "byte_offset": 68,
@@ -501,7 +501,7 @@
           "fragment_ids": [
             "frag-586fc19d1fd77d6c07317915"
           ],
-          "id": "find-d25a212fbd0c7a75124230b8",
+          "id": "find-48dc0c04d6fb3cefd3829500",
           "range": {
             "end": {
               "byte_offset": 205,
@@ -826,14 +826,14 @@
     {
       "details": {
         "disabled_rules": [],
-        "endpoint": "http://127.0.0.1:18081",
+        "endpoint": "http://127.0.0.1:8081",
         "endpoint_origin": "loopback",
         "language": "ru-RU",
         "level": "default",
         "version": "6.6"
       },
       "diagnostics": [],
-      "elapsed_ms": 1045.0,
+      "elapsed_ms": 1410.2,
       "message": null,
       "name": "languagetool",
       "statistics": {
@@ -859,7 +859,7 @@
         "version": "3.24.0"
       },
       "diagnostics": [],
-      "elapsed_ms": 183.1,
+      "elapsed_ms": 226.9,
       "message": null,
       "name": "vale",
       "statistics": {

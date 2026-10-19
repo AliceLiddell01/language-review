@@ -1,0 +1,241 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "repetitions",
+    "independent_stability_proven",
+    "statuses",
+    "pipeline_detection",
+    "unit"
+  ],
+  "properties": {
+    "schema": {
+      "const": "language-review.evaluation-distribution"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "repetitions": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "independent_stability_proven": {
+      "const": false
+    },
+    "statuses": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "PASS",
+          "PARTIAL",
+          "NOT_RUN"
+        ]
+      }
+    },
+    "pipeline_detection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "precision",
+        "recall",
+        "f1",
+        "f0_5"
+      ],
+      "properties": {
+        "precision": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "values",
+            "n",
+            "mean",
+            "min",
+            "max"
+          ],
+          "properties": {
+            "values": {
+              "type": "array",
+              "items": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "mean": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "min": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "max": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          }
+        },
+        "recall": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "values",
+            "n",
+            "mean",
+            "min",
+            "max"
+          ],
+          "properties": {
+            "values": {
+              "type": "array",
+              "items": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "mean": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "min": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "max": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          }
+        },
+        "f1": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "values",
+            "n",
+            "mean",
+            "min",
+            "max"
+          ],
+          "properties": {
+            "values": {
+              "type": "array",
+              "items": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "mean": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "min": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "max": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          }
+        },
+        "f0_5": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "values",
+            "n",
+            "mean",
+            "min",
+            "max"
+          ],
+          "properties": {
+            "values": {
+              "type": "array",
+              "items": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "mean": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "min": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "max": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "unit": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "PASS",
+        "PARTIAL",
+        "NOT_RUN"
+      ]
+    },
+    "requested_repetitions": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

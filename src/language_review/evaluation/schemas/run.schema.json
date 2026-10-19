@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://language-review.invalid/schemas/eval-run-1.0.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "corpus_sha256",
+    "split",
+    "report_sha256",
+    "root_bindings",
+    "product_commit",
+    "configuration_sha256",
+    "wall_clock_ms",
+    "exit_code",
+    "capture",
+    "parameters",
+    "repetition"
+  ],
+  "properties": {
+    "schema": {
+      "const": "language-review.eval-run"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "corpus_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "split": {
+      "enum": [
+        "dev",
+        "validation",
+        "test"
+      ]
+    },
+    "report_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "root_bindings": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "product_commit": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "configuration_sha256": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "wall_clock_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "exit_code": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "capture": {
+      "enum": [
+        "live_public_cli",
+        "saved_report"
+      ]
+    },
+    "parameters": {
+      "type": "object"
+    },
+    "repetition": {
+      "type": "integer",
+      "minimum": 1
+    }
+  }
+}

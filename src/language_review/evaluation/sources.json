@@ -1,0 +1,192 @@
+[
+  {
+    "id": "rust-book-ru",
+    "revision": "1bec6512e7475b20919b6266dc8596ba71298ff9",
+    "base_url": "https://raw.githubusercontent.com/rust-lang-ru/book",
+    "license": "MIT",
+    "rights_basis": "Pinned LICENSE-MIT applies to associated documentation; preserve notice. Not proof of linguistic correctness.",
+    "attribution": "Copyright (c) 2010 The Rust Project Developers; rust-lang-ru/book contributors",
+    "split": "dev",
+    "license_path": "LICENSE-MIT",
+    "kind": "markdown",
+    "files": [
+      {
+        "path": "LICENSE-MIT",
+        "sha256": "0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720"
+      },
+      {
+        "path": "rustbook-ru/src/ch01-01-installation.md",
+        "sha256": "bf53639f0ac3a66339a819ba042cc511c0987fbeca368e4effd437018d71a1c2"
+      },
+      {
+        "path": "rustbook-ru/src/ch01-02-hello-world.md",
+        "sha256": "74122731598766efbb599960a8dd889b248ddeaf8e94a0bed58a2ed1e3e0c20f"
+      },
+      {
+        "path": "rustbook-ru/src/ch01-03-hello-cargo.md",
+        "sha256": "b1fe57bc2231379c32be96ee15978d786d95fc4006eaa4f588988eae5d38da99"
+      },
+      {
+        "path": "rustbook-ru/src/ch02-00-guessing-game-tutorial.md",
+        "sha256": "e3cd2d85e0c52acb7e3aafd43f9209b09c68ae9fadd697a0a933481669cc1b11"
+      },
+      {
+        "path": "rustbook-ru/src/ch03-01-variables-and-mutability.md",
+        "sha256": "8f13c83a936477484b9ff542cbf1e11d7954d866e57268e812908303db965e2c"
+      },
+      {
+        "path": "rustbook-ru/src/ch03-02-data-types.md",
+        "sha256": "dbbb1497790fd802995da4792bfa1b80a43aba4f900f611d0c482c35cd16c419"
+      },
+      {
+        "path": "rustbook-ru/src/ch03-03-how-functions-work.md",
+        "sha256": "f9329049a6577fb3de727df5edbd238190c3c88f081cc6ef64d12633b0b70022"
+      },
+      {
+        "path": "rustbook-ru/src/ch03-04-comments.md",
+        "sha256": "ffe78db086bee3279a82f2989bb729fdf0c7c813ba8cdfb12b366ffb192e9203"
+      },
+      {
+        "path": "rustbook-ru/src/ch03-05-control-flow.md",
+        "sha256": "386a6d3f890c5b33e24558a8b1570fca9cc02f3938217394512a5314ec8ee4df"
+      },
+      {
+        "path": "rustbook-ru/src/ch04-01-what-is-ownership.md",
+        "sha256": "4f4650162bae81af104d1c2341b4b38c73a1a2b6600d1a9225ea022c6037b9d7"
+      },
+      {
+        "path": "rustbook-ru/src/ch04-02-references-and-borrowing.md",
+        "sha256": "6ac4ef151ba51d4cd45ed0710736e7cacdaf1ff627bd8337c5fbd939e89aaadb"
+      },
+      {
+        "path": "rustbook-ru/src/ch04-03-slices.md",
+        "sha256": "7d30052060e58d2da5ef138c09ff050817282b3aeeddc26ac9ecc88b8a0ed91e"
+      }
+    ]
+  },
+  {
+    "id": "sage-github-ru",
+    "revision": "efa1663eade2afd35c8569fb149f94751c3cbfc0",
+    "base_url": "https://huggingface.co/datasets/ai-forever/spellcheck_punctuation_benchmark/resolve",
+    "license": "MIT-card/Apache-2.0-script",
+    "rights_basis": "Dataset card explicitly licenses data MIT and states source permissions; loader metadata says Apache-2.0. Preserve both notices, use privately; original repository identities/rights are not supplied. No exhaustive category gold.",
+    "attribution": "SAGE / ai-forever; original GitHub contributors as described by dataset curators",
+    "split": "test",
+    "license_path": "README.md",
+    "kind": "pairs",
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "e03cb57d98d5f2326da68fd96efe5632a8cbd604bf175602afd10d0857df28e5"
+      },
+      {
+        "path": "spellcheck_punctuation_benchmark.py",
+        "sha256": "58fbcfd6308c0e4728934a75c6f1ff42edcdc113c93c43e9b1f6a8c5144f9ed2"
+      },
+      {
+        "path": "data/GitHubTypoCorpusRu/test.json",
+        "sha256": "3d07df181fdd625590628d359e1c695f5a68052a20fddd221ec709bf3439daf3"
+      }
+    ]
+  },
+  {
+    "id": "cubic-spline-ru",
+    "revision": "8c7b0ad85057989930a2953051c43699b4fea453",
+    "base_url": "https://raw.githubusercontent.com/emgyrz/cubic_spline",
+    "license": "MIT",
+    "rights_basis": "Pinned LICENSE permits use of the listed project-owned source files; preserve copyright/license notices. Third-party subtrees excluded. Local private-only policy; no redistribution of source or results in this repository. No linguistic clean/exhaustive attestation.",
+    "attribution": "Copyright (c) 2019 mz; cubic_spline contributors",
+    "split": "validation",
+    "license_path": "LICENSE",
+    "kind": "code",
+    "files": [
+      {
+        "path": "LICENSE",
+        "sha256": "ddf20791e3d73efbb88ad422c886f0af5491f40a5c75ad94d8b61c4007a8347f"
+      },
+      {
+        "path": "src/calc.rs",
+        "sha256": "a50b14ecf229f55255c5e8c9e8e56059fef4f770a04b547d07fad616776616fb"
+      },
+      {
+        "path": "src/points.rs",
+        "sha256": "b6f0486f33bf673f869e3043b7edd9e63b82c4c5b4038bb4b99cc5311f6f9bce"
+      }
+    ]
+  },
+  {
+    "id": "xnet-ru",
+    "revision": "36b2af4bd596628423b416dd737f0052b508258a",
+    "base_url": "https://raw.githubusercontent.com/X-rus/xNet",
+    "license": "MIT",
+    "rights_basis": "Pinned LICENSE.txt permits use of the listed project-owned source files; preserve copyright/license notices. Third-party subtrees excluded. Local private-only policy; no redistribution of source or results in this repository. No linguistic clean/exhaustive attestation.",
+    "attribution": "Copyright 2012-2015 Ruslan Khuduev; xNet contributors",
+    "split": "validation",
+    "license_path": "LICENSE.txt",
+    "kind": "code",
+    "files": [
+      {
+        "path": "LICENSE.txt",
+        "sha256": "7472ba8e663960c033e900ab0201d9cfd395a1f740be4620fcf0639ab077d229"
+      },
+      {
+        "path": "xNet/Html.cs",
+        "sha256": "2a5bd30ea930f76d724da6d77e26d4a2513d3d4d18120caff9cd2aed244baefd"
+      },
+      {
+        "path": "xNet/~Http/HttpRequest.cs",
+        "sha256": "aecd094ffb94cd78a581bb036de107ba2da82282d8b44c63064985c6c72e2d38"
+      }
+    ]
+  },
+  {
+    "id": "far-ru",
+    "revision": "16855d3a92e55dea9e53658cfb70f9de127b3b27",
+    "base_url": "https://raw.githubusercontent.com/FarGroup/FarManager",
+    "license": "BSD-3-Clause",
+    "rights_basis": "Pinned LICENSE permits use of the listed project-owned source files; preserve copyright/license notices. Third-party subtrees excluded. Local private-only policy; no redistribution of source or results in this repository. No linguistic clean/exhaustive attestation.",
+    "attribution": "Copyright (c) 1996 Eugene Roshal; Copyright (c) 2000 Far Group; contributors",
+    "split": "validation",
+    "license_path": "LICENSE",
+    "kind": "code",
+    "files": [
+      {
+        "path": "LICENSE",
+        "sha256": "a8432a89b6749c7af698ca010b8068473ad9cac16a71a60d6a78bce04a438ff8"
+      },
+      {
+        "path": "far/filefilter.cpp",
+        "sha256": "dd3999abd7498f18dacb943c85dcf9b979430d05a098ec800a4589eb6f8b4bc3"
+      },
+      {
+        "path": "far/filefilter.hpp",
+        "sha256": "7d71e2f968a86a2e3bc3c045fea8a709218b1f238146c40225f7594771c0b824"
+      },
+      {
+        "path": "far/filelist.hpp",
+        "sha256": "0350cbfe1eed10fd2f173a81d783545710409c5f9678bacce5cc27cac424ff77"
+      }
+    ]
+  },
+  {
+    "id": "tglock-cli-ru",
+    "revision": "05ce9566a86cb9ad81e647c2e07f04fb0a0e7e6f",
+    "base_url": "https://raw.githubusercontent.com/by-sonic/tglock",
+    "license": "MIT",
+    "rights_basis": "Pinned LICENSE permits use of the listed project-owned CLI source. Preserve notice. Local private-only policy; unreviewed public code, authorship and linguistic correctness not certified. No real runtime logs collected.",
+    "attribution": "Copyright (c) 2026 by sonic; tglock contributors",
+    "split": "validation",
+    "license_path": "LICENSE",
+    "kind": "code",
+    "files": [
+      {
+        "path": "LICENSE",
+        "sha256": "412bff26064b5685c05e822e55325c6c5f1f88f2af59fdc832067e507d6fd55e"
+      },
+      {
+        "path": "src/bin/cli.rs",
+        "sha256": "c08ac387a130c2d0eab1274d444bbbfa8a4d063465918d852f261dc6304c4164"
+      }
+    ]
+  }
+]

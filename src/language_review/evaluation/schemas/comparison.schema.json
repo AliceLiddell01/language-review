@@ -1,0 +1,240 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "compatibility",
+    "new_fp",
+    "removed_fp",
+    "new_fn",
+    "recovered_fn",
+    "new_tp",
+    "lost_tp",
+    "changed_tp",
+    "summary_deltas",
+    "strata_deltas",
+    "engine_deltas",
+    "coverage_changes",
+    "time"
+  ],
+  "properties": {
+    "schema": {
+      "const": "language-review.evaluation-comparison"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "corpus_id",
+        "corpus_version",
+        "annotation_version",
+        "corpus_sha256",
+        "split",
+        "metric_version",
+        "scorer_version",
+        "report_kind",
+        "judgment_policy"
+      ],
+      "properties": {
+        "corpus_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "corpus_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "annotation_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "corpus_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "split": {
+          "enum": [
+            "dev",
+            "validation",
+            "test"
+          ]
+        },
+        "metric_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scorer_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "report_kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "judgment_policy": {
+          "enum": [
+            "reference_only",
+            "independent_judgments"
+          ]
+        }
+      }
+    },
+    "new_fp": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "removed_fp": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "new_fn": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "recovered_fn": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "new_tp": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "lost_tp": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "changed_tp": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "summary_deltas": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "baseline",
+          "candidate",
+          "delta"
+        ],
+        "properties": {
+          "baseline": {},
+          "candidate": {},
+          "delta": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "strata_deltas": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "baseline",
+          "candidate",
+          "delta"
+        ],
+        "properties": {
+          "baseline": {},
+          "candidate": {},
+          "delta": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "engine_deltas": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "baseline",
+          "candidate",
+          "delta"
+        ],
+        "properties": {
+          "baseline": {},
+          "candidate": {},
+          "delta": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "coverage_changes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "baseline",
+          "candidate",
+          "delta"
+        ],
+        "properties": {
+          "baseline": {},
+          "candidate": {},
+          "delta": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "time": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "baseline",
+          "candidate",
+          "delta"
+        ],
+        "properties": {
+          "baseline": {},
+          "candidate": {},
+          "delta": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,161 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "version",
+    "corpus_sha256",
+    "report_sha256",
+    "entries"
+  ],
+  "properties": {
+    "schema": {
+      "const": "language-review.eval-judgments"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "corpus_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "report_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "case",
+          "candidate",
+          "engine",
+          "detection",
+          "label",
+          "correction",
+          "harm",
+          "annotation"
+        ],
+        "properties": {
+          "case": {
+            "type": "string",
+            "minLength": 1
+          },
+          "candidate": {
+            "type": "string",
+            "minLength": 1
+          },
+          "engine": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "detection": {
+            "enum": [
+              "tp",
+              "fp",
+              "needs_adjudication"
+            ]
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "correction": {
+            "enum": [
+              "correct",
+              "incorrect",
+              "unknown",
+              "absent",
+              "needs_adjudication"
+            ]
+          },
+          "harm": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "meaning",
+                "negation",
+                "technical_tokens"
+              ]
+            },
+            "uniqueItems": true
+          },
+          "annotation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "actor",
+              "method",
+              "evidence",
+              "history"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "draft",
+                  "independently_verified",
+                  "disputed"
+                ]
+              },
+              "actor": {
+                "type": "string",
+                "minLength": 1
+              },
+              "method": {
+                "enum": [
+                  "human",
+                  "external_reference",
+                  "model",
+                  "pipeline",
+                  "synthetic_contract"
+                ]
+              },
+              "evidence": {
+                "type": "string"
+              },
+              "history": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "revision",
+                    "actor",
+                    "decision"
+                  ],
+                  "properties": {
+                    "revision": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "actor": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "decision": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -9,6 +9,7 @@
 | Структурное извлечение, координаты и схема отчёта | [extraction.md](extraction.md) | `extraction.py`, `extract_*.py`, `coordinates.py`, `docs/extract-report.schema.json`, `docs/extract-report.example.json`, `tests/test_extract.py` |
 | Языковая проверка `check`, review для агента, движки, маскирование | [check.md](check.md) | `check.py`, `check_*.py`, `review_*.py`, `engine_*.py`, `masking.py`, `vale_styles/`, `docs/check-report.*.json`, `docs/review-*.json`, `tests/test_check*.py`, `tests/test_review.py`, `tests/test_masking.py` |
 | Конфигурация, профили, `doctor` | [configuration.md](configuration.md) | `config.py`, `doctor.py`, `tests/test_config.py`, `tests/test_doctor.py` |
+| Независимая оценка, корпус, offline scoring и регрессии | [evaluation.md](evaluation.md) | `evaluation/**`, `docs/evaluation.md`, `tests/test_evaluation*.py` |
 | Проверки, приемка и инфраструктура | [verification.md](verification.md) | `pyproject.toml`, `scripts/verify-package.ps1`, `.github/workflows/**` |
 | Git/GitHub | — | `.agents/skills/language-review-git-workflow/SKILL.md` |
 | Ревью и CodeRabbit | — | `.agents/skills/language-review-code-review/SKILL.md`, `.agents/skills/language-review-coderabbit-review/SKILL.md` |

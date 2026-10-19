@@ -174,9 +174,72 @@ try {
         if ((Get-FileHash -LiteralPath $sampleFile -Algorithm SHA256).Hash -ne $sampleHash) {
             throw "Установленный пакет $kind review изменил исходный файл."
         }
+        # Оценщик импортирует сохранённую синтетическую выдачу offline: серверы не нужны.
+        $evalLauncher = Join-Path $environment 'Scripts/language-review-eval.exe'
+        $evalFixture = Join-Path $projectRoot 'tests/fixtures/evaluation'
+        $evalCorpus = Join-Path $tempRoot ("corpus-$kind.json")
+        $evalReport = Join-Path $tempRoot ("saved-report-$kind.json")
+        Copy-Item -LiteralPath (Join-Path $evalFixture 'corpus.json') -Destination $evalCorpus
+        Copy-Item -LiteralPath (Join-Path $evalFixture 'report.json') -Destination $evalReport
+        $evalCorpusHash = (Get-FileHash -LiteralPath $evalCorpus -Algorithm SHA256).Hash
+        $evalReportHash = (Get-FileHash -LiteralPath $evalReport -Algorithm SHA256).Hash
+        $evalValidation = (& $evalLauncher validate $evalCorpus) -join [Environment]::NewLine
+        if ($LASTEXITCODE -ne 0 -or ($evalValidation | ConvertFrom-Json).status -ne 'PASS') {
+            throw "Оценщик $kind не прочитал упакованную схему корпуса."
+        }
+        $evalResult = Join-Path $tempRoot ("evaluation-$kind.json")
+        & $evalLauncher score $evalCorpus $evalReport --split dev --bind 'root-0001=demo' `
+            --format json --output $evalResult
+        $evalExit = $LASTEXITCODE
+        $scored = Get-Content -LiteralPath $evalResult -Raw | ConvertFrom-Json
+        if ($evalExit -ne 4 -or $scored.status -ne 'PARTIAL' -or
+            $scored.report_kind -ne 'synthetic_contract_check' -or
+            $scored.summary.pipeline_detection.tp -ne 2 -or
+            $scored.summary.pipeline_detection.fn -ne 9) {
+            throw "Оценщик $kind вернул неверные контрольные числа или скрыл неполноту."
+        }
+        $expectations = Join-Path $evalFixture 'expectations.json'
+        $regression = (
+            & $environmentPython -m language_review.evaluation regress $evalResult $expectations
+        ) -join [Environment]::NewLine
+        if ($LASTEXITCODE -ne 0 -or ($regression | ConvertFrom-Json).status -ne 'PASS') {
+            throw "Оценщик $kind нарушил детерминированные ожидания."
+        }
+        $comparison = (
+            & $evalLauncher compare $evalResult $evalResult --format json
+        ) -join [Environment]::NewLine
+        if ($LASTEXITCODE -ne 0 -or ($comparison | ConvertFrom-Json).new_fp.Count -ne 0) {
+            throw "Оценщик $kind не сравнил сохранённые результаты."
+        }
+        $annotationPacket = Join-Path $tempRoot ("annotation-$kind")
+        & $evalLauncher annotation-export $evalCorpus --split dev --output $annotationPacket
+        if ($LASTEXITCODE -ne 0) {
+            throw "Оценщик $kind не экспортировал слепой пакет."
+        }
+        $roundtripCorpus = Join-Path $tempRoot ("annotation-roundtrip-$kind.json")
+        & $environmentPython -m language_review.evaluation annotation-import `
+            $evalCorpus $annotationPacket --output $roundtripCorpus
+        if ($LASTEXITCODE -ne 0) {
+            throw "Оценщик $kind не импортировал непроверенный слепой пакет."
+        }
+        & $environmentPython -c 'import json,sys; from pathlib import Path; assert json.loads(Path(sys.argv[1]).read_bytes()) == json.loads(Path(sys.argv[2]).read_bytes())' `
+            $roundtripCorpus $evalCorpus
+        if ($LASTEXITCODE -ne 0) {
+            throw "Оценщик $kind изменил разметку непроверенного слепого пакета."
+        }
+        $catalogOutput = (& $evalLauncher import-source --help) -join [Environment]::NewLine
+        if ($LASTEXITCODE -ne 0 -or $catalogOutput -notmatch 'rust-book-ru' -or
+            $catalogOutput -notmatch 'sage-github-ru') {
+            throw "Оценщик $kind не загрузил упакованный pinned каталог."
+        }
+        if ((Get-FileHash -LiteralPath $evalCorpus -Algorithm SHA256).Hash -ne $evalCorpusHash -or
+            (Get-FileHash -LiteralPath $evalReport -Algorithm SHA256).Hash -ne $evalReportHash -or
+            (Get-FileHash -LiteralPath $sampleFile -Algorithm SHA256).Hash -ne $sampleHash) {
+            throw "Оценщик $kind изменил входные данные."
+        }
         # Ожидаемый код 5 проверен выше; он не должен стать кодом завершения всего скрипта.
         $global:LASTEXITCODE = 0
-        Write-Output "${kind}: установка, CLI, python -m, scan, extract, check и review прошли."
+        Write-Output "${kind}: установка, CLI, python -m, scan, extract, check, review и eval прошли."
     }
 }
 finally {

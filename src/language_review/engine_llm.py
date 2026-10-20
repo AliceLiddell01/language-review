@@ -772,28 +772,39 @@ class LlmEngine:
                 with self.metrics_lock:
                     run.request_failures += 1
                 code = exc.code
+                http_status = exc.http_status if isinstance(exc, EngineHttpError) else None
                 trace.update(status="failed", reason=code)
                 if hasattr(exc, "metadata"):
                     trace["error"] = exc.metadata()
-                if self.budget and code in {
-                    "subscription_sharing_usage_limit_exceeded",
-                    "oauth_sign_in_required",
-                    "oauth_plan_permission_missing",
-                    "http_401",
-                    "http_403",
-                    "subscription_sharing_invalid_user",
-                }:
+                if self.budget and (
+                    http_status in {401, 403}
+                    or code
+                    in {
+                        "subscription_sharing_usage_limit_exceeded",
+                        "oauth_sign_in_required",
+                        "oauth_plan_permission_missing",
+                        "http_401",
+                        "http_403",
+                        "subscription_sharing_invalid_user",
+                    }
+                ):
                     self.budget.stopped = code
-                temporary = code in {
-                    "timeout",
-                    "connection_failed",
-                    "http_429",
-                    "http_502",
-                    "http_503",
-                    "http_504",
-                    "subscription_sharing_usage_unavailable",
-                    "subscription_sharing_user_unavailable",
-                }
+                temporary = (
+                    http_status == 429
+                    or (http_status is not None and 500 <= http_status < 600)
+                    or code
+                    in {
+                        "timeout",
+                        "connection_failed",
+                        "http_429",
+                        "rate_limit_exceeded",
+                        "http_502",
+                        "http_503",
+                        "http_504",
+                        "subscription_sharing_usage_unavailable",
+                        "subscription_sharing_user_unavailable",
+                    }
+                )
                 if not temporary or attempt + 1 == attempts:
                     raise
                 if self.budget:

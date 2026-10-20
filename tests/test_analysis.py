@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from language_review.chatgpt_http import CloudError
 from language_review.check import check_paths
 from language_review.check_models import ProbeResult
 from language_review.check_report import check_document, check_exit_code
@@ -291,6 +292,56 @@ def test_transient_retry_counts_actual_calls_once_and_quota_stops_remaining(
     )
     assert len(provider.calls) == 1 and result.engines[0].requests == 1
     assert result.status == "unavailable"
+
+
+@pytest.mark.parametrize(
+    ("code", "status"),
+    [
+        ("rate_limit_exceeded", 429),
+        ("rate_limit_exceeded", None),
+        ("server_error", 500),
+        ("server_error", 503),
+    ],
+)
+def test_cloud_http_status_retries_provider_error_codes(
+    tmp_path: Path, isolated_appdata: Path, code: str, status: int | None
+) -> None:
+    attempts = 0
+
+    def respond(_system: str, _payload: dict[str, Any]) -> Any:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise CloudError(code, status=status)
+        return {"findings": []}
+
+    provider = Provider(respond)
+    result = run(tmp_path, provider, text="Тут ошыбка.\n", analysis_retries=1)
+
+    assert result.status == "clean"
+    assert len(provider.calls) == 2
+    assert result.engines[0].details["analysis"]["retries"] == 1
+
+
+@pytest.mark.parametrize(("code", "status"), [("invalid_api_key", 401), ("forbidden", 403)])
+def test_cloud_auth_status_stops_remaining_requests(
+    tmp_path: Path, isolated_appdata: Path, code: str, status: int
+) -> None:
+    def respond(_system: str, _payload: dict[str, Any]) -> Any:
+        raise CloudError(code, status=status)
+
+    provider = Provider(respond)
+    result = run(
+        tmp_path,
+        provider,
+        analysis_retries=2,
+        analysis_concurrency=1,
+    )
+
+    assert len(provider.calls) == 1
+    analysis = result.engines[0].details["analysis"]
+    assert analysis["requests"] == 1
+    assert analysis["retries"] == 0
 
 
 @pytest.mark.parametrize("allow_memory", [False, True])

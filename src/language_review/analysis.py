@@ -127,6 +127,7 @@ def _verify(
                 "category": raw.category,
                 "excerpt": raw.engine_excerpt,
                 "replacements": list(raw.replacements),
+                "_view_range": (raw.start, raw.end) if raw.view == "llm" else None,
             }
         )
     row: dict[str, Any] = {
@@ -146,19 +147,41 @@ def _verify(
         return row
     for index, hypothesis in enumerate(hypotheses):
         hypothesis = dict(hypothesis)
+        view_range = hypothesis.pop("_view_range", None)
         hypothesis["id"] = str(index)
-        excerpt = hypothesis["excerpt"]
-        if not isinstance(excerpt, str) or not excerpt or text.count(excerpt) != 1:
+        if view_range is None:
             row["decisions"].append(
                 {
                     "id": str(index),
                     "hypothesis": hypothesis,
                     "decision": "uncertain",
-                    "evidence": "Цитата неоднозначна в masked context.",
+                    "evidence": "Позицию гипотезы нельзя отобразить в masked context.",
+                }
+            )
+            row.update(status="not_applicable", reason="verification_unlocalized")
+            if "verification_unlocalized" not in run.diagnostics:
+                run.diagnostics.append("verification_unlocalized")
+            continue
+        if (
+            not isinstance(view_range, tuple)
+            or len(view_range) != 2
+            or not all(isinstance(position, int) for position in view_range)
+            or not 0 <= view_range[0] < view_range[1] <= len(text)
+        ):
+            row["decisions"].append(
+                {
+                    "id": str(index),
+                    "hypothesis": hypothesis,
+                    "decision": "uncertain",
+                    "evidence": "Диапазон гипотезы не совпадает с masked context.",
                 }
             )
             row.update(status="failed", reason="verification_unlocalized")
+            if "verification_unlocalized" not in run.diagnostics:
+                run.diagnostics.append("verification_unlocalized")
             continue
+        excerpt = text[view_range[0] : view_range[1]]
+        hypothesis["excerpt"] = excerpt
         schema = {
             "type": "object",
             "additionalProperties": False,

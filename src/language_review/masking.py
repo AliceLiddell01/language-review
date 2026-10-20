@@ -172,6 +172,41 @@ class EngineView:
             return None
         return source_start, source_end
 
+    def view_position(self, position: int, side: str) -> int | None:
+        """Позиция вида для границы исходника; внутренности маски не угадываются."""
+        if side not in {"start", "end"}:
+            return None
+        candidates: list[int] = []
+        for segment in self.segments:
+            if not segment.source_start <= position <= segment.source_end:
+                continue
+            if not segment.masked:
+                if (
+                    segment.source_end - segment.source_start
+                    != segment.engine_end - segment.engine_start
+                ):
+                    return None
+                candidates.append(segment.engine_start + position - segment.source_start)
+            elif position == segment.source_start:
+                candidates.append(segment.engine_start)
+            elif position == segment.source_end:
+                candidates.append(segment.engine_end)
+            else:
+                return None
+        if not candidates:
+            return None
+        return max(candidates) if side == "start" else min(candidates)
+
+    def view_range(self, start: int, end: int) -> tuple[int, int] | None:
+        """Диапазон вида для исходного текста, включая целые замаскированные вставки."""
+        if start >= end:
+            return None
+        view_start = self.view_position(start, "start")
+        view_end = self.view_position(end, "end")
+        if view_start is None or view_end is None or view_start >= view_end:
+            return None
+        return view_start, view_end
+
     def overlaps_mask(self, start: int, end: int) -> bool:
         for segment in self.segments:
             if not segment.masked:

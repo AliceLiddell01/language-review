@@ -20,6 +20,51 @@ from language_review.config import CheckSettings, load_config
 from language_review.engine_chatgpt import ChatGptProvider
 from language_review.engine_languagetool import LanguageToolEngine
 from language_review.engine_llm import LlmEngine
+from language_review.masking import EngineView
+
+
+def _verify_local_hypothesis(
+    tmp_path: Path,
+    json_server: Any,
+    text: str,
+    misspellings: dict[str, list[str]],
+) -> tuple[Any, Provider]:
+    source = tmp_path / "input.txt"
+    source.write_text(text, encoding="utf-8")
+    json_server.responder = languagetool_responder(misspellings)
+    config = replace(
+        load_config(),
+        check=CheckSettings(
+            engines=("languagetool", "llm"),
+            languagetool_endpoint=json_server.url,
+            analysis_verify=True,
+        ),
+    )
+
+    def respond(_system: str, payload: dict[str, Any]) -> Any:
+        if "hypotheses" not in payload:
+            return {"findings": []}
+        [hypothesis] = payload["hypotheses"]
+        return {
+            "decisions": [
+                {
+                    "id": hypothesis["id"],
+                    "excerpt": hypothesis["excerpt"],
+                    "decision": "confirmed",
+                    "evidence": "Позиция сверена по синтетическому контексту.",
+                }
+            ]
+        }
+
+    provider = Provider(respond)
+    result = check_paths(
+        [str(source)],
+        config,
+        engine_factory=lambda name, settings: (
+            LlmEngine(settings, provider) if name == "llm" else LanguageToolEngine(settings)
+        ),
+    )
+    return result, provider
 
 
 @pytest.mark.parametrize("event", [{"type": []}, {"type": {}}])
@@ -172,3 +217,54 @@ def test_adaptive_conflict_with_local_engine_is_routed(
         "ошибка",
         "ошибочка",
     }
+
+
+@pytest.mark.parametrize(
+    ("text", "misspellings", "expected_excerpt"),
+    [
+        ("в доме и в поле.", {"в": ["во"]}, "в"),
+        (
+            "Используйте FooBar теперь.",
+            {"Используйте X теперь": ["Используйте FooBar правильно"]},
+            "Используйте ⟦1⟧ теперь",
+        ),
+    ],
+    ids=["repeated-quote", "protected-token"],
+)
+def test_verifier_uses_local_source_range_in_llm_view(
+    tmp_path: Path,
+    isolated_appdata: Path,
+    json_server: Any,
+    text: str,
+    misspellings: dict[str, list[str]],
+    expected_excerpt: str,
+) -> None:
+    result, provider = _verify_local_hypothesis(tmp_path, json_server, text, misspellings)
+
+    llm_run = next(engine for engine in result.engines if engine.name == "llm")
+    verification = llm_run.details["analysis"]["passes"][1]
+    assert result.status == "findings"
+    assert verification["status"] == "checked"
+    assert verification["decisions"][0]["decision"] == "confirmed"
+    assert verification["decisions"][0]["hypothesis"]["excerpt"] == expected_excerpt
+    assert provider.calls[1][1]["hypotheses"][0]["excerpt"] == expected_excerpt
+
+
+def test_unmappable_local_hypothesis_does_not_fail_check_unit(
+    tmp_path: Path,
+    isolated_appdata: Path,
+    json_server: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(EngineView, "view_range", lambda self, start, end: None)
+
+    result, _provider = _verify_local_hypothesis(
+        tmp_path, json_server, "в доме и в поле.", {"в": ["во"]}
+    )
+
+    llm_run = next(engine for engine in result.engines if engine.name == "llm")
+    verification = llm_run.details["analysis"]["passes"][1]
+    assert result.status == "findings"
+    assert verification["status"] == "not_applicable"
+    assert verification["reason"] == "verification_unlocalized"
+    assert "verification_unlocalized" in llm_run.diagnostics

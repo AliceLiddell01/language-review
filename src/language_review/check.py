@@ -657,6 +657,10 @@ def check_paths(
                 for candidate in document_candidates:
                     unit, raw = candidate.unit, candidate.raw
                     quote = source_excerpt(unit, candidate.source_start, candidate.source_end)
+                    view = unit.views["llm"]
+                    view_range = view.view_range(candidate.source_start, candidate.source_end)
+                    if view_range is not None:
+                        quote = view.text[view_range[0] : view_range[1]]
                     unit.hypotheses.append(
                         {
                             "engine": raw.engine,
@@ -664,6 +668,7 @@ def check_paths(
                             "category": raw.category,
                             "excerpt": quote,
                             "replacements": list(raw.replacements),
+                            "_view_range": view_range,
                         }
                     )
                     if any(item.status == "rejected" for item in candidate.suggestions):

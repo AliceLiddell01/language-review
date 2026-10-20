@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -375,21 +374,25 @@ def test_parallel_requests_respect_concurrency_and_global_budget(
 ) -> None:
     active = maximum = 0
     mutex = threading.Lock()
+    rendezvous = threading.Barrier(2, timeout=10)
 
     def respond(system: str, payload: dict[str, Any]) -> Any:
         nonlocal active, maximum
         with mutex:
             active += 1
             maximum = max(maximum, active)
-        time.sleep(0.05)
-        with mutex:
-            active -= 1
+        try:
+            rendezvous.wait()
+        finally:
+            with mutex:
+                active -= 1
         return {"findings": []}
 
     provider = Provider(respond)
     result = run(tmp_path, provider, analysis_concurrency=2, llm_batch_items=1)
     assert maximum == 2 and result.status == "clean" and result.engines[0].requests == 2
-    provider = Provider(respond)
+    # Бюджет разрешает только один вызов, поэтому второй сценарий не ждёт пару.
+    provider = Provider()
     result = run(
         tmp_path, provider, analysis_concurrency=2, llm_batch_items=1, analysis_max_requests=1
     )

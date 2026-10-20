@@ -541,7 +541,7 @@ class Store:
             ]
         )
 
-    def claim(self, project: str | None) -> dict[str, Any] | None:
+    def claim(self, project: str | None, *, lease_seconds: int = 300) -> dict[str, Any] | None:
         with self.connect() as db:
             db.execute(
                 "UPDATE lr_jobs j SET state='failed',error='attempts_exhausted' FROM lr_findings f "
@@ -561,11 +561,11 @@ class Store:
             if row is None:
                 return None
             owner = uuid4()
-            # Два bounded HTTP-запроса; lease длиннее их суммарного timeout.
+            # Lease учитывает время probe, completion и запас, заданный worker.
             db.execute(
                 "UPDATE lr_jobs SET state='running',attempts=attempts+1,owner=%s,"
-                "lease_until=clock_timestamp() + interval '5 minutes' WHERE id=%s",
-                (owner, row["id"]),
+                "lease_until=clock_timestamp() + %s * interval '1 second' WHERE id=%s",
+                (owner, lease_seconds, row["id"]),
             )
             row.update(owner=owner, attempts=row["attempts"] + 1)
             return dict(row)

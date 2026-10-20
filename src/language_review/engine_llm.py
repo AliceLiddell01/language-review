@@ -554,14 +554,11 @@ class LlmEngine:
         size = 0
         document: int | None = None
         for unit in units:
-            for offset, text in split_text(unit.views["llm"].text, self.settings.llm_batch_chars):
-                context_chars = (
-                    len(json.dumps(unit.memory_context, ensure_ascii=False))
-                    if unit.memory_context
-                    else 0
-                )
-                item_chars = len(text) + context_chars
-                too_big = size + item_chars > self.settings.llm_batch_chars
+            chunk_limit = self.settings.llm_batch_chars * (
+                MAX_CHUNK_FACTOR if unit.memory_context else 1
+            )
+            for offset, text in split_text(unit.views["llm"].text, chunk_limit):
+                too_big = size + len(text) > self.settings.llm_batch_chars
                 if batch and (
                     too_big
                     or len(batch) >= self.settings.llm_batch_items
@@ -570,7 +567,7 @@ class LlmEngine:
                     yield batch
                     batch, size = [], 0
                 batch.append(LlmItem(f"t{len(batch) + 1}", unit, offset, text))
-                size += item_chars
+                size += len(text)
                 document = unit.document_index
         if batch:
             yield batch
@@ -581,7 +578,10 @@ class LlmEngine:
         sendable: list[CheckUnit] = []
         limit = MAX_CHUNK_FACTOR * self.settings.llm_batch_chars
         for unit in units:
-            chunks = split_text(unit.views["llm"].text, self.settings.llm_batch_chars)
+            chunk_limit = self.settings.llm_batch_chars * (
+                MAX_CHUNK_FACTOR if unit.memory_context else 1
+            )
+            chunks = split_text(unit.views["llm"].text, chunk_limit)
             if any(len(text) > limit for _offset, text in chunks):
                 # Предложение без допустимой границы разбиения не отправляется модели целиком.
                 yield UnitOutcome(unit.index, "skipped", "unit_too_large")

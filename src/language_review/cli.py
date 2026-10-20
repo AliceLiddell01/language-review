@@ -425,7 +425,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Ошибка отчёта: {exc}", file=sys.stderr)
         return 3
     except MemoryFeatureError as exc:
-        print(f"Ошибка памяти: {exc}; успешная запись не подтверждена.", file=sys.stderr)
+        print(f"Ошибка памяти: {exc}.", file=sys.stderr)
         return 6
     except KeyboardInterrupt:
         print("Операция прервана.", file=sys.stderr)

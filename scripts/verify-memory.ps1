@@ -17,7 +17,8 @@ $listener.Stop()
 $names = @('LANGUAGE_REVIEW_DB_PASSWORD', 'LANGUAGE_REVIEW_DB_PORT',
     'LANGUAGE_REVIEW_MEMORY_DSN', 'LANGUAGE_REVIEW_MEMORY_TEST_DSN',
     'LANGUAGE_REVIEW_MEMORY_LIVE_LLM', 'LANGUAGE_REVIEW_MEMORY_EMBEDDING_MODEL',
-    'LANGUAGE_REVIEW_MEMORY_EMBEDDING_REVISION', 'LANGUAGE_REVIEW_MEMORY_EMBEDDING_DIMENSIONS')
+    'LANGUAGE_REVIEW_MEMORY_EMBEDDING_REVISION', 'LANGUAGE_REVIEW_MEMORY_EMBEDDING_DIMENSIONS',
+    'APPDATA', 'XDG_CONFIG_HOME')
 $previous = @{}
 foreach ($name in $names) { $previous[$name] = [Environment]::GetEnvironmentVariable($name) }
 function Invoke-Checked([string]$Executable, [string[]]$CommandArguments) {
@@ -36,6 +37,9 @@ try {
     $env:LANGUAGE_REVIEW_MEMORY_EMBEDDING_MODEL = $EmbeddingModel
     $env:LANGUAGE_REVIEW_MEMORY_EMBEDDING_REVISION = $EmbeddingRevision
     $env:LANGUAGE_REVIEW_MEMORY_EMBEDDING_DIMENSIONS = [string]$EmbeddingDimensions
+    $env:APPDATA = Join-Path $scratch 'appdata'
+    $env:XDG_CONFIG_HOME = Join-Path $scratch 'xdg-config'
+    New-Item -ItemType Directory -Force -Path $env:APPDATA, $env:XDG_CONFIG_HOME | Out-Null
     Invoke-Checked docker ($compose + @('up', '-d', '--wait'))
     Invoke-Checked uv @('run','--locked','--extra','memory','language-review','memory','migrate')
     Invoke-Checked uv @('run','--locked','--extra','memory','language-review','memory','health')

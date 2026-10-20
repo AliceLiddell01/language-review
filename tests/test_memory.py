@@ -13,7 +13,8 @@ from conftest import JsonServer, RecordedRequest
 from support.check_helpers import _config, _run
 
 from language_review.check_models import CheckUnit
-from language_review.config import load_config
+from language_review.config import CheckSettings, load_config
+from language_review.engine_llm import LlmEngine
 from language_review.errors import ConfigurationError, InputError
 from language_review.extract_models import ExtractDocument
 from language_review.masking import EngineView
@@ -24,6 +25,7 @@ from language_review.memory.safety import safe_text, sanitize
 from language_review.memory.search import Embedder, RecallRequest, recall_many
 from language_review.memory.settings import MemorySettings, validate_memory
 from language_review.memory.store import MemoryFeatureError, Store
+from language_review.memory.worker import worker_lease_seconds
 
 
 @pytest.mark.parametrize(
@@ -113,8 +115,78 @@ def test_memory_disabled_never_connects_and_enabled_fails_closed(
 
 
 def test_memory_decision_schema_rejects_invented_status_and_foreign_keys() -> None:
+    decision = {
+        "schema": "language-review.decision",
+        "schema_version": "1.0",
+        "project_id": str(uuid4()),
+        "run_id": str(uuid4()),
+        "item_id": "item-1",
+        "decision": {
+            "id": str(uuid4()),
+            "expected_revision": 0,
+            "status": "accepted",
+            "actor": "reviewer",
+            "reason": "Проверено.",
+            "suggestion": None,
+            "scope": "project",
+            "public_rule": None,
+        },
+    }
+    invalid_status = json.loads(json.dumps(decision))
+    invalid_status["decision"]["status"] = "model_confirmed"
     with pytest.raises(InputError, match="контракт"):
-        submit_decision(Store(MemorySettings()), {"status": "model_confirmed"})
+        submit_decision(Store(MemorySettings()), invalid_status)
+
+    foreign_key = json.loads(json.dumps(decision))
+    foreign_key["foreign_key"] = "unexpected"
+    with pytest.raises(InputError, match="контракт"):
+        submit_decision(Store(MemorySettings()), foreign_key)
+
+
+@pytest.mark.parametrize(
+    ("timeout", "expected"),
+    [(180.0, 220), (3600.0, 3640), (5.0, 40)],
+)
+def test_worker_lease_covers_probe_and_configured_llm_timeout(
+    timeout: float, expected: int
+) -> None:
+    assert worker_lease_seconds(CheckSettings(llm_timeout_seconds=timeout)) == expected
+
+
+def test_llm_batching_does_not_count_or_repeat_memory_context_per_small_chunk() -> None:
+    document = ExtractDocument(
+        id="doc-1",
+        root="root",
+        path="guide.md",
+        language="ru",
+        format="markdown",
+        profile=None,
+        status="ok",
+    )
+
+    def unit(index: int, text: str) -> CheckUnit:
+        return CheckUnit(
+            index=index,
+            document_index=0,
+            document=document,
+            fragments=(),
+            fragment_ids=(),
+            kind="paragraph",
+            context="",
+            sentence_start=True,
+            views={"llm": EngineView(text, ())},
+            engines=("llm",),
+            terms={},
+            memory_context=[{"id": "historical", "text": "x" * 4000}],
+        )
+
+    engine = LlmEngine(CheckSettings(llm_batch_chars=1500))
+    pair = list(engine._batches([unit(1, "a" * 500), unit(2, "b" * 500)]))
+    assert len(pair) == 1 and len(pair[0]) == 2
+
+    split_candidate = unit(3, "Предложение. " * 180)
+    chunks = list(engine._batches([split_candidate]))
+    assert len(chunks) == 1 and len(chunks[0]) == 1
 
 
 def test_worker_cli_requires_one_explicit_scope(

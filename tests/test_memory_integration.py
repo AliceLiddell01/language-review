@@ -249,7 +249,6 @@ class ConsolidationProvider:
 @pytest.mark.parametrize(
     "mode,code",
     [
-        ("empty", "no_rules"),
         ("invalid", "schema_invalid"),
         ("forged", "evidence_invalid"),
         ("timeout", "timeout"),
@@ -267,6 +266,19 @@ def test_llm_failure_preserves_events_and_observable_retry(
     assert sum(row["count"] for row in status["findings"]) == 2
     assert status["rules"] == []
     assert status["recent_errors"]
+
+
+def test_worker_accepts_empty_rules_as_a_successful_noop(stored: dict) -> None:
+    result = process_one(
+        stored["store"], stored["project"], CheckSettings(), ConsolidationProvider("empty")
+    )
+    assert result and result["status"] == "done" and result["rules"] == 0
+    status = stored["store"].status(stored["project"])
+    assert status["rules"] == []
+    assert not status["recent_errors"]
+    with stored["store"].connect() as db:
+        job = db.execute("SELECT state FROM lr_jobs WHERE id=%s", (result["job"],)).fetchone()
+    assert job == {"state": "done"}
 
 
 def test_worker_fencing_recovery_and_hypotheses_never_promote_observations(stored: dict) -> None:
@@ -393,7 +405,7 @@ def test_automatic_recall_reaches_real_llm_transport_and_keeps_protected_tokens(
 def test_retry_budget_and_recovery_are_observable(stored: dict) -> None:
     store = Store(replace(stored["store"].settings, max_attempts=1))
     assert (
-        process_one(store, stored["project"], CheckSettings(), ConsolidationProvider("empty"))[
+        process_one(store, stored["project"], CheckSettings(), ConsolidationProvider("timeout"))[
             "status"
         ]
         == "retry_or_failed"
@@ -404,7 +416,7 @@ def test_retry_budget_and_recovery_are_observable(stored: dict) -> None:
             "WHERE f.project_id=%s AND j.state='failed'",
             (stored["project"],),
         ).fetchone()
-    assert job["attempts"] == 1 and job["error"] == "memory_llm_no_rules"
+    assert job["attempts"] == 1 and job["error"] == "memory_llm_timeout"
     assert store.retry(stored["project"]) == 1
     with store.connect() as db:
         restored = db.execute(

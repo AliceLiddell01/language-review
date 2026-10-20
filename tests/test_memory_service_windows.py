@@ -74,6 +74,9 @@ def test_installer_rejects_invalid_compose_identity_before_any_side_effect(
         check=False,
     )
     assert result.returncode != 0
+    stderr = result.stderr.decode(errors="replace")
+    assert "Project" in stderr
+    assert project in stderr
     assert not runtime.exists()
 
 
@@ -88,12 +91,17 @@ def test_installer_preserves_unrelated_nonempty_directory(tmp_path: Path) -> Non
             str(Path(__file__).parents[1] / "scripts" / "install-memory-service.ps1"),
             "-RuntimeDirectory",
             str(tmp_path),
+            "-Project",
+            "language-review-test",
         ],
         capture_output=True,
         timeout=30,
         check=False,
     )
     assert result.returncode != 0
+    assert "Refusing to change permissions of a nonempty directory" in result.stderr.decode(
+        errors="replace"
+    )
     assert marker.read_text("utf-8") == "Keep these bytes"
     assert sorted(path.name for path in tmp_path.iterdir()) == ["unrelated.txt"]
 

@@ -38,8 +38,9 @@ Job Object; периодический trigger с `IgnoreNew` обеспечив
 удалены, основной worker продолжает работу. Пользовательский Hindsight не менялся:
 его container ID, время старта и mounts до/после совпали.
 
-PASS: Windows `verify-memory.ps1` — 51 passed, 3 live skips (модели проверены отдельно
-через service acceptance); финальный локальный pytest — 503 passed, 32 skipped;
+Сводка проверок runtime commit `a38a04c`: Windows `verify-memory.ps1` — 51 passed,
+3 live skips (модели проверены отдельно через service acceptance); полный локальный
+pytest на этом commit — 503 passed, 32 skipped;
 wheel/sdist smoke; Ruff/mypy/actionlint/валидаторы; CI на этом runtime
 commit: Windows 499 passed, 36 skipped, пакет; Ubuntu quality и PostgreSQL 51 passed,
 3 skipped; CodeQL. Пропуски не объявляются проверкой внешних языковых движков.

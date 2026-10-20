@@ -48,8 +48,26 @@ def cosine(first: list[float], second: list[float]) -> float:
 
 def benchmark(model: str) -> dict:
     tags = request_json("http://127.0.0.1:11434/api/tags", timeout=10).body["models"]
-    revision = next(row["digest"] for row in tags if row["name"] == model)
-    dimensions = 768 if model.startswith("embeddinggemma") else 1024
+    installed = next(
+        (row for row in tags if isinstance(row, dict) and row.get("name") == model), None
+    )
+    if installed is None or not isinstance(installed.get("digest"), str):
+        raise ValueError(f"Ollama model is not installed or has no digest: {model}")
+    revision = installed["digest"]
+    probe = request_json(
+        "http://127.0.0.1:11434/api/embed",
+        payload={"model": model, "input": ["language-review embedding dimension probe"]},
+        timeout=120,
+    ).body
+    embeddings = probe.get("embeddings") if isinstance(probe, dict) else None
+    if (
+        not isinstance(embeddings, list)
+        or len(embeddings) != 1
+        or not isinstance(embeddings[0], list)
+        or not embeddings[0]
+    ):
+        raise ValueError(f"Ollama returned no embedding dimensions for model: {model}")
+    dimensions = len(embeddings[0])
     embedder = Embedder(
         Store(
             MemorySettings(

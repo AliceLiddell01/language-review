@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from copy import deepcopy
 from typing import Any
 
@@ -60,10 +61,16 @@ SCHEMA: dict[str, Any] = {
 }
 
 
+def worker_lease_seconds(settings: CheckSettings) -> int:
+    """Длительность lease покрывает probe, completion и сетевой запас."""
+    timeout = settings.llm_timeout_seconds
+    return math.ceil(min(timeout, 10.0) + timeout + 30.0)
+
+
 def process_one(
     store: Store, project: str | None, settings: CheckSettings, provider: Provider | None = None
 ) -> dict[str, Any] | None:
-    job = store.claim(project)
+    job = store.claim(project, lease_seconds=worker_lease_seconds(settings))
     if job is None:
         return None
     project = str(job["project_id"])
@@ -128,8 +135,6 @@ def process_one(
             Draft202012Validator(schema).validate(document)
         except (ValueError, ValidationError) as exc:
             raise MemoryFeatureError("memory_llm_schema_invalid") from exc
-        if not document["rules"]:
-            raise MemoryFeatureError("memory_llm_no_rules")
         permitted = {row["id"] for row in cases}
         for rule in document["rules"]:
             rule["evidence"] = [aliases[alias] for alias in rule["evidence"]]

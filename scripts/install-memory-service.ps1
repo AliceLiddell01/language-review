@@ -111,6 +111,7 @@ try {
     $sourceDirty = [bool](& git status --porcelain=v1 --untracked-files=normal)
 } finally { Pop-Location }
 $workerConfig = Join-Path $runtime 'worker.toml'
+$candidateWorkerConfig = Join-Path $release 'worker.toml'
 $configText = @"
 [check]
 engines = ["llm"]
@@ -127,20 +128,7 @@ embedding_model = "$EmbeddingModel"
 embedding_revision = "$EmbeddingRevision"
 embedding_dimensions = $EmbeddingDimensions
 "@
-# Prepare ready release before replacing an active task. Existing credentials/volume stay.
-if ($existingTask) {
-    Stop-ScheduledTask -TaskName $taskName
-    $deadline = [DateTime]::UtcNow.AddSeconds(30)
-    while ((Get-ScheduledTask -TaskName $taskName).State -eq 'Running') {
-        if ([DateTime]::UtcNow -gt $deadline) { throw 'Existing task did not stop.' }
-        Start-Sleep -Milliseconds 250
-    }
-}
-Set-Content -LiteralPath $workerConfig -Value $configText -Encoding utf8NoBOM
-Copy-Item -LiteralPath (Join-Path $source 'compose.memory.yml') -Destination $runtime -Force
-foreach ($file in @('connect-memory.ps1', 'run-memory-service.ps1', 'run-memory-service.pyw')) {
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $runtime -Force
-}
+Set-Content -LiteralPath $candidateWorkerConfig -Value $configText -Encoding utf8NoBOM
 $deployment = [ordered]@{
     project = $Project; port = $Port; task = $taskName; python = $python; docker = $docker; pwsh = $pwsh
     config = $workerConfig; release = $release; source_sha = $sourceSha; source_dirty = $sourceDirty
@@ -149,38 +137,91 @@ $deployment = [ordered]@{
     llm_model = $LlmModel; llm_revision = $llm[0].digest
     embedding_model = $EmbeddingModel; embedding_revision = $EmbeddingRevision
 }
-$deployment | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding utf8NoBOM
-. (Join-Path $runtime 'connect-memory.ps1')
-& $docker compose -f (Join-Path $runtime 'compose.memory.yml') -p $Project up -d --wait --wait-timeout 120
-if ($LASTEXITCODE -ne 0) { throw 'Database startup failed; credentials and volume preserved.' }
-& $python -I -m language_review --config $workerConfig memory migrate
-if ($LASTEXITCODE -ne 0) { throw 'Database migration failed; task not started.' }
-& $python -I -m language_review --config $workerConfig memory health
-if ($LASTEXITCODE -ne 0) { throw 'Database health failed; task not started.' }
-$action = New-ScheduledTaskAction -Execute $pythonw -Argument (
-    '-I "' + (Join-Path $runtime 'run-memory-service.pyw') + '"')
-$trigger = @(
-    (New-ScheduledTaskTrigger -AtLogOn -User $identity.Name),
-    (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1))
+$taskPaused = $false
+$databaseEnvironment = @(
+    'LANGUAGE_REVIEW_DB_PASSWORD',
+    'LANGUAGE_REVIEW_DB_PORT',
+    'LANGUAGE_REVIEW_MEMORY_DSN'
 )
-$principal = New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew `
-    -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
-    -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal `
-    -Settings $settings -Description "Language Review memory: $runtime" -Force | Out-Null
-Start-ScheduledTask -TaskName $taskName
-$deadline = [DateTime]::UtcNow.AddSeconds(45)
-$stateFile = Join-Path $runtime 'logs\service-state.json'
-$started = [DateTime]::UtcNow.AddSeconds(-2)
-do {
-    Start-Sleep -Milliseconds 500
-    $ready = if (Test-Path -LiteralPath $stateFile) {
-        Get-Content -Raw -LiteralPath $stateFile | ConvertFrom-Json
-    } else { $null }
-    if ($ready -and $ready.release -eq $release -and [DateTime]$ready.at -gt $started) { break }
-} while ([DateTime]::UtcNow -lt $deadline)
-if (-not $ready -or $ready.release -ne $release -or [DateTime]$ready.at -lt $started -or $ready.status -eq 'waiting') {
-    throw "Task did not report readiness; inspect $stateFile and logs."
+$previousDatabaseEnvironment = @{}
+foreach ($name in $databaseEnvironment) {
+    $previousDatabaseEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
-Write-Output "Installed: $taskName ($($ready.status)); state: $stateFile"
+try {
+    if ($existingTask) {
+        $taskPaused = $true
+        Stop-ScheduledTask -TaskName $taskName
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        while ((Get-ScheduledTask -TaskName $taskName).State -eq 'Running') {
+            if ([DateTime]::UtcNow -gt $deadline) { throw 'Existing task did not stop.' }
+            Start-Sleep -Milliseconds 250
+        }
+        Disable-ScheduledTask -TaskName $taskName | Out-Null
+    }
+
+    try {
+        $credential = Import-Clixml -LiteralPath $credentialPath
+        $password = $credential.GetNetworkCredential().Password
+        $env:LANGUAGE_REVIEW_DB_PASSWORD = $password
+        $env:LANGUAGE_REVIEW_DB_PORT = [string]$Port
+        $env:LANGUAGE_REVIEW_MEMORY_DSN = "postgresql://language_review:$password@127.0.0.1:$Port/language_review"
+
+        & $docker compose -f (Join-Path $source 'compose.memory.yml') -p $Project up -d --wait --wait-timeout 120
+        if ($LASTEXITCODE -ne 0) { throw 'Database startup failed; credentials and volume preserved.' }
+        & $python -I -m language_review --config $candidateWorkerConfig memory migrate
+        if ($LASTEXITCODE -ne 0) { throw 'Database migration failed; active release was preserved.' }
+        & $python -I -m language_review --config $candidateWorkerConfig memory health
+        if ($LASTEXITCODE -ne 0) { throw 'Database health failed; active release was preserved.' }
+    } finally {
+        foreach ($name in $databaseEnvironment) {
+            [Environment]::SetEnvironmentVariable($name, $previousDatabaseEnvironment[$name], 'Process')
+        }
+        Remove-Variable credential, password -ErrorAction SilentlyContinue
+    }
+
+    Copy-Item -LiteralPath (Join-Path $source 'compose.memory.yml') -Destination $runtime -Force
+    foreach ($file in @('connect-memory.ps1', 'run-memory-service.ps1', 'run-memory-service.pyw')) {
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $runtime -Force
+    }
+    $workerConfigTemp = Join-Path $runtime ('worker.toml.' + [guid]::NewGuid().ToString('N') + '.tmp')
+    Copy-Item -LiteralPath $candidateWorkerConfig -Destination $workerConfigTemp
+    [IO.File]::Move($workerConfigTemp, $workerConfig, $true)
+    $manifestTemp = Join-Path $runtime ('deployment.json.' + [guid]::NewGuid().ToString('N') + '.tmp')
+    $deployment | ConvertTo-Json | Set-Content -LiteralPath $manifestTemp -Encoding utf8NoBOM
+    [IO.File]::Move($manifestTemp, $manifestPath, $true)
+
+    $action = New-ScheduledTaskAction -Execute $pythonw -Argument (
+        '-I "' + (Join-Path $runtime 'run-memory-service.pyw') + '"')
+    $trigger = @(
+        (New-ScheduledTaskTrigger -AtLogOn -User $identity.Name),
+        (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1))
+    )
+    $principal = New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType Interactive -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew `
+        -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
+        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal `
+        -Settings $settings -Description "Language Review memory: $runtime" -Force | Out-Null
+    Enable-ScheduledTask -TaskName $taskName | Out-Null
+    $taskPaused = $false
+    Start-ScheduledTask -TaskName $taskName
+    $deadline = [DateTime]::UtcNow.AddSeconds(45)
+    $stateFile = Join-Path $runtime 'logs\service-state.json'
+    $started = [DateTime]::UtcNow.AddSeconds(-2)
+    do {
+        Start-Sleep -Milliseconds 500
+        $ready = if (Test-Path -LiteralPath $stateFile) {
+            Get-Content -Raw -LiteralPath $stateFile | ConvertFrom-Json
+        } else { $null }
+        if ($ready -and $ready.release -eq $release -and [DateTime]$ready.at -gt $started) { break }
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if (-not $ready -or $ready.release -ne $release -or [DateTime]$ready.at -lt $started -or $ready.status -eq 'waiting') {
+        throw "Task did not report readiness; inspect $stateFile and logs."
+    }
+    Write-Output "Installed: $taskName ($($ready.status)); state: $stateFile"
+} finally {
+    if ($taskPaused) {
+        Enable-ScheduledTask -TaskName $taskName | Out-Null
+        Start-ScheduledTask -TaskName $taskName
+    }
+}

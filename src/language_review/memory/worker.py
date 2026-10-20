@@ -18,7 +18,7 @@ from language_review.engine_llm import (
 )
 from language_review.memory.safety import digest, sanitize, unique_object
 from language_review.memory.search import index_rules
-from language_review.memory.store import MemoryError, Store
+from language_review.memory.store import MemoryFeatureError, Store
 
 PROMPT_VERSION = "language-memory-consolidation/2"
 SYSTEM_PROMPT = """Ты классифицируешь предметные наблюдения о русском техническом языке.
@@ -80,7 +80,7 @@ def process_one(
                 )
                 return {"job": job["id"], "status": "done", "stale": True, "rules": 0}
             if current["dataset"] in {"test", "holdout"}:
-                raise MemoryError("memory_evaluation_leakage_refused")
+                raise MemoryFeatureError("memory_evaluation_leakage_refused")
             related = db.execute(
                 "SELECT * FROM lr_findings WHERE project_id=%s AND dataset=%s AND id!=%s "
                 "AND payload->>'category'=%s ORDER BY created_at DESC,id LIMIT 16",
@@ -115,21 +115,21 @@ def process_one(
         client = provider or create_provider(settings)
         probe = client.probe()
         if probe.status != "available":
-            raise MemoryError("memory_llm_unavailable")
+            raise MemoryFeatureError("memory_llm_unavailable")
         reply = client.complete(
             SYSTEM_PROMPT,
             json.dumps({"current": "c1", "cases": data}, ensure_ascii=False),
             schema,
         )
         if reply.truncated:
-            raise MemoryError("memory_llm_truncated")
+            raise MemoryFeatureError("memory_llm_truncated")
         try:
             document = json.loads(reply.content, object_pairs_hook=unique_object)
             Draft202012Validator(schema).validate(document)
         except (ValueError, ValidationError) as exc:
-            raise MemoryError("memory_llm_schema_invalid") from exc
+            raise MemoryFeatureError("memory_llm_schema_invalid") from exc
         if not document["rules"]:
-            raise MemoryError("memory_llm_no_rules")
+            raise MemoryFeatureError("memory_llm_no_rules")
         permitted = {row["id"] for row in cases}
         for rule in document["rules"]:
             rule["evidence"] = [aliases[alias] for alias in rule["evidence"]]
@@ -140,7 +140,7 @@ def process_one(
                 or sanitize(rule) != rule
                 or not rule["text"].strip()
             ):
-                raise MemoryError("memory_llm_evidence_invalid")
+                raise MemoryFeatureError("memory_llm_evidence_invalid")
         with store.connect() as db:
             owned = db.execute(
                 "SELECT * FROM lr_jobs WHERE id=%s AND owner=%s AND state='running' "
@@ -148,7 +148,7 @@ def process_one(
                 (job["id"], job["owner"]),
             ).fetchone()
             if owned is None:
-                raise MemoryError("memory_worker_lease_lost")
+                raise MemoryFeatureError("memory_worker_lease_lost")
             # Сериализуем решения и публикацию; устаревший LLM ответ отбрасывается.
             locked = db.execute(
                 "SELECT id,revision FROM lr_findings WHERE id=ANY(%s) ORDER BY id FOR UPDATE",
@@ -216,7 +216,7 @@ def process_one(
         code = f"memory_llm_{exc.code}"
         store.fail(job, code)
         return {"job": job["id"], "status": "retry_or_failed", "reason": code}
-    except MemoryError as exc:
+    except MemoryFeatureError as exc:
         store.fail(job, str(exc))
         return {"job": job["id"], "status": "retry_or_failed", "reason": str(exc)}
 
@@ -225,7 +225,7 @@ def work(
     store: Store, project: str | None, settings: CheckSettings, *, limit: int = 8
 ) -> dict[str, Any]:
     if not 1 <= limit <= 256:
-        raise MemoryError("memory_worker_limit_invalid")
+        raise MemoryFeatureError("memory_worker_limit_invalid")
     results = []
     for _ in range(limit):
         result = process_one(store, project, settings)
@@ -256,7 +256,7 @@ def work(
             break
         try:
             indexed["indexed"] += index_rules(store, identifier, limit=remaining)["indexed"]
-        except MemoryError as exc:
+        except MemoryFeatureError as exc:
             errors.append({"project": identifier, "reason": str(exc)})
     if errors:
         indexed["errors"] = errors

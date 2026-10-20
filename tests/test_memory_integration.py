@@ -27,7 +27,7 @@ from language_review.memory.cli import submit_decision
 from language_review.memory.pipeline import import_review
 from language_review.memory.search import index_rules, recall
 from language_review.memory.settings import MemorySettings
-from language_review.memory.store import MemoryError, Store
+from language_review.memory.store import MemoryFeatureError, Store
 from language_review.memory.worker import process_one
 from language_review.review_report import review_document
 
@@ -139,7 +139,7 @@ def test_explicit_decisions_are_idempotent_revisioned_and_negative_cases_remain_
     assert submit_decision(store, first)["revision"] == 1
     assert submit_decision(store, first)["duplicate"] is True
     stale = decision(stored, "disputed")
-    with pytest.raises(MemoryError, match="revision_conflict"):
+    with pytest.raises(MemoryFeatureError, match="revision_conflict"):
         submit_decision(store, stale)
     for revision, state in [(1, "rejected"), (2, "disputed")]:
         assert submit_decision(store, decision(stored, state, revision))["revision"] == revision + 1
@@ -163,7 +163,7 @@ def test_concurrent_decisions_require_one_content_revision_and_isolate_projects(
         try:
             submit_decision(store, decision(stored))
             return "committed"
-        except MemoryError as exc:
+        except MemoryFeatureError as exc:
             return str(exc)
 
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -177,7 +177,7 @@ def test_concurrent_decisions_require_one_content_revision_and_isolate_projects(
     ]
     foreign = decision(stored, revision=1)
     foreign["project_id"] = str(uuid4())
-    with pytest.raises(MemoryError, match="not_in_project"):
+    with pytest.raises(MemoryFeatureError, match="not_in_project"):
         submit_decision(store, foreign)
 
 
@@ -194,7 +194,7 @@ def test_import_uses_existing_source_verifier_and_idempotent_provenance(
     altered = json.loads(report_path.read_text("utf-8"))
     altered["items"][0]["excerpt"] = "чужой текст"
     report_path.write_text(json.dumps(altered, ensure_ascii=False), encoding="utf-8")
-    with pytest.raises((MemoryError, InputError)):
+    with pytest.raises((MemoryFeatureError, InputError)):
         import_review(stored["store"], report_path, roots, projects, "synthetic")
     report_path.write_text("{}", encoding="utf-8")
     with pytest.raises(InputError):
@@ -318,7 +318,7 @@ def test_holdout_events_are_quarantined_from_worker_index_and_decisions(stored: 
         [str(stored["source"])], stored["config"], memory_options={"dataset": "holdout"}
     )
     quarantined = {**stored, "run": result.memory["run_id"]}
-    with pytest.raises(MemoryError, match="leakage"):
+    with pytest.raises(MemoryFeatureError, match="leakage"):
         submit_decision(stored["store"], decision(quarantined))
     with stored["store"].connect() as db:
         jobs = db.execute(
@@ -428,7 +428,7 @@ def test_schema_migration_is_idempotent_and_detects_drift(stored: dict) -> None:
             return "SELECT 'different migration';"
 
     with patch("language_review.memory.store.files", return_value=AlteredMigration()):
-        with pytest.raises(MemoryError, match="migration_mismatch"):
+        with pytest.raises(MemoryFeatureError, match="migration_mismatch"):
             store.migrate()
 
 
@@ -437,7 +437,7 @@ def test_global_scope_requires_reviewed_public_text_and_never_exports_private_co
 ) -> None:
     document = decision(stored)
     document["decision"].update(scope="global", public_rule=None)
-    with pytest.raises(MemoryError, match="public_rule_required"):
+    with pytest.raises(MemoryFeatureError, match="public_rule_required"):
         submit_decision(stored["store"], document)
     term = "Контрольныйтермин" + uuid4().hex
     document["decision"]["public_rule"] = term + " — точное техническое имя в документации."
@@ -452,7 +452,7 @@ def test_global_scope_requires_reviewed_public_text_and_never_exports_private_co
 def test_conflicting_delivery_rolls_back_without_erasing_original(stored: dict) -> None:
     altered = json.loads(json.dumps(stored["report"]))
     altered["items"][0]["excerpt"] = "подменённое наблюдение"
-    with pytest.raises(MemoryError, match="delivery_conflict"):
+    with pytest.raises(MemoryFeatureError, match="delivery_conflict"):
         stored["store"].ingest(stored["run"], altered, {})
     with stored["store"].connect() as db:
         row = db.execute("SELECT report FROM lr_runs WHERE id=%s", (stored["run"],)).fetchone()

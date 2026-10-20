@@ -17,7 +17,7 @@ from language_review.memory.safety import digest, sanitize
 from language_review.memory.settings import MemorySettings, project_uuid
 
 
-class MemoryError(Exception):
+class MemoryFeatureError(Exception):
     """Диагностический код без DSN, SQL, текста источников и ошибок сервера."""
 
 
@@ -32,10 +32,10 @@ class Store:
             from psycopg.conninfo import conninfo_to_dict
             from psycopg.rows import dict_row
         except ImportError as exc:
-            raise MemoryError("memory_extra_missing") from exc
+            raise MemoryFeatureError("memory_extra_missing") from exc
         dsn = os.environ.get(self.settings.dsn_env, "")
         if not dsn:
-            raise MemoryError("memory_dsn_missing")
+            raise MemoryFeatureError("memory_dsn_missing")
         try:
             parameters = conninfo_to_dict(dsn)
             if (
@@ -45,7 +45,7 @@ class Store:
                 or "service" in parameters
                 or "options" in parameters
             ):
-                raise MemoryError("memory_loopback_required")
+                raise MemoryFeatureError("memory_loopback_required")
             with psycopg.connect(
                 dsn,
                 connect_timeout=3,
@@ -54,7 +54,7 @@ class Store:
             ) as connection:
                 yield connection
         except psycopg.Error as exc:
-            raise MemoryError("memory_database_failed") from exc
+            raise MemoryFeatureError("memory_database_failed") from exc
 
     def migrate(self) -> dict[str, Any]:
         script = files("language_review.memory").joinpath("migrations/001.sql").read_text("utf-8")
@@ -70,7 +70,7 @@ class Store:
             ).fetchall()
             if rows:
                 if rows != [{"version": 1, "checksum": checksum}]:
-                    raise MemoryError("memory_migration_mismatch")
+                    raise MemoryFeatureError("memory_migration_mismatch")
             else:
                 db.execute(script)
                 db.execute(
@@ -85,12 +85,12 @@ class Store:
                 files("language_review.memory").joinpath("migrations/001.sql").read_text("utf-8")
             )
             if migration != [{"version": 1, "checksum": digest(script)}]:
-                raise MemoryError("memory_migration_required")
+                raise MemoryFeatureError("memory_migration_required")
             extension = db.execute(
                 "SELECT extversion FROM pg_extension WHERE extname='vector'"
             ).fetchone()
             if extension is None:
-                raise MemoryError("memory_vector_missing")
+                raise MemoryFeatureError("memory_vector_missing")
             server = db.execute("SHOW server_version").fetchone()["server_version"]
         return {
             "status": "ready",
@@ -102,9 +102,9 @@ class Store:
     def begin(self, run_id: str, bindings: dict[str, str], dataset: str, provenance: str) -> None:
         run_id = str(UUID(run_id))
         if dataset not in {"operational", "synthetic", "train", "dev", "test", "holdout"}:
-            raise MemoryError("memory_dataset_invalid")
+            raise MemoryFeatureError("memory_dataset_invalid")
         if not bindings or provenance not in {"live", "historical"}:
-            raise MemoryError("memory_provenance_required")
+            raise MemoryFeatureError("memory_provenance_required")
         bindings = {root: project_uuid(value) for root, value in bindings.items()}
         with self.connect() as db:
             for project in sorted(set(bindings.values())):
@@ -122,7 +122,7 @@ class Store:
                 or row["dataset"] != dataset
                 or row["provenance"] != provenance
             ):
-                raise MemoryError("memory_run_identity_conflict")
+                raise MemoryFeatureError("memory_run_identity_conflict")
 
     @staticmethod
     def json(value: Any) -> Any:
@@ -153,10 +153,10 @@ class Store:
         with self.connect() as db:
             run = db.execute("SELECT * FROM lr_runs WHERE id=%s FOR UPDATE", (run_id,)).fetchone()
             if run is None:
-                raise MemoryError("memory_run_unknown")
+                raise MemoryFeatureError("memory_run_unknown")
             if run["report_hash"] is not None:
                 if run["report_hash"] != fingerprint:
-                    raise MemoryError("memory_delivery_conflict")
+                    raise MemoryFeatureError("memory_delivery_conflict")
                 return {
                     "status": "committed",
                     "run_id": run_id,
@@ -166,7 +166,7 @@ class Store:
             bindings = run["bindings"]
             documents = {doc["id"]: doc for doc in report["analysis"]["documents"]}
             if set(bindings) != {root["id"] for root in report["analysis"]["roots"]}:
-                raise MemoryError("memory_project_binding_mismatch")
+                raise MemoryFeatureError("memory_project_binding_mismatch")
             for doc in cleaned["analysis"]["documents"]:
                 db.execute(
                     "INSERT INTO lr_documents(run_id,id,project_id,payload) VALUES (%s,%s,%s,%s)",
@@ -271,13 +271,13 @@ class Store:
             "rejected",
             "disputed",
         }:
-            raise MemoryError("memory_decision_invalid")
+            raise MemoryFeatureError("memory_decision_invalid")
         if decision["scope"] not in {"project", "global"}:
-            raise MemoryError("memory_decision_scope_invalid")
+            raise MemoryFeatureError("memory_decision_scope_invalid")
         try:
             decision["id"] = str(UUID(decision["id"]))
         except (ValueError, TypeError, AttributeError) as exc:
-            raise MemoryError("memory_decision_id_invalid") from exc
+            raise MemoryFeatureError("memory_decision_id_invalid") from exc
         for key in ("actor", "reason"):
             value = decision[key]
             if (
@@ -286,9 +286,9 @@ class Store:
                 or len(value) > 2000
                 or sanitize(value) != value
             ):
-                raise MemoryError("memory_decision_evidence_required")
+                raise MemoryFeatureError("memory_decision_evidence_required")
         if type(decision["expected_revision"]) is not int or decision["expected_revision"] < 0:
-            raise MemoryError("memory_decision_revision_required")
+            raise MemoryFeatureError("memory_decision_revision_required")
         public = decision["public_rule"]
         if decision["scope"] == "global" and (
             decision["status"] != "accepted"
@@ -296,9 +296,9 @@ class Store:
             or not 1 <= len(public) <= 1000
             or sanitize(public) != public
         ):
-            raise MemoryError("memory_public_rule_required")
+            raise MemoryFeatureError("memory_public_rule_required")
         if decision["scope"] == "project" and public is not None:
-            raise MemoryError("memory_public_rule_scope_conflict")
+            raise MemoryFeatureError("memory_public_rule_scope_conflict")
         with self.connect() as db:
             row = db.execute(
                 "SELECT f.*,o.payload AS observed_payload FROM lr_findings f "
@@ -307,21 +307,21 @@ class Store:
                 (run_id, item_id, project_uuid(project)),
             ).fetchone()
             if row is None:
-                raise MemoryError("memory_finding_not_in_project")
+                raise MemoryFeatureError("memory_finding_not_in_project")
             if row["dataset"] in {"test", "holdout"}:
-                raise MemoryError("memory_evaluation_leakage_refused")
+                raise MemoryFeatureError("memory_evaluation_leakage_refused")
             if row["dataset"] != "operational" and decision["scope"] == "global":
-                raise MemoryError("memory_global_requires_operational_evidence")
+                raise MemoryFeatureError("memory_global_requires_operational_evidence")
             event = {**decision, "finding_id": row["id"], "run_id": run_id, "item_id": item_id}
             previous = db.execute(
                 "SELECT payload FROM lr_events WHERE id=%s", (decision["id"],)
             ).fetchone()
             if previous:
                 if previous["payload"] != event:
-                    raise MemoryError("memory_decision_delivery_conflict")
+                    raise MemoryFeatureError("memory_decision_delivery_conflict")
                 return {"status": "committed", "duplicate": True, "revision": row["revision"]}
             if row["revision"] != decision["expected_revision"]:
-                raise MemoryError("memory_decision_revision_conflict")
+                raise MemoryFeatureError("memory_decision_revision_conflict")
             suggestion = decision["suggestion"]
             if suggestion is not None and (
                 type(suggestion) is not int
@@ -329,7 +329,7 @@ class Store:
                 or not 0 <= suggestion < len(row["observed_payload"]["suggestions"])
                 or row["observed_payload"]["suggestions"][suggestion]["status"] != "candidate"
             ):
-                raise MemoryError("memory_decision_suggestion_invalid")
+                raise MemoryFeatureError("memory_decision_suggestion_invalid")
             revision = row["revision"] + 1
             db.execute(
                 "INSERT INTO lr_decisions(id,finding_id,revision,status,actor,reason,"

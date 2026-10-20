@@ -1,6 +1,6 @@
 # Контракт предметной памяти
 
-- Владельцы: `memory/`, `compose.memory.yml`, `scripts/memory-*.py`, `scripts/*memory*.ps1`,
+- Владельцы: `memory/`, `compose.memory.yml`, `scripts/*memory*`,
   `tests/test_memory*.py`. Эксплуатация и решения — [docs/memory.md](../../docs/memory.md).
 - Память явно включается в `[memory]`/CLI и пишет отдельное состояние приложения.
   База не нужна для `scan`/`extract`/check без памяти; драйвер — optional `memory` extra.

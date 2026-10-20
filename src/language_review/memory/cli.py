@@ -13,7 +13,7 @@ from language_review.config import LoadedConfig
 from language_review.errors import InputError
 from language_review.memory.pipeline import import_review
 from language_review.memory.settings import project_uuid
-from language_review.memory.store import MemoryError, Store
+from language_review.memory.store import MemoryFeatureError, Store
 
 
 def add_commands(commands: Any, check: argparse.ArgumentParser) -> None:
@@ -156,7 +156,7 @@ def run(arguments: argparse.Namespace, config: LoadedConfig) -> int:
                         (arguments.finding_id, project),
                     ).fetchone()
                     if finding is None:
-                        raise MemoryError("memory_finding_not_in_project")
+                        raise MemoryFeatureError("memory_finding_not_in_project")
                     decisions = db.execute(
                         "SELECT * FROM lr_decisions WHERE finding_id=%s ORDER BY revision",
                         (arguments.finding_id,),
@@ -187,7 +187,7 @@ def run(arguments: argparse.Namespace, config: LoadedConfig) -> int:
                         (arguments.run_id, project),
                     ).fetchone()
                     if row is None:
-                        raise MemoryError("memory_run_not_in_project")
+                        raise MemoryFeatureError("memory_run_not_in_project")
                     occurrences = db.execute(
                         "SELECT o.item_id,o.finding_id,f.state,f.revision "
                         "FROM lr_occurrences o JOIN lr_findings f ON f.id=o.finding_id "
@@ -244,7 +244,7 @@ def run(arguments: argparse.Namespace, config: LoadedConfig) -> int:
                         if not database_ready:
                             store.health()
                         result = work(store, project or None, config.check, limit=arguments.limit)
-                    except MemoryError as exc:
+                    except MemoryFeatureError as exc:
                         if not watch or str(exc) != "memory_database_failed":
                             raise
                         database_ready = False

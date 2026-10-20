@@ -22,7 +22,7 @@ from language_review.errors import ConfigurationError, InputError, OutputError
 from language_review.extract_report import extract_document, extract_human
 from language_review.extraction import extract_paths
 from language_review.memory.cli import add_commands as add_memory_commands
-from language_review.memory.store import MemoryError
+from language_review.memory.store import MemoryFeatureError
 from language_review.report import scan_document, scan_human, write_report
 from language_review.review_report import render_review, review_document
 from language_review.review_verify import load_review, verify_review
@@ -424,7 +424,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except OutputError as exc:
         print(f"Ошибка отчёта: {exc}", file=sys.stderr)
         return 3
-    except MemoryError as exc:
+    except MemoryFeatureError as exc:
         print(f"Ошибка памяти: {exc}; успешная запись не подтверждена.", file=sys.stderr)
         return 6
     except KeyboardInterrupt:

@@ -6,7 +6,7 @@ from uuid import UUID, uuid4, uuid5
 
 from language_review.memory.safety import digest
 from language_review.memory.settings import MemorySettings, project_uuid
-from language_review.memory.store import MemoryError, Store
+from language_review.memory.store import MemoryFeatureError, Store
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -37,10 +37,10 @@ class MemorySession:
         bindings = settings.projects
         if options.get("project"):
             if len(roots) != 1:
-                raise MemoryError("memory_single_project_requires_one_root")
+                raise MemoryFeatureError("memory_single_project_requires_one_root")
             bindings = {next(iter(roots)): project_uuid(options["project"])}
         if set(bindings) != roots or not roots:
-            raise MemoryError("memory_explicit_project_bindings_required")
+            raise MemoryFeatureError("memory_explicit_project_bindings_required")
         if options.get("mode"):
             settings = replace(settings, recall_mode=options["mode"])
         store = Store(settings)
@@ -48,7 +48,7 @@ class MemorySession:
         try:
             run_id = str(UUID(options["run_id"])) if options.get("run_id") else str(uuid4())
         except (ValueError, TypeError, AttributeError) as exc:
-            raise MemoryError("memory_run_id_invalid") from exc
+            raise MemoryFeatureError("memory_run_id_invalid") from exc
         dataset = options.get("dataset") or (
             "synthetic" if settings.knowledge_dataset == "synthetic" else "operational"
         )
@@ -61,20 +61,20 @@ class MemorySession:
         return session
 
     def prepare(self, units: list[CheckUnit]) -> None:
-        from language_review.memory.search import recall
+        from language_review.memory.search import RecallRequest, recall_many
 
         # Только masked LLM view; секретный скаляр не отправляется embedding-сервису.
-        cache: dict[str, dict[str, Any]] = {}
+        requests: dict[str, RecallRequest] = {}
+        unit_keys: list[tuple[CheckUnit, str]] = []
         for unit in units:
             if not unit.checked_by("llm"):
                 continue
             project = self.bindings[unit.document.root]
             key = digest([project, unit.kind, unit.views["llm"].text])
-            if key not in cache:
-                cache[key] = recall(
-                    self.store,
-                    project,
-                    unit.views["llm"].text,
+            if key not in requests:
+                requests[key] = RecallRequest(
+                    project=project,
+                    text=unit.views["llm"].text,
                     kind=unit.kind,
                     dataset=(
                         "synthetic"
@@ -83,6 +83,10 @@ class MemorySession:
                     ),
                     hybrid=self.store.settings.recall_mode == "hybrid",
                 )
+            unit_keys.append((unit, key))
+        recalled_items = recall_many(self.store, list(requests.values()))
+        cache = dict(zip(requests, recalled_items, strict=True))
+        for unit, key in unit_keys:
             recalled = cache[key]
             unit.memory_context = recalled["results"]
             self.diagnostics["queries"].append(
@@ -114,10 +118,10 @@ def import_review(
 
     report = load_review(path)
     if verify_review(path, roots)["status"] != "current":
-        raise MemoryError("memory_import_source_not_current")
+        raise MemoryFeatureError("memory_import_source_not_current")
     expected = {root["id"] for root in report["analysis"]["roots"]}
     if set(roots) != expected or set(bindings) != expected:
-        raise MemoryError("memory_import_bindings_required")
+        raise MemoryFeatureError("memory_import_bindings_required")
     bindings = {root: project_uuid(value) for root, value in bindings.items()}
     # Повторный импорт тех же байтов/происхождения — та же доставка, не новый live-прогон.
     run_id = str(

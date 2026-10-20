@@ -157,11 +157,11 @@ def run_doctor(
     check_settings, engine_checks = _check_engines(config, engine_factory)
     memory: dict[str, Any] = {"status": "disabled"}
     if config.memory.enabled:
-        from language_review.memory.store import MemoryError, Store
+        from language_review.memory.store import MemoryFeatureError, Store
 
         try:
             memory = Store(config.memory).health()
-        except MemoryError as exc:
+        except MemoryFeatureError as exc:
             memory = {"status": "unavailable", "reason": str(exc)}
     failures = (
         any(check["status"] != "available" for check in program_checks)

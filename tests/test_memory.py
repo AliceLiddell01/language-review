@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from argparse import Namespace
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
@@ -10,14 +12,18 @@ import pytest
 from conftest import JsonServer, RecordedRequest
 from support.check_helpers import _config, _run
 
+from language_review.check_models import CheckUnit
 from language_review.config import load_config
 from language_review.errors import ConfigurationError, InputError
+from language_review.extract_models import ExtractDocument
+from language_review.masking import EngineView
 from language_review.memory.cli import run as run_memory
 from language_review.memory.cli import submit_decision
+from language_review.memory.pipeline import MemorySession
 from language_review.memory.safety import safe_text, sanitize
-from language_review.memory.search import Embedder
+from language_review.memory.search import Embedder, RecallRequest, recall_many
 from language_review.memory.settings import MemorySettings, validate_memory
-from language_review.memory.store import MemoryError, Store
+from language_review.memory.store import MemoryFeatureError, Store
 
 
 @pytest.mark.parametrize(
@@ -135,18 +141,18 @@ def test_watch_retries_temporary_database_failures(
         command="memory", memory_command="work", project=str(uuid4()), limit=1, watch=True
     )
     health_calls = 0
-    work_results = iter([MemoryError("memory_database_failed"), {"status": "processed"}])
+    work_results = iter([MemoryFeatureError("memory_database_failed"), {"status": "processed"}])
 
     def health(_: Store) -> dict:
         nonlocal health_calls
         health_calls += 1
         if health_calls == 1:
-            raise MemoryError("memory_database_failed")
+            raise MemoryFeatureError("memory_database_failed")
         return {"status": "ok"}
 
     def do_work(*_: object, **__: object) -> dict:
         result = next(work_results)
-        if isinstance(result, MemoryError):
+        if isinstance(result, MemoryFeatureError):
             raise result
         return result
 
@@ -182,8 +188,145 @@ def test_watch_does_not_retry_permanent_worker_errors(
     )
     monkeypatch.setattr(Store, "health", lambda _: {"status": "ok"})
 
-    with pytest.raises(MemoryError, match="memory_worker_limit_invalid"):
+    with pytest.raises(MemoryFeatureError, match="memory_worker_limit_invalid"):
         run_memory(arguments, config)
+
+
+def test_memory_session_batches_unique_recall_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = Store(MemorySettings())
+    session = MemorySession(store, "run", {"root": str(uuid4())}, "operational")
+
+    def unit(index: int, document_id: str, text: str) -> CheckUnit:
+        document = ExtractDocument(
+            id=document_id,
+            root="root",
+            path=f"{document_id}.md",
+            language="ru",
+            format="markdown",
+            profile=None,
+            status="ok",
+        )
+        return CheckUnit(
+            index=index,
+            document_index=0,
+            document=document,
+            fragments=(),
+            fragment_ids=(),
+            kind="code",
+            context="",
+            sentence_start=True,
+            views={"llm": EngineView(text, ())},
+            engines=("llm",),
+            terms={},
+        )
+
+    first = unit(1, "document-1", "общий запрос")
+    duplicate = unit(2, "document-1", "общий запрос")
+    distinct = unit(3, "document-2", "другой запрос")
+    captured: list[RecallRequest] = []
+
+    def recall_batch(_: Store, requests: list[RecallRequest]) -> list[dict]:
+        captured.extend(requests)
+        return [
+            {"results": [{"id": str(index)}], "mode": "structured", "reason": None}
+            for index, _ in enumerate(requests, 1)
+        ]
+
+    monkeypatch.setattr("language_review.memory.search.recall_many", recall_batch)
+    session.prepare([first, duplicate, distinct])
+
+    assert len(captured) == 2
+    assert first.memory_context == duplicate.memory_context == [{"id": "1"}]
+    assert distinct.memory_context == [{"id": "2"}]
+    assert len(session.diagnostics["queries"]) == 3
+
+
+def test_recall_many_batches_embeddings_and_reuses_database_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = Store(MemorySettings())
+    embedding_calls: list[tuple[list[str], bool]] = []
+    connections = 0
+    queries = 0
+
+    class EmptyResult:
+        def fetchall(self) -> list[dict]:
+            return []
+
+    class EmptyConnection:
+        def execute(self, *_: object, **__: object) -> EmptyResult:
+            nonlocal queries
+            queries += 1
+            return EmptyResult()
+
+    connection = EmptyConnection()
+
+    @contextmanager
+    def connect() -> Iterator[EmptyConnection]:
+        nonlocal connections
+        connections += 1
+        yield connection
+
+    def embed(_: Embedder, texts: list[str], *, query: bool = False) -> list[list[float]]:
+        embedding_calls.append((texts, query))
+        return [[0.25, 0.75] for _ in texts]
+
+    monkeypatch.setattr(store, "connect", connect)
+    monkeypatch.setattr(Embedder, "embed", embed)
+    requests = [
+        RecallRequest(project=str(uuid4()), text="общий запрос", kind="code"),
+        RecallRequest(project=str(uuid4()), text="другой запрос", kind="documentation"),
+        RecallRequest(project=str(uuid4()), text="общий запрос", kind="api"),
+    ]
+
+    results = recall_many(store, requests)
+
+    assert len(results) == 3
+    assert embedding_calls == [(["общий запрос", "другой запрос"], True)]
+    assert connections == 1
+    assert queries == 3
+    assert all(result["mode"] == "hybrid" for result in results)
+
+
+def test_recall_many_falls_back_after_embedding_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = Store(MemorySettings())
+    embedding_calls = 0
+
+    class EmptyResult:
+        def fetchall(self) -> list[dict]:
+            return []
+
+    class EmptyConnection:
+        def execute(self, *_: object, **__: object) -> EmptyResult:
+            return EmptyResult()
+
+    connection = EmptyConnection()
+
+    @contextmanager
+    def connect() -> Iterator[EmptyConnection]:
+        yield connection
+
+    def fail_embedding(_: Embedder, __: list[str], *, query: bool = False) -> list[list[float]]:
+        nonlocal embedding_calls
+        embedding_calls += 1
+        raise MemoryFeatureError("memory_embedding_timeout")
+
+    monkeypatch.setattr(store, "connect", connect)
+    monkeypatch.setattr(Embedder, "embed", fail_embedding)
+    results = recall_many(
+        store,
+        [
+            RecallRequest(project=str(uuid4()), text="первый запрос"),
+            RecallRequest(project=str(uuid4()), text="второй запрос"),
+        ],
+    )
+
+    assert embedding_calls == 1
+    assert [result["mode"] for result in results] == ["structured", "structured"]
+    assert [result["reason"] for result in results] == [
+        "memory_embedding_timeout",
+        "memory_embedding_timeout",
+    ]
 
 
 @pytest.mark.parametrize("vector", [[], [0, 0], [1], [True, 1], ["1", "2"]])
@@ -208,7 +351,7 @@ def test_embedding_schema_does_not_mark_malformed_vectors_indexed(
             embedding_dimensions=2,
         )
     )
-    with pytest.raises(MemoryError, match="schema"):
+    with pytest.raises(MemoryFeatureError, match="schema"):
         Embedder(store).embed(["Русский технический текст"])
 
 
@@ -230,5 +373,5 @@ def test_embedding_pins_model_and_never_sends_secret_query(json_server: JsonServ
         embedding_dimensions=2,
     )
     assert Embedder(Store(settings)).embed(["password=canary"], query=True) == [[0.2, 0.8]]
-    with pytest.raises(MemoryError, match="revision_mismatch"):
+    with pytest.raises(MemoryFeatureError, match="revision_mismatch"):
         Embedder(Store(replace(settings, embedding_revision="b" * 64))).embed(["Текст"])

@@ -186,12 +186,31 @@ function Write-Manifest([string]$Status) {
     $deployment | ConvertTo-Json | Set-Content -LiteralPath $temp -Encoding utf8NoBOM
     Write-RuntimeFile 'deployment.json' $temp
 }
+function Get-OwnSupervisors {
+    $script = Join-Path $runtime 'run-memory-service.ps1'
+    @(Get-CimInstance Win32_Process -Filter "Name = 'pwsh.exe'" |
+        Where-Object { $_.CommandLine -and $_.CommandLine.Contains($script) })
+}
 function Stop-OwnTask {
-    if (-not (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) { return }
-    Stop-ScheduledTask -TaskName $taskName
-    $deadline = [DateTime]::UtcNow.AddSeconds(30)
-    while ((Get-ScheduledTask -TaskName $taskName).State -eq 'Running') {
-        if ([DateTime]::UtcNow -gt $deadline) { throw 'Задача не остановилась за 30 секунд.' }
+    if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+        Stop-ScheduledTask -TaskName $taskName
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        while ((Get-ScheduledTask -TaskName $taskName).State -eq 'Running') {
+            if ([DateTime]::UtcNow -gt $deadline) { throw 'Задача не остановилась за 30 секунд.' }
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    # PowerShell из MSIX-пакета не входит в Job Object: остановка задачи гарантированно
+    # завершает только wrapper. Supervisor этой установки должен выйти сам; release без
+    # watchdog завершается вместе с потомками по командной строке собственного runtime.
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    while ((Get-OwnSupervisors).Count -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 250 }
+    foreach ($supervisor in Get-OwnSupervisors) {
+        try { [Diagnostics.Process]::GetProcessById([int]$supervisor.ProcessId).Kill($true) } catch [ArgumentException] {}
+    }
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    while ((Get-OwnSupervisors).Count) {
+        if ([DateTime]::UtcNow -gt $deadline) { throw 'Supervisor этой установки не завершился.' }
         Start-Sleep -Milliseconds 250
     }
 }

@@ -69,7 +69,12 @@ def main():
         try:
             deployment = json.loads((runtime / "deployment.json").read_text("utf-8"))
             job = own_process_tree()
-            environment = {**os.environ, "POWERSHELL_UPDATECHECK": "Off"}
+            # PowerShell из MSIX-пакета создаётся вне job; supervisor сам следит за владельцем.
+            environment = {
+                **os.environ,
+                "POWERSHELL_UPDATECHECK": "Off",
+                "LANGUAGE_REVIEW_SERVICE_OWNER_PID": str(os.getpid()),
+            }
             result = subprocess.run(
                 [
                     deployment["pwsh"],

@@ -14,6 +14,23 @@ try {
     # Исключает и ручные дубликаты, помимо политики IgnoreNew планировщика.
     $lock = [IO.File]::Open((Join-Path $logs 'service.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
 } catch [IO.IOException] { exit 0 }
+# Job Object wrapper не охватывает PowerShell из MSIX-пакета: при завершении владельца
+# supervisor сам останавливает своего worker и выходит. Handle защищает от повторного PID.
+$owner = $null
+if ($env:LANGUAGE_REVIEW_SERVICE_OWNER_PID) {
+    try {
+        $owner = [Diagnostics.Process]::GetProcessById([int]$env:LANGUAGE_REVIEW_SERVICE_OWNER_PID)
+        if ($owner.StartTime -gt (Get-Process -Id $PID).StartTime) { exit 0 }
+    } catch { exit 0 }
+}
+function Test-OwnerGone { return $null -ne $owner -and $owner.HasExited }
+function Wait-Interval([int]$Seconds) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if (Test-OwnerGone) { exit 0 }
+        Start-Sleep -Milliseconds 500
+    }
+}
 function Write-ServiceState($record) {
     $record['at'] = [DateTime]::UtcNow.ToString('o')
     $record['supervisor_pid'] = $PID
@@ -44,6 +61,12 @@ function Invoke-ServiceProcess([string]$Executable, [string[]]$ProcessArguments)
         $null = $process.Start()
         $stdout = $process.StandardOutput.ReadToEndAsync()
         $stderr = $process.StandardError.ReadToEndAsync()
+        while (-not $process.WaitForExit(500)) {
+            if (Test-OwnerGone) {
+                $process.Kill($true)
+                exit 0
+            }
+        }
         $process.WaitForExit()
         return @{code = $process.ExitCode; output = $stdout.GetAwaiter().GetResult(); error = $stderr.GetAwaiter().GetResult()}
     } finally { $process.Dispose() }
@@ -70,7 +93,7 @@ try {
             if (-not ($models | Where-Object { $_.name -eq $deployment.llm_model -and $_.digest -eq $deployment.llm_revision }) -or
                 -not ($models | Where-Object { $_.name -eq $deployment.embedding_model -and $_.digest -eq $deployment.embedding_revision })) {
                 Write-ServiceState @{status = 'waiting'; reason = 'configured_model_unavailable_or_changed'}
-                Start-Sleep -Seconds 5
+                Wait-Interval 5
                 continue
             }
             # Docker Desktop и Ollama запускаются при входе пользователя сами. Ждём их готовности;
@@ -117,7 +140,7 @@ try {
             # Текст исключения может содержать окружение процесса или исходный текст: сохраняем только тип.
             Write-ServiceState @{status = 'waiting'; error_type = $_.Exception.GetType().Name}
         }
-        Start-Sleep -Seconds $delay
+        Wait-Interval $delay
     }
 } finally {
     if ($lock) { $lock.Dispose() }

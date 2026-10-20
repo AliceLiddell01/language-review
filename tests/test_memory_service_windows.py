@@ -114,6 +114,22 @@ def _ollama_models() -> list[dict[str, str]]:
         return []
 
 
+def _write_test_credential(pwsh: str, path: Path) -> None:
+    subprocess.run(
+        [
+            pwsh,
+            "-NoProfile",
+            "-Command",
+            "[pscredential]::new('language_review', (ConvertTo-SecureString 'test-only' "
+            "-AsPlainText -Force)) | Export-Clixml -LiteralPath '"
+            + str(path).replace("'", "''")
+            + "'",
+        ],
+        check=True,
+        timeout=60,
+    )
+
+
 VALID_WORKER_CONFIG = (
     '[check]\nengines = ["llm"]\n[memory]\nenabled = true\ndsn_env = "LANGUAGE_REVIEW_MEMORY_DSN"\n'
 )
@@ -167,19 +183,7 @@ def test_supervisor_requests_docker_recovery_only_for_own_unavailable_database(
     scripts = Path(__file__).parents[1] / "scripts"
     for name in ("run-memory-service.ps1", "connect-memory.ps1"):
         shutil.copyfile(scripts / name, runtime / name)
-    subprocess.run(
-        [
-            pwsh,
-            "-NoProfile",
-            "-Command",
-            "[pscredential]::new('language_review', (ConvertTo-SecureString 'test-only' "
-            "-AsPlainText -Force)) | Export-Clixml -LiteralPath '"
-            + str(runtime / "database.credential.xml").replace("'", "''")
-            + "'",
-        ],
-        check=True,
-        timeout=60,
-    )
+    _write_test_credential(pwsh, runtime / "database.credential.xml")
     # Поддельный docker только фиксирует вызовы; настоящий CLI классифицирует отказ сам.
     (runtime / "docker.cmd").write_text(
         '@echo off\r\n>>"%~dp0docker-calls.txt" echo %6\r\n'
@@ -260,14 +264,27 @@ def test_terminating_actual_windowless_wrapper_kills_supervisor_child(tmp_path: 
 
     pwsh = shutil.which("pwsh")
     assert pwsh
+    # Настоящий supervisor: PowerShell из MSIX-пакета не входит в Job Object wrapper,
+    # поэтому завершение обязано обеспечиваться и его собственным контролем владельца.
+    scripts = Path(__file__).parents[1] / "scripts"
+    for name in ("run-memory-service.pyw", "run-memory-service.ps1", "connect-memory.ps1"):
+        shutil.copyfile(scripts / name, tmp_path / name)
     wrapper = tmp_path / "run-memory-service.pyw"
-    shutil.copyfile(Path(__file__).parents[1] / "scripts" / wrapper.name, wrapper)
-    (tmp_path / "deployment.json").write_text(json.dumps({"pwsh": pwsh}), encoding="utf-8")
-    (tmp_path / "run-memory-service.ps1").write_text(
-        "[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'child.txt'), [string]$PID)\n"
-        "Start-Sleep -Seconds 300\n",
+    _write_test_credential(pwsh, tmp_path / "database.credential.xml")
+    (tmp_path / "deployment.json").write_text(
+        json.dumps(
+            {
+                "pwsh": pwsh,
+                "project": "lr-supervisor-test",
+                "port": 1,
+                "release": "test-release",
+                "llm_model": "absent-model",
+                "llm_revision": "absent",
+            }
+        ),
         encoding="utf-8",
     )
+    state_file = tmp_path / "logs" / "service-state.json"
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel.OpenProcess.restype = wintypes.HANDLE
@@ -282,21 +299,20 @@ def test_terminating_actual_windowless_wrapper_kills_supervisor_child(tmp_path: 
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
     try:
-        deadline = time.monotonic() + 20
-        child_file = tmp_path / "child.txt"
-        child_pid = ""
+        deadline = time.monotonic() + 30
+        child_pid = 0
         while time.monotonic() < deadline and process.poll() is None:
-            if child_file.exists():
-                child_pid = child_file.read_text().strip()
-                if child_pid.isdigit():
-                    break
-            time.sleep(0.05)
-        assert child_pid.isdigit(), (tmp_path / "bootstrap.stderr.log").read_text("utf-8")
-        child = kernel.OpenProcess(0x100001, False, int(child_pid))
+            try:
+                child_pid = int(json.loads(state_file.read_text("utf-8-sig"))["supervisor_pid"])
+                break
+            except OSError, ValueError, KeyError:
+                time.sleep(0.1)
+        assert child_pid, (tmp_path / "bootstrap.stderr.log").read_text("utf-8")
+        child = kernel.OpenProcess(0x100001, False, child_pid)
         assert child
         process.terminate()
         process.wait(timeout=5)
-        assert kernel.WaitForSingleObject(child, 5000) == 0, "Supervisor пережил своего владельца"
+        assert kernel.WaitForSingleObject(child, 10000) == 0, "Supervisor пережил своего владельца"
     finally:
         if process.poll() is None:
             process.kill()

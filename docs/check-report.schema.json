@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://language-review.invalid/schemas/check-report-1.0.json",
+  "$id": "https://language-review.invalid/schemas/check-report-1.1.json",
   "title": "Отчёт языковой проверки Language Review",
   "description": "Результат языковой проверки извлечённых фрагментов. Предложения не применяются к исходникам.",
   "type": "object",
@@ -21,7 +21,7 @@
   ],
   "properties": {
     "schema": {"const": "language-review.check"},
-    "schema_version": {"const": "1.0"},
+    "schema_version": {"enum": ["1.0", "1.1"]},
     "operation": {"const": "check"},
     "tool": {
       "type": "object",
@@ -54,7 +54,7 @@
       "properties": {
         "engines": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/engine_name"}},
         "categories": {"type": "array", "items": {"$ref": "#/$defs/category"}},
-        "llm_provider": {"enum": ["llama_cpp", "ollama"]},
+        "llm_provider": {"enum": ["llama_cpp", "ollama", "chatgpt"]},
         "sources": {
           "type": "object",
           "additionalProperties": false,
@@ -210,7 +210,7 @@
           "properties": {
             "endpoint": {"type": "string"},
             "endpoint_origin": {"enum": ["loopback", "remote"]},
-            "provider": {"enum": ["llama_cpp", "ollama"]},
+            "provider": {"enum": ["llama_cpp", "ollama", "chatgpt"]},
             "model": {
               "description": "Публичное обозначение модели; для локального пути к файлу модели — только имя файла.",
               "type": ["string", "null"]

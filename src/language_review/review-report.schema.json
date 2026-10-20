@@ -19,7 +19,10 @@
       "const": "language-review.review"
     },
     "schema_version": {
-      "const": "1.0"
+      "enum": [
+        "1.0",
+        "1.1"
+      ]
     },
     "status": {
       "$ref": "#/$defs/overall_status"
@@ -903,7 +906,8 @@
             "provider": {
               "enum": [
                 "llama_cpp",
-                "ollama"
+                "ollama",
+                "chatgpt"
               ]
             },
             "model": {
@@ -1528,7 +1532,10 @@
           "const": "language-review.check"
         },
         "schema_version": {
-          "const": "1.0"
+          "enum": [
+            "1.0",
+            "1.1"
+          ]
         },
         "operation": {
           "const": "check"
@@ -1611,7 +1618,8 @@
             "llm_provider": {
               "enum": [
                 "llama_cpp",
-                "ollama"
+                "ollama",
+                "chatgpt"
               ]
             },
             "sources": {

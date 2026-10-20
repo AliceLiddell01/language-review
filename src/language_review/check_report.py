@@ -190,7 +190,7 @@ def check_document(result: CheckResult) -> dict[str, Any]:
     documents = result.documents
     return {
         "schema": SCHEMA,
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": result.settings.get("report_schema_version", SCHEMA_VERSION),
         "operation": "check",
         "tool": {"name": "language-review", "version": __version__},
         "status": result.status,
@@ -231,6 +231,10 @@ def _engine_line(run: EngineRun) -> str:
     label = run.name
     if run.name == "llm":
         label += f" ({details.get('provider')}, модель {details.get('model') or 'не выбрана'})"
+        policy = details.get("analysis_policy", {})
+        label += f", режим {policy.get('mode', 'normal')}"
+        if details.get("reasoning_effort"):
+            label += f", effort {details['reasoning_effort']}"
     version = details.get("version") or details.get("server_build") or details.get("server_version")
     if version:
         label += f", версия {version}"
@@ -243,6 +247,12 @@ def _engine_line(run: EngineRun) -> str:
         line += f" — {run.message}"
     if run.diagnostics:
         line += f" [{', '.join(run.diagnostics)}]"
+    if "analysis" in details:
+        analysis = details["analysis"]
+        line += (
+            f"; символов проверено {analysis['chars_complete']}, "
+            f"осталось {analysis['chars_remaining']}"
+        )
     return line
 
 

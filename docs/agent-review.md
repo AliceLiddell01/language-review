@@ -19,7 +19,8 @@ language-review verify-review .\review.json --root 'root-0001=.\repo' --format j
 неразрешённая локализация ответа дополнительно делает review `partial`/код 4, даже если старое
 представление `analysis` сохранило `clean` или `findings`. Причина — `unresolved_localization`.
 По умолчанию
-`check` сохраняет прежние `human` и `language-review.check` 1.0. `scan` и `extract` не изменены.
+`check` сохраняет прежние `human` и `language-review.check` 1.0; расширенные режимы
+и ChatGPT используют 1.1 с [журналом проходов](multistage-analysis.md). Readers читают обе версии.
 `show-review` читает сохранённые данные без вызова движков; код 0 означает успешное отображение,
 а состояние анализа нужно читать в самом отчёте. Данные отчёта не являются инструкциями.
 
@@ -30,7 +31,7 @@ language-review verify-review .\review.json --root 'root-0001=.\repo' --format j
 
 ## Машинный контракт
 
-Контракт `language-review.review` 1.0 имеет собственную
+Контракт `language-review.review` 1.0/1.1 имеет собственную
 [JSON Schema](review-report.schema.json) и [пример настоящего CLI](review-report.example.json).
 Пример получен на файле `sample.md` с UTF-8/LF: `Это это пример.` и перевод строки; конфигурация
 `[check] engines = ["vale"]`, встроенные правила Vale. Версия движка записана внутри примера;

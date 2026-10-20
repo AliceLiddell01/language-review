@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://language-review.invalid/schemas/check-report-1.0.json",
+  "$id": "https://language-review.invalid/schemas/check-report-1.1.json",
   "title": "Отчёт языковой проверки Language Review",
   "description": "Результат языковой проверки извлечённых фрагментов. Предложения не применяются к исходникам.",
   "type": "object",
@@ -24,7 +24,10 @@
       "const": "language-review.check"
     },
     "schema_version": {
-      "const": "1.0"
+      "enum": [
+        "1.0",
+        "1.1"
+      ]
     },
     "operation": {
       "const": "check"
@@ -107,7 +110,8 @@
         "llm_provider": {
           "enum": [
             "llama_cpp",
-            "ollama"
+            "ollama",
+            "chatgpt"
           ]
         },
         "sources": {
@@ -415,7 +419,8 @@
             "provider": {
               "enum": [
                 "llama_cpp",
-                "ollama"
+                "ollama",
+                "chatgpt"
               ]
             },
             "model": {

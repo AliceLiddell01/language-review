@@ -40,6 +40,12 @@ uv run --locked python .github/scripts/check_pr_body.py --body-file путь\к\
 
 ## Статусы
 
+SIWC и расширенные проходы: `tests/test_chatgpt.py`/`test_analysis.py` проверяют протоколы,
+JWT, настоящий loopback callback, DPAPI и межпроцессный refresh в Windows, SSE,
+бюджеты/routing/coverage и совместимость evaluator. Это не live OpenAI: каталог и
+inference пользовательского аккаунта требуют отдельной авторизации. CLI и границы
+доказательств — [docs/multistage-analysis.md](../../docs/multistage-analysis.md).
+
 Предметная память: `scripts/verify-memory.ps1` запускает изолированную PostgreSQL/pgvector
 через Docker Desktop, pytest с восемью workers, restart/recreate и реальный backup →
 потерю volume → restore с digest-проверкой таблиц и vector retrieval. Live LLM/embedding

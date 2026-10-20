@@ -152,6 +152,39 @@ def test_deep_budgets_never_claim_clean(
     assert len(provider.calls) <= 1
 
 
+def test_normal_local_mode_enforces_shared_text_budget(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    provider = Provider(lambda _system, _payload: {"findings": []})
+    result = run(tmp_path, provider, analysis_max_text_chars=1)
+
+    analysis = result.engines[0].details["analysis"]
+    assert result.status != "clean"
+    assert analysis["units_complete"] == 0
+    assert analysis["units_remaining"] == 2
+    assert "analysis_text_budget" in result.engines[0].diagnostics
+    assert provider.calls == []
+
+
+def test_normal_local_mode_enforces_glossary_context_budget(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    terms = {f"термин-{index:03d}": "предпочтительное-значение" * 2 for index in range(120)}
+    provider = Provider(lambda _system, _payload: {"findings": []})
+    result = run(tmp_path, provider, terms=terms)
+
+    analysis = result.engines[0].details["analysis"]
+    [primary] = analysis["passes"]
+    assert result.status != "clean"
+    assert analysis["units_complete"] == 0
+    assert analysis["units_remaining"] == 2
+    assert all(
+        unit["status"] == "skipped" and unit["reason"] == "analysis_context_budget"
+        for unit in primary["units"]
+    )
+    assert provider.calls == []
+
+
 @pytest.mark.parametrize("decision", ["confirmed", "rejected", "uncertain"])
 def test_verifier_keeps_original_hypothesis_and_does_not_rewrite(
     tmp_path: Path, isolated_appdata: Path, decision: str

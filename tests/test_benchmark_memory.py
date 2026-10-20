@@ -64,3 +64,28 @@ def test_benchmark_reports_missing_model_instead_of_stop_iteration(
 
     with pytest.raises(ValueError, match="model is not installed"):
         benchmark.benchmark("missing-model")
+
+
+def test_hindsight_unexpected_response_returns_partial_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark = _load_benchmark()
+
+    def request_json(url: str, **_kwargs: Any):
+        if url.endswith("/memories"):
+            return SimpleNamespace(body={"accepted": True})
+        if "/operations/" in url:
+            return SimpleNamespace(body={"status": "completed"})
+        if url.endswith("/documents"):
+            return SimpleNamespace(body={"items": []})
+        if url.endswith("/memories/recall"):
+            return SimpleNamespace(body=[])
+        raise AssertionError(f"Unexpected Hindsight request: {url}")
+
+    monkeypatch.setattr(benchmark, "request_json", request_json)
+
+    result = benchmark.hindsight("http://127.0.0.1:8888")
+
+    assert result["status"] == "PARTIAL"
+    assert result["reason"] == "unexpected_response:AttributeError"
+    assert result["receipt"] == {"accepted": True}

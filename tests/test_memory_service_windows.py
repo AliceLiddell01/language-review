@@ -136,10 +136,15 @@ def test_terminating_actual_windowless_wrapper_kills_supervisor_child(tmp_path: 
     try:
         deadline = time.monotonic() + 20
         child_file = tmp_path / "child.txt"
-        while not child_file.exists() and time.monotonic() < deadline and process.poll() is None:
+        child_pid = ""
+        while time.monotonic() < deadline and process.poll() is None:
+            if child_file.exists():
+                child_pid = child_file.read_text().strip()
+                if child_pid.isdigit():
+                    break
             time.sleep(0.05)
-        assert child_file.exists(), (tmp_path / "bootstrap.stderr.log").read_text("utf-8")
-        child = kernel.OpenProcess(0x100001, False, int(child_file.read_text()))
+        assert child_pid.isdigit(), (tmp_path / "bootstrap.stderr.log").read_text("utf-8")
+        child = kernel.OpenProcess(0x100001, False, int(child_pid))
         assert child
         process.terminate()
         process.wait(timeout=5)

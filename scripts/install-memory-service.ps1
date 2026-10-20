@@ -110,6 +110,9 @@ try {
     $sourceSha = (& git rev-parse HEAD).Trim()
     $sourceDirty = [bool](& git status --porcelain=v1 --untracked-files=normal)
 } finally { Pop-Location }
+# Первый прогон worker пишет состояние только после завершения: до worker_limit заданий по timeout.
+$workerLimit = 8
+$llmTimeoutSeconds = 120
 $workerConfig = Join-Path $runtime 'worker.toml'
 $candidateWorkerConfig = Join-Path $release 'worker.toml'
 $configText = @"
@@ -117,7 +120,7 @@ $configText = @"
 engines = ["llm"]
 [check.llm]
 provider = "ollama"
-timeout_seconds = 120
+timeout_seconds = $llmTimeoutSeconds
 [check.llm.ollama]
 model = "$LlmModel"
 [memory]
@@ -131,7 +134,7 @@ embedding_dimensions = $EmbeddingDimensions
 Set-Content -LiteralPath $candidateWorkerConfig -Value $configText -Encoding utf8NoBOM
 $deployment = [ordered]@{
     project = $Project; port = $Port; task = $taskName; python = $python; docker = $docker; pwsh = $pwsh
-    config = $workerConfig; release = $release; source_sha = $sourceSha; source_dirty = $sourceDirty
+    config = $workerConfig; release = $release; worker_limit = $workerLimit; source_sha = $sourceSha; source_dirty = $sourceDirty
     wheel_sha256 = (Get-FileHash -LiteralPath $wheel[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     lock_sha256 = (Get-FileHash -LiteralPath (Join-Path $source 'uv.lock') -Algorithm SHA256).Hash.ToLowerInvariant()
     llm_model = $LlmModel; llm_revision = $llm[0].digest
@@ -205,7 +208,7 @@ try {
     Enable-ScheduledTask -TaskName $taskName | Out-Null
     $taskPaused = $false
     Start-ScheduledTask -TaskName $taskName
-    $deadline = [DateTime]::UtcNow.AddSeconds(45)
+    $deadline = [DateTime]::UtcNow.AddSeconds($workerLimit * $llmTimeoutSeconds + 180)
     $stateFile = Join-Path $runtime 'logs\service-state.json'
     $started = [DateTime]::UtcNow.AddSeconds(-2)
     do {
@@ -213,9 +216,11 @@ try {
         $ready = if (Test-Path -LiteralPath $stateFile) {
             Get-Content -Raw -LiteralPath $stateFile | ConvertFrom-Json
         } else { $null }
-        if ($ready -and $ready.release -eq $release -and [DateTime]$ready.at -gt $started) { break }
+        if ($ready -and $ready.release -eq $release -and [DateTime]$ready.at -gt $started -and
+            $ready.status -in @('idle', 'processed', 'partial')) { break }
     } while ([DateTime]::UtcNow -lt $deadline)
-    if (-not $ready -or $ready.release -ne $release -or [DateTime]$ready.at -lt $started -or $ready.status -eq 'waiting') {
+    if (-not $ready -or $ready.release -ne $release -or [DateTime]$ready.at -lt $started -or
+        $ready.status -notin @('idle', 'processed', 'partial')) {
         throw "Task did not report readiness; inspect $stateFile and logs."
     }
     Write-Output "Installed: $taskName ($($ready.status)); state: $stateFile"

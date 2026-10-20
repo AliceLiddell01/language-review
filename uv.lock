@@ -151,7 +151,7 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.25" },
     { name = "markdown-it-py", specifier = ">=4.2.0" },
     { name = "pathspec", specifier = ">=1.1.1" },
-    { name = "psycopg", extras = ["binary"], marker = "extra == 'memory'", specifier = ">=3.3" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'memory'", specifier = ">=3.3.6" },
     { name = "tree-sitter", specifier = ">=0.26.0" },
     { name = "tree-sitter-c", specifier = ">=0.24.2" },
     { name = "tree-sitter-c-sharp", specifier = ">=0.23.5" },
@@ -168,7 +168,7 @@ provides-extras = ["memory"]
 [package.metadata.requires-dev]
 dev = [
     { name = "mypy", specifier = ">=2.4.0" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.3" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.3.6" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "ruamel-yaml", specifier = ">=0.19.1" },

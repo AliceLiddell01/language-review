@@ -427,7 +427,8 @@ def test_retry_budget_and_recovery_are_observable(stored: dict) -> None:
 
 def test_schema_migration_is_idempotent_and_detects_drift(stored: dict) -> None:
     store = stored["store"]
-    assert store.migrate()["schema_version"] == 1
+    assert store.migrate()["schema_version"] == 2
+    assert store.health()["schema_version"] == 2
     assert store.health()["pgvector"]
     # Проверка drift на отдельной транзакции без изменения общей тестовой схемы.
     from unittest.mock import patch

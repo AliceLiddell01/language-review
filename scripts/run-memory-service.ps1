@@ -49,6 +49,7 @@ function Invoke-ServiceProcess([string]$Executable, [string[]]$ProcessArguments)
     } finally { $process.Dispose() }
 }
 try {
+    Write-ServiceState @{status = 'starting'}
     while ($true) {
         try {
             $models = (Invoke-RestMethod 'http://127.0.0.1:11434/api/tags' -TimeoutSec 5).models
@@ -61,7 +62,7 @@ try {
             # Docker Desktop and Ollama have their own user logon startup. Wait for readiness;
             # never restart the daemon or enumerate/mutate unrelated containers.
             $invocation = Invoke-ServiceProcess $deployment.python @('-I', '-m', 'language_review', '--config', $deployment.config,
-                'memory', 'work', '--all-projects', '--limit', '8')
+                'memory', 'work', '--all-projects', '--limit', [string]$deployment.worker_limit)
             Set-Content -LiteralPath (Join-Path $logs 'worker.stderr.log') -Value $invocation.error -Encoding utf8NoBOM
             $code = $invocation.code
             if ($code -in @(0, 4)) {

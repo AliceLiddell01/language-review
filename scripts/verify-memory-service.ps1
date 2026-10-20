@@ -19,6 +19,8 @@ $envNames = @('APPDATA', 'XDG_CONFIG_HOME', 'LANGUAGE_REVIEW_MEMORY_DSN', 'LANGU
 $previous = @{}
 foreach ($name in $envNames) { $previous[$name] = [Environment]::GetEnvironmentVariable($name) }
 $summary = [ordered]@{status = 'FAIL'; project = $project; port = $port; reboot = 'NOT_RUN'; checks = @()}
+$operationFailure = $null
+$cleanupErrors = [Collections.Generic.List[string]]::new()
 $compose = @('compose', '-f', (Join-Path $runtime 'compose.memory.yml'), '-p', $project)
 function Assert-Check([string]$Name, [bool]$Condition) {
     if (-not $Condition) { throw "FAIL: $Name" }
@@ -89,9 +91,11 @@ try {
     do {
         Start-Sleep -Seconds 2
         $after = Get-Content -Raw -LiteralPath $stateFile | ConvertFrom-Json
-        if ($after.supervisor_pid -ne $before.supervisor_pid -and $after.status -ne 'waiting') { break }
+        if ($after.supervisor_pid -ne $before.supervisor_pid -and
+            $after.status -in @('idle', 'processed', 'partial')) { break }
     } while ([DateTime]::UtcNow -lt $deadline)
-    Assert-Check 'scheduler_restarts_crashed_supervisor' ($after.supervisor_pid -ne $before.supervisor_pid -and $after.status -ne 'waiting')
+    Assert-Check 'scheduler_restarts_crashed_supervisor' (
+        $after.supervisor_pid -ne $before.supervisor_pid -and $after.status -in @('idle', 'processed', 'partial'))
     $secondProject = [guid]::NewGuid().ToString()
     $null = Invoke-Cli @('check', $sample, '--memory-project', $secondProject, '--memory-dataset', 'synthetic', '--view', 'review', '--format', 'json') @(0, 1, 4)
     $second = Wait-Processed $secondProject
@@ -121,25 +125,69 @@ try {
     $summary.wheel_sha256 = $deployment.wheel_sha256
     $summary.llm_revision = $deployment.llm_revision
     $summary.embedding_revision = $deployment.embedding_revision
+} catch {
+    $operationFailure = $_.Exception
 } finally {
-    $ownedTask = Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
-    if ($ownedTask -and $ownedTask.Description -eq "Language Review memory: $runtime") {
-        Stop-ScheduledTask -TaskName $task
-        Unregister-ScheduledTask -TaskName $task -Confirm:$false
-        Start-Sleep -Seconds 2
+    $canRemoveRuntime = $true
+    try {
+        $ownedTask = Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
+        if ($ownedTask -and $ownedTask.Description -eq "Language Review memory: $runtime") {
+            Stop-ScheduledTask -TaskName $task
+            Unregister-ScheduledTask -TaskName $task -Confirm:$false
+            Start-Sleep -Seconds 2
+        }
+    } catch {
+        $cleanupErrors.Add("task cleanup failed: $($_.Exception.GetType().Name)")
+        $canRemoveRuntime = $false
     }
-    if ($project -notmatch '^lr-service-test-[0-9a-f]{12}$') { throw 'Unsafe cleanup project.' }
-    if (Test-Path -LiteralPath (Join-Path $runtime 'compose.memory.yml')) {
-        & docker @compose down --volumes
-        if ($LASTEXITCODE -ne 0) { throw 'Test Compose cleanup failed.' }
+
+    if ($project -notmatch '^lr-service-test-[0-9a-f]{12}$') {
+        $cleanupErrors.Add('Unsafe cleanup project.')
+        $canRemoveRuntime = $false
+    } elseif ($canRemoveRuntime -and (Test-Path -LiteralPath (Join-Path $runtime 'compose.memory.yml'))) {
+        try {
+            $env:LANGUAGE_REVIEW_DB_PASSWORD = 'cleanup-only'
+            $env:LANGUAGE_REVIEW_DB_PORT = [string]$port
+            & docker @compose down --volumes
+            if ($LASTEXITCODE -ne 0) {
+                $cleanupErrors.Add("Test Compose cleanup failed ($LASTEXITCODE).")
+                $canRemoveRuntime = $false
+            }
+        } catch {
+            $cleanupErrors.Add("Test Compose cleanup failed: $($_.Exception.GetType().Name)")
+            $canRemoveRuntime = $false
+        }
     }
-    $summary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $scratch 'acceptance.json') -Encoding utf8NoBOM
-    foreach ($name in $envNames) { [Environment]::SetEnvironmentVariable($name, $previous[$name]) }
-    # Keep non-secret evidence; remove the generated credential and installed runtime only.
-    if ([IO.Path]::GetFullPath($runtime) -ne (Join-Path $scratch 'runtime with spaces') -or
+
+    $expectedRuntime = Join-Path ([IO.Path]::GetFullPath($scratch)) 'runtime with spaces'
+    if ([IO.Path]::GetFullPath($runtime) -ne $expectedRuntime -or
         -not $runtime.StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()), [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'Unsafe runtime cleanup path.'
+        $cleanupErrors.Add('Unsafe runtime cleanup path.')
+        $canRemoveRuntime = $false
+    } elseif ($canRemoveRuntime -and (Test-Path -LiteralPath $runtime)) {
+        try {
+            Remove-Item -LiteralPath $runtime -Recurse -Force
+        } catch {
+            $cleanupErrors.Add("Runtime cleanup failed: $($_.Exception.GetType().Name)")
+        }
     }
-    if (Test-Path -LiteralPath $runtime) { Remove-Item -LiteralPath $runtime -Recurse -Force }
+
+    foreach ($name in $envNames) {
+        try {
+            [Environment]::SetEnvironmentVariable($name, $previous[$name])
+        } catch {
+            $cleanupErrors.Add("Environment restore failed for $name.")
+        }
+    }
+    if ($cleanupErrors.Count) { $summary.status = 'FAIL' }
+    $summary.cleanup_status = if ($cleanupErrors.Count) { 'FAIL' } else { 'PASS' }
+    $summary.cleanup_errors = $cleanupErrors.ToArray()
+    try {
+        $summary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $scratch 'acceptance.json') -Encoding utf8NoBOM
+    } catch {
+        $cleanupErrors.Add("Acceptance summary write failed: $($_.Exception.GetType().Name)")
+    }
     Write-Output "Service acceptance artifacts: $scratch"
 }
+if ($operationFailure) { throw $operationFailure }
+if ($cleanupErrors.Count) { throw 'Acceptance cleanup failed; inspect acceptance.json and retained runtime.' }

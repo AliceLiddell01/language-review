@@ -16,6 +16,17 @@ from uuid import UUID, uuid4
 from language_review.memory.safety import digest, sanitize
 from language_review.memory.settings import MemorySettings, project_uuid
 
+MIGRATION_FILES = ("migrations/001.sql", "migrations/002.sql")
+
+
+def _migration_scripts() -> list[tuple[int, str, str]]:
+    package = files("language_review.memory")
+    return [
+        (version, script, digest(script))
+        for version, path in enumerate(MIGRATION_FILES, start=1)
+        if (script := package.joinpath(path).read_text("utf-8"))
+    ]
+
 
 class MemoryFeatureError(Exception):
     """Диагностический код без DSN, SQL, текста источников и ошибок сервера."""
@@ -57,8 +68,7 @@ class Store:
             raise MemoryFeatureError("memory_database_failed") from exc
 
     def migrate(self) -> dict[str, Any]:
-        script = files("language_review.memory").joinpath("migrations/001.sql").read_text("utf-8")
-        checksum = digest(script)
+        migrations = _migration_scripts()
         with self.connect() as db:
             db.execute("SELECT pg_advisory_xact_lock(1630982761)")
             db.execute(
@@ -68,23 +78,34 @@ class Store:
             rows = db.execute(
                 "SELECT version, checksum FROM lr_migrations ORDER BY version"
             ).fetchall()
-            if rows:
-                if rows != [{"version": 1, "checksum": checksum}]:
+            if len(rows) > len(migrations):
+                raise MemoryFeatureError("memory_migration_mismatch")
+            for index, row in enumerate(rows):
+                version, _script, checksum = migrations[index]
+                if row != {"version": version, "checksum": checksum}:
                     raise MemoryFeatureError("memory_migration_mismatch")
-            else:
+            for version, script, checksum in migrations[len(rows) :]:
                 db.execute(script)
                 db.execute(
-                    "INSERT INTO lr_migrations(version, checksum) VALUES (1, %s)", (checksum,)
+                    "INSERT INTO lr_migrations(version, checksum) VALUES (%s, %s)",
+                    (version, checksum),
                 )
-        return {"status": "ready", "schema_version": 1, "checksum": checksum}
+        version, _script, checksum = migrations[-1]
+        return {"status": "ready", "schema_version": version, "checksum": checksum}
 
     def health(self) -> dict[str, Any]:
+        migrations = _migration_scripts()
+        expected = [
+            {"version": version, "checksum": checksum} for version, _script, checksum in migrations
+        ]
         with self.connect() as db:
+            exists = db.execute(
+                "SELECT to_regclass('lr_migrations') IS NOT NULL AS present"
+            ).fetchone()["present"]
+            if not exists:
+                raise MemoryFeatureError("memory_migration_required")
             migration = db.execute("SELECT version, checksum FROM lr_migrations").fetchall()
-            script = (
-                files("language_review.memory").joinpath("migrations/001.sql").read_text("utf-8")
-            )
-            if migration != [{"version": 1, "checksum": digest(script)}]:
+            if migration != expected:
                 raise MemoryFeatureError("memory_migration_required")
             extension = db.execute(
                 "SELECT extversion FROM pg_extension WHERE extname='vector'"
@@ -94,7 +115,7 @@ class Store:
             server = db.execute("SHOW server_version").fetchone()["server_version"]
         return {
             "status": "ready",
-            "schema_version": 1,
+            "schema_version": migrations[-1][0],
             "pgvector": extension["extversion"],
             "postgresql": server,
         }
@@ -106,6 +127,8 @@ class Store:
         if not bindings or provenance not in {"live", "historical"}:
             raise MemoryFeatureError("memory_provenance_required")
         bindings = {root: project_uuid(value) for root, value in bindings.items()}
+        if len(set(bindings.values())) != len(bindings):
+            raise MemoryFeatureError("memory_project_binding_ambiguous")
         with self.connect() as db:
             for project in sorted(set(bindings.values())):
                 db.execute(

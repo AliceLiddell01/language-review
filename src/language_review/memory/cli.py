@@ -6,6 +6,7 @@ import time
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 
@@ -130,6 +131,12 @@ def run(arguments: argparse.Namespace, config: LoadedConfig) -> int:
         result = submit_decision(store, document)
     else:
         operation = arguments.memory_command
+        run_id = None
+        if operation == "run":
+            try:
+                run_id = str(UUID(arguments.run_id))
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise InputError("run_id должен быть UUID.") from exc
         if operation == "migrate":
             result = store.migrate()
         elif operation == "health":
@@ -184,7 +191,7 @@ def run(arguments: argparse.Namespace, config: LoadedConfig) -> int:
                         "SELECT id,status,dataset,provenance,diagnostics FROM lr_runs "
                         "WHERE id=%s AND EXISTS (SELECT 1 FROM jsonb_each_text(bindings) b "
                         "WHERE b.value=%s)",
-                        (arguments.run_id, project),
+                        (run_id, project),
                     ).fetchone()
                     if row is None:
                         raise MemoryFeatureError("memory_run_not_in_project")
@@ -192,13 +199,13 @@ def run(arguments: argparse.Namespace, config: LoadedConfig) -> int:
                         "SELECT o.item_id,o.finding_id,f.state,f.revision "
                         "FROM lr_occurrences o JOIN lr_findings f ON f.id=o.finding_id "
                         "WHERE o.run_id=%s AND f.project_id=%s ORDER BY o.item_id",
-                        (arguments.run_id, project),
+                        (run_id, project),
                     ).fetchall()
                     document_ids = {
                         doc["id"]
                         for doc in db.execute(
                             "SELECT id FROM lr_documents WHERE run_id=%s AND project_id=%s",
-                            (arguments.run_id, project),
+                            (run_id, project),
                         ).fetchall()
                     }
                     diagnostics = row["diagnostics"]

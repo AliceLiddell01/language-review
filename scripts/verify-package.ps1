@@ -77,7 +77,7 @@ try {
         if ($LASTEXITCODE -ne 0 -or $installedVersion -ne $expectedVersion) {
             throw "Метаданные установленного $kind не совпадают с версией pyproject.toml."
         }
-        & $environmentPython -I -c 'from importlib.resources import files; import json; p=files("language_review.memory"); assert "CREATE EXTENSION" in p.joinpath("migrations/001.sql").read_text(); assert json.loads(p.joinpath("decision.schema.json").read_text())["type"] == "object"'
+        & $environmentPython -I -c 'from importlib.resources import files; import json; p=files("language_review.memory"); assert "CREATE EXTENSION" in p.joinpath("migrations/001.sql").read_text(); assert "lr_jobs_finding" in p.joinpath("migrations/002.sql").read_text(); assert json.loads(p.joinpath("decision.schema.json").read_text())["type"] == "object"'
         if ($LASTEXITCODE -ne 0) { throw "В $kind отсутствуют ресурсы памяти." }
         $memoryHelp = (& $launcher memory --help) -join [Environment]::NewLine
         if ($LASTEXITCODE -ne 0 -or $memoryHelp -notmatch 'migrate') {

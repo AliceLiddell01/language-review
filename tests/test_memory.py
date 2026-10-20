@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -22,7 +23,7 @@ from language_review.memory.cli import run as run_memory
 from language_review.memory.cli import submit_decision
 from language_review.memory.pipeline import MemorySession
 from language_review.memory.safety import safe_text, sanitize
-from language_review.memory.search import Embedder, RecallRequest, recall_many
+from language_review.memory.search import Embedder, RecallRequest, _recall_query, recall_many
 from language_review.memory.settings import MemorySettings, validate_memory
 from language_review.memory.store import MemoryFeatureError, Store
 from language_review.memory.worker import worker_lease_seconds
@@ -141,6 +142,119 @@ def test_memory_decision_schema_rejects_invented_status_and_foreign_keys() -> No
     foreign_key["foreign_key"] = "unexpected"
     with pytest.raises(InputError, match="контракт"):
         submit_decision(Store(MemorySettings()), foreign_key)
+
+
+def test_memory_health_reports_migration_required_when_migration_table_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Result:
+        def fetchone(self) -> dict[str, bool]:
+            return {"present": False}
+
+    class Connection:
+        def execute(self, *_args: object, **_kwargs: object) -> Result:
+            return Result()
+
+    @contextmanager
+    def connect(_store: Store) -> Iterator[Connection]:
+        yield Connection()
+
+    monkeypatch.setattr(Store, "connect", connect)
+    with pytest.raises(MemoryFeatureError, match="memory_migration_required"):
+        Store(MemorySettings()).health()
+
+
+def test_memory_rejects_ambiguous_project_bindings_before_database_access() -> None:
+    project = str(uuid4())
+    with pytest.raises(MemoryFeatureError, match="memory_project_binding_ambiguous"):
+        Store(MemorySettings()).begin(
+            str(uuid4()),
+            {"root-0001": project, "root-0002": project},
+            "operational",
+            "live",
+        )
+
+
+def test_memory_session_rejects_duplicate_project_uuid_before_health() -> None:
+    project = str(uuid4())
+    settings = MemorySettings(
+        enabled=True,
+        projects={"root-0001": project, "root-0002": project},
+    )
+    extract = SimpleNamespace(roots=[{"id": "root-0001"}, {"id": "root-0002"}], documents=[])
+    with pytest.raises(MemoryFeatureError, match="memory_project_binding_ambiguous"):
+        MemorySession.open(settings, extract, {}, policies=[])
+
+
+def test_memory_run_rejects_invalid_uuid_before_database_access(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    config = load_config(_config(tmp_path, ""))
+    arguments = Namespace(
+        command="memory",
+        memory_command="run",
+        project=str(uuid4()),
+        run_id="not-a-uuid",
+    )
+    with pytest.raises(InputError, match="run_id должен быть UUID"):
+        run_memory(arguments, config)
+
+
+def test_recall_skips_unscored_candidates_and_uses_sql_vector_match() -> None:
+    project = str(uuid4())
+    rows = [
+        {
+            "id": "unranked",
+            "lexical": 0.0,
+            "semantic": None,
+            "vector_match": False,
+            "text": "beta",
+            "project_id": project,
+            "state": "accepted",
+            "kind": "code",
+            "category": "style",
+            "payload": {"evidence": []},
+            "decision_id": None,
+            "revision": 1,
+        },
+        {
+            "id": "vector-candidate",
+            "lexical": 0.0,
+            "semantic": 0.6,
+            "vector_match": True,
+            "text": "gamma",
+            "project_id": project,
+            "state": "accepted",
+            "kind": "code",
+            "category": "style",
+            "payload": {"evidence": []},
+            "decision_id": None,
+            "revision": 1,
+        },
+    ]
+
+    class Result:
+        def fetchall(self) -> list[dict]:
+            return rows
+
+    class Connection:
+        parameters: dict[str, object] = {}
+
+        def execute(self, _query: str, parameters: dict[str, object]) -> Result:
+            self.parameters = parameters
+            return Result()
+
+    db = Connection()
+    result = _recall_query(
+        Store(MemorySettings()),
+        db,
+        RecallRequest(project=project, text="alpha", hybrid=True),
+        "alpha",
+        "[0.1,0.2]",
+        None,
+    )
+    assert db.parameters["max_vector_distance"] == 0.4
+    assert [entry["id"] for entry in result["results"]] == ["vector-candidate"]
 
 
 @pytest.mark.parametrize(

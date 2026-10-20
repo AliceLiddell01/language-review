@@ -11,6 +11,7 @@ from language_review.memory.safety import safe_text
 from language_review.memory.store import MemoryFeatureError, Store
 
 MAX_QUERY_EMBED_BATCH = 256
+MAX_VECTOR_DISTANCE = 0.4
 
 
 @dataclass(frozen=True)
@@ -187,18 +188,20 @@ def _recall_query(
         "websearch_to_tsquery('russian',%(query)s) || "
         "websearch_to_tsquery('simple',%(query)s)) DESC,id LIMIT 50), "
         "vectors AS (SELECT id FROM visible WHERE %(vector)s::vector IS NOT NULL "
-        "AND embedding IS NOT NULL AND embedding <=> %(vector)s::vector < 0.4 "
+        "AND embedding IS NOT NULL AND embedding <=> %(vector)s::vector < %(max_vector_distance)s "
         "ORDER BY embedding <=> %(vector)s::vector,id LIMIT 50), "
         "candidates AS (SELECT id FROM keywords UNION SELECT id FROM vectors) "
         "SELECT v.*,ts_rank_cd(v.search,websearch_to_tsquery('russian',%(query)s) || "
         "websearch_to_tsquery('simple',%(query)s)) AS lexical, "
         "CASE WHEN %(vector)s::vector IS NOT NULL AND v.embedding IS NOT NULL "
-        "THEN 1-(v.embedding <=> %(vector)s::vector) ELSE NULL END AS semantic "
+        "THEN 1-(v.embedding <=> %(vector)s::vector) ELSE NULL END AS semantic, "
+        "v.id IN (SELECT id FROM vectors) AS vector_match "
         "FROM visible v JOIN candidates c USING(id) "
         "ORDER BY lexical DESC,semantic DESC NULLS LAST,v.id",
         {
             "query": lexical_query,
             "vector": query_vector,
+            "max_vector_distance": MAX_VECTOR_DISTANCE,
             "space": store.space_id,
             "project": request.project,
             "states": states,
@@ -222,7 +225,7 @@ def _recall_query(
     if query_vector:
         rankings.append(
             sorted(
-                [row for row in rows if (row["semantic"] or 0) > 0.6],
+                [row for row in rows if row["vector_match"]],
                 key=lambda row: (-row["semantic"], row["id"]),
             )
         )
@@ -230,7 +233,10 @@ def _recall_query(
     for ranking in rankings:
         for rank, row in enumerate(ranking, 1):
             scores[row["id"]] = scores.get(row["id"], 0) + 1 / (60 + rank)
-    ordered = sorted(rows, key=lambda row: (-scores[row["id"]], row["id"]))[: request.limit]
+    ordered = sorted(
+        (row for row in rows if row["id"] in scores),
+        key=lambda row: (-scores[row["id"]], row["id"]),
+    )[: request.limit]
     results = []
     budget = store.settings.context_chars
     for row in ordered:

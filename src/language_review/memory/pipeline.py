@@ -41,6 +41,9 @@ class MemorySession:
             bindings = {next(iter(roots)): project_uuid(options["project"])}
         if set(bindings) != roots or not roots:
             raise MemoryFeatureError("memory_explicit_project_bindings_required")
+        bindings = {root: project_uuid(value) for root, value in bindings.items()}
+        if len(set(bindings.values())) != len(bindings):
+            raise MemoryFeatureError("memory_project_binding_ambiguous")
         if options.get("mode"):
             settings = replace(settings, recall_mode=options["mode"])
         store = Store(settings)

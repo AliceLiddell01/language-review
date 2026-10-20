@@ -150,6 +150,8 @@ def hindsight(base: str) -> dict:
         )
     except EngineHttpError as exc:
         result.update(status="PARTIAL", reason=exc.code)
+    except (AttributeError, KeyError, TypeError) as exc:
+        result.update(status="PARTIAL", reason=f"unexpected_response:{type(exc).__name__}")
     result["wall_ms"] = round((time.perf_counter() - start) * 1000)
     return result
 

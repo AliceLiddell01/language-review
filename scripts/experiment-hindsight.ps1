@@ -18,17 +18,17 @@ try {
         -e HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY=local `
         -e HINDSIGHT_API_RERANKER_PROVIDER=rrf $image
     if ($LASTEXITCODE -ne 0) { throw 'Cannot start isolated Hindsight experiment' }
-    $ready = $false
+    $api = $null
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
         try {
             $api = Invoke-RestMethod "http://127.0.0.1:$port/openapi.json" -TimeoutSec 2
-            if ($api.info.version -ne '1.0.0') { throw 'Unexpected API version' }
-            $ready = $true
             break
         } catch { Start-Sleep -Seconds 2 }
     }
-    if (-not $ready) { throw 'Hindsight did not become ready' }
-    & uv run --locked --extra memory python (Join-Path $PSScriptRoot 'benchmark-memory.py') `
+    if ($null -eq $api) { throw 'Hindsight did not become ready' }
+    if ($api.info.version -ne '1.0.0') { throw "Unexpected API version: $($api.info.version)" }
+    $projectRoot = Split-Path -Parent $PSScriptRoot
+    & uv run --project $projectRoot --locked --extra memory python (Join-Path $PSScriptRoot 'benchmark-memory.py') `
         --hindsight "http://127.0.0.1:$port" --output $Output
     if ($LASTEXITCODE -ne 0) { throw 'Hindsight benchmark failed' }
 } finally {

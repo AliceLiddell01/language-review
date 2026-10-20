@@ -19,6 +19,7 @@ Docker Engine 29.8.2, Compose v5.6.0. Проверки выполняются н
 | Изоляция проекта и явная публикация общей нормы | `test_global_scope_requires_reviewed_public_text_and_never_exports_private_context` |
 | Сбой модели и восстановление worker | `test_real_unavailable_llm_endpoint_keeps_events_and_never_reports_clean`, `test_worker_fencing_recovery_and_hypotheses_never_promote_observations`, `test_retry_budget_and_recovery_are_observable` |
 | Настоящий pgvector, pinned embedding и rebuild | `test_live_pgvector_search_readback_is_scoped_and_versioned` |
+| Семантика при отсутствии общих слов | `test_semantic_retrieval_finds_case_without_shared_terms_in_real_pgvector` — настоящий pgvector, протокольный embedding; отдельная live-проверка использует настоящую модель |
 | Миграции и карантин holdout | `test_schema_migration_is_idempotent_and_detects_drift`, `test_holdout_events_are_quarantined_from_worker_index_and_decisions` |
 | Restart/recreate и реальный backup → потеря volume → restore | `scripts/verify-memory.ps1`: digest всех 13 таблиц и pgvector distance read-back до/после |
 | Настоящий отказ БД, базовый check без Docker | `scripts/verify-memory.ps1`: остановка контейнера, exit 6/пустой stdout, затем `--no-memory` |
@@ -112,6 +113,34 @@ document не находится через recall/reflect. Benchmark отдел
 и выполняет recall, не ограничиваясь success HTTP.
 
 ## Границы оценки
+
+На неизменённом `tests/fixtures/evaluation/corpus.json`, split `dev`, выполнены
+три настоящих `language-review-eval run` через Ollama Qwen3.5 4B, по одному повтору.
+Синтетический учебный опыт хранится отдельно с `knowledge_dataset="synthetic"`;
+две содержательные synthetic-решения переданы через обычный `decide-review`.
+Gold оценщика не импортируется в память. Результаты сопоставлены штатным `compare`.
+
+| Режим | Pipeline TP / FP / FN | Precision | Recall | Статус оценщика |
+| --- | --- | --- | --- | --- |
+| Без памяти | 6 / 0 / 5 | 1.0 | 0.54545 | PARTIAL |
+| Подтверждённая структурная память | 6 / 0 / 5 | 1.0 | 0.54545 | PARTIAL |
+| Гибридный поиск | 6 / 0 / 5 | 1.0 | 0.54545 | PARTIAL |
+
+Языкового улучшения этот запуск **не показал**. PARTIAL отражает границы покрытия
+имеющегося синтетического корпуса и не переименован в PASS. На двух memory-прогонах
+автоматически сохранены все 12 локализованных наблюдений; вместе с двумя учебными
+прогонами и решениями получены 34 durable events, 8 отдельных случаев и 2 accepted case
+rules с проверенными векторами. Повторные наблюдения не стали новыми подтверждениями.
+
+Для воспроизведения трёх режимов используйте внешний TOML с одним и тем же project UUID,
+provider/model, сначала `memory.enabled=false`, затем `recall_mode="structured"` и
+`"hybrid"`. Нужен новый внешний output для каждой команды:
+
+```powershell
+uv run --locked --extra memory language-review-eval run tests/fixtures/evaluation/corpus.json `
+    --split dev --engine llm --config $modeConfig --product-commit $testedCommit --output $newOutput
+uv run --locked language-review-eval compare $baselineEvaluation $candidateEvaluation --format json
+```
 
 Независимый экспертный baseline на реальном русском техническом корпусе — **NOT_RUN**.
 Синтетический корпус существующего `language-review-eval` сохраняет собственную

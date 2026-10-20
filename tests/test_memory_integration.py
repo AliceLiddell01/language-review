@@ -459,6 +459,38 @@ def test_conflicting_delivery_rolls_back_without_erasing_original(stored: dict) 
     assert row["report"] == stored["report"]
 
 
+def test_semantic_retrieval_finds_case_without_shared_terms_in_real_pgvector(
+    stored: dict,
+    json_server: JsonServer,
+) -> None:
+    from conftest import RecordedRequest
+
+    revision = "a" * 64
+
+    def respond(request: RecordedRequest) -> tuple[int, object]:
+        if request.path == "/api/tags":
+            return 200, {"models": [{"name": "embeddinggemma:300m", "digest": revision}]}
+        return 200, {"embeddings": [[1.0, 0.0] for _ in request.body["input"]]}
+
+    json_server.responder = respond
+    settings = replace(
+        stored["store"].settings,
+        embedding_model="embeddinggemma:300m",
+        embedding_revision=revision,
+        embedding_endpoint=json_server.url,
+        embedding_dimensions=2,
+    )
+    store = Store(settings)
+    submit_decision(store, decision(stored))
+    assert index_rules(store, stored["project"])["indexed"] == 1
+    query = "Синонимическийзапросбезсовпадений"
+    assert recall(store, stored["project"], query, hybrid=False)["results"] == []
+    found = recall(store, stored["project"], query, hybrid=True)["results"]
+    assert len(found) == 1 and found[0]["scope"] == "project"
+    assert found[0]["semantic"] == pytest.approx(1.0)
+    assert found[0]["state"] == "accepted" and found[0]["advisory_only"] is True
+
+
 def test_multiple_root_bindings_keep_counters_and_identity_isolated(
     stored: dict, tmp_path: Path
 ) -> None:

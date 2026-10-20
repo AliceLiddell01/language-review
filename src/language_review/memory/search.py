@@ -26,8 +26,11 @@ class Embedder:
                     timeout=settings.timeout_seconds,
                 ).body
                 models = tags.get("models", []) if isinstance(tags, dict) else []
+                if not isinstance(models, list):
+                    raise MemoryError("memory_embedding_schema_invalid")
                 if not any(
-                    item.get("name") == settings.embedding_model
+                    isinstance(item, dict)
+                    and item.get("name") == settings.embedding_model
                     and item.get("digest") == settings.embedding_revision
                     for item in models
                 ):
@@ -173,35 +176,35 @@ def recall(
     # Оба ранжирования ограничены одной и той же областью до вычисления similarity.
     with store.connect() as db:
         rows = db.execute(
-            "SELECT r.*, ts_rank_cd(r.search,websearch_to_tsquery('russian',%s) || "
-            "websearch_to_tsquery('simple',%s)) AS lexical, "
-            "CASE WHEN %s::vector IS NOT NULL AND e.embedding IS NOT NULL "
-            "THEN 1-(e.embedding <=> %s::vector) ELSE NULL END AS semantic "
-            "FROM lr_rules r LEFT JOIN lr_embeddings e ON e.rule_id=r.id AND e.space_id=%s "
-            "AND e.text_hash=md5(r.text) WHERE (r.project_id=%s OR r.project_id IS NULL) "
-            "AND r.state=ANY(%s) AND r.dataset=ANY(%s) "
-            "AND (%s::text IS NULL OR %s=ANY(string_to_array(r.context_kind,','))) "
-            "AND (r.search @@ (websearch_to_tsquery('russian',%s) || "
-            "websearch_to_tsquery('simple',%s)) "
-            "OR (%s::vector IS NOT NULL AND e.embedding IS NOT NULL "
-            "AND e.embedding <=> %s::vector < 0.4)) "
-            "ORDER BY lexical DESC, semantic DESC NULLS LAST, r.id LIMIT 100",
-            (
-                lexical_query,
-                lexical_query,
-                query_vector,
-                query_vector,
-                store.space_id,
-                project,
-                states,
-                datasets,
-                kind,
-                kind,
-                lexical_query,
-                lexical_query,
-                query_vector,
-                query_vector,
-            ),
+            "WITH visible AS NOT MATERIALIZED (SELECT r.*,e.embedding FROM lr_rules r "
+            "LEFT JOIN lr_embeddings e ON e.rule_id=r.id AND e.space_id=%(space)s "
+            "AND e.text_hash=md5(r.text) WHERE (r.project_id=%(project)s OR r.project_id IS NULL) "
+            "AND r.state=ANY(%(states)s) AND r.dataset=ANY(%(datasets)s) "
+            "AND (%(kind)s::text IS NULL OR %(kind)s=ANY(string_to_array(r.context_kind,',')))), "
+            "keywords AS (SELECT id FROM visible WHERE search @@ "
+            "(websearch_to_tsquery('russian',%(query)s) || "
+            "websearch_to_tsquery('simple',%(query)s)) ORDER BY ts_rank_cd(search, "
+            "websearch_to_tsquery('russian',%(query)s) || "
+            "websearch_to_tsquery('simple',%(query)s)) DESC,id LIMIT 50), "
+            "vectors AS (SELECT id FROM visible WHERE %(vector)s::vector IS NOT NULL "
+            "AND embedding IS NOT NULL AND embedding <=> %(vector)s::vector < 0.4 "
+            "ORDER BY embedding <=> %(vector)s::vector,id LIMIT 50), "
+            "candidates AS (SELECT id FROM keywords UNION SELECT id FROM vectors) "
+            "SELECT v.*,ts_rank_cd(v.search,websearch_to_tsquery('russian',%(query)s) || "
+            "websearch_to_tsquery('simple',%(query)s)) AS lexical, "
+            "CASE WHEN %(vector)s::vector IS NOT NULL AND v.embedding IS NOT NULL "
+            "THEN 1-(v.embedding <=> %(vector)s::vector) ELSE NULL END AS semantic "
+            "FROM visible v JOIN candidates c USING(id) "
+            "ORDER BY lexical DESC,semantic DESC NULLS LAST,v.id",
+            {
+                "query": lexical_query,
+                "vector": query_vector,
+                "space": store.space_id,
+                "project": project,
+                "states": states,
+                "datasets": datasets,
+                "kind": kind,
+            },
         ).fetchall()
     # Exact terms (CLI/HTTP/код) дополняют русскую морфологию; RRF объединяет ранги.
     tokens = set(re.findall(r"[\w.-]+", text.casefold()))
@@ -212,9 +215,17 @@ def recall(
             row["id"],
         ),
     )
-    rankings = [rows, exact]
+    rankings = [
+        [row for row in rows if row["lexical"] > 0],
+        [row for row in exact if tokens & set(re.findall(r"[\w.-]+", row["text"].casefold()))],
+    ]
     if query_vector:
-        rankings.append(sorted(rows, key=lambda row: (-(row["semantic"] or 0), row["id"])))
+        rankings.append(
+            sorted(
+                [row for row in rows if (row["semantic"] or 0) > 0.6],
+                key=lambda row: (-row["semantic"], row["id"]),
+            )
+        )
     scores: dict[str, float] = {}
     for ranking in rankings:
         for rank, row in enumerate(ranking, 1):

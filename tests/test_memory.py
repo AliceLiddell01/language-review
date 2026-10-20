@@ -153,7 +153,7 @@ def test_worker_lease_covers_probe_and_configured_llm_timeout(
     assert worker_lease_seconds(CheckSettings(llm_timeout_seconds=timeout)) == expected
 
 
-def test_llm_batching_does_not_count_or_repeat_memory_context_per_small_chunk() -> None:
+def test_llm_batching_budgets_context_and_uses_larger_context_chunks() -> None:
     document = ExtractDocument(
         id="doc-1",
         root="root",
@@ -164,7 +164,7 @@ def test_llm_batching_does_not_count_or_repeat_memory_context_per_small_chunk() 
         status="ok",
     )
 
-    def unit(index: int, text: str) -> CheckUnit:
+    def unit(index: int, text: str, context_chars: int = 900) -> CheckUnit:
         return CheckUnit(
             index=index,
             document_index=0,
@@ -177,14 +177,17 @@ def test_llm_batching_does_not_count_or_repeat_memory_context_per_small_chunk() 
             views={"llm": EngineView(text, ())},
             engines=("llm",),
             terms={},
-            memory_context=[{"id": "historical", "text": "x" * 4000}],
+            memory_context=[{"id": "historical", "text": "x" * context_chars}],
         )
 
     engine = LlmEngine(CheckSettings(llm_batch_chars=1500))
     pair = list(engine._batches([unit(1, "a" * 500), unit(2, "b" * 500)]))
     assert len(pair) == 1 and len(pair[0]) == 2
 
-    split_candidate = unit(3, "Предложение. " * 180)
+    bounded = list(engine._batches([unit(3, "a" * 500, 4000), unit(4, "b" * 500, 4000)]))
+    assert len(bounded) == 2 and all(len(batch) == 1 for batch in bounded)
+
+    split_candidate = unit(5, "Предложение. " * 180, 4000)
     chunks = list(engine._batches([split_candidate]))
     assert len(chunks) == 1 and len(chunks[0]) == 1
 

@@ -552,13 +552,21 @@ class LlmEngine:
     def _batches(self, units: Sequence[CheckUnit]) -> Iterator[list[LlmItem]]:
         batch: list[LlmItem] = []
         size = 0
+        batch_limit = self.settings.llm_batch_chars
         document: int | None = None
         for unit in units:
             chunk_limit = self.settings.llm_batch_chars * (
                 MAX_CHUNK_FACTOR if unit.memory_context else 1
             )
+            context_chars = (
+                len(json.dumps(unit.memory_context, ensure_ascii=False))
+                if unit.memory_context
+                else 0
+            )
+            item_limit = chunk_limit
             for offset, text in split_text(unit.views["llm"].text, chunk_limit):
-                too_big = size + len(text) > self.settings.llm_batch_chars
+                cost = len(text) + context_chars
+                too_big = size + cost > max(batch_limit, item_limit)
                 if batch and (
                     too_big
                     or len(batch) >= self.settings.llm_batch_items
@@ -566,8 +574,10 @@ class LlmEngine:
                 ):
                     yield batch
                     batch, size = [], 0
+                    batch_limit = self.settings.llm_batch_chars
                 batch.append(LlmItem(f"t{len(batch) + 1}", unit, offset, text))
-                size += len(text)
+                size += cost
+                batch_limit = max(batch_limit, item_limit)
                 document = unit.document_index
         if batch:
             yield batch

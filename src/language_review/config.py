@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 from language_review.errors import ConfigurationError
+from language_review.memory.settings import MemorySettings, validate_memory
 
 DEFAULT_EXTENSIONS = (
     ".rs",
@@ -58,7 +59,7 @@ SCAN_KEYS = {
 }
 EXTRACT_KEYS = {"header_language", "message_calls", "selectors"}
 SELECTOR_EXTENSIONS = {".json", ".yaml", ".yml", ".toml", ".xml"}
-ROOT_KEYS = {"scan", "extract", "check", "default_profile", "profiles", "doctor"}
+ROOT_KEYS = {"scan", "extract", "check", "default_profile", "profiles", "doctor", "memory"}
 PROFILE_KEYS = {"priority", "project_markers", "match_paths", "scan", "extract", "check"}
 DOCTOR_KEYS = {"programs", "http_services"}
 CHECK_ENGINES = ("languagetool", "llm", "vale")
@@ -205,6 +206,8 @@ class LoadedConfig:
     user_config_path: Path
     explicit_config_path: Path | None
     loaded_config_paths: tuple[Path, ...]
+    memory: MemorySettings = field(default_factory=MemorySettings)
+    memory_sources: dict[str, str] = field(default_factory=dict)
 
     def settings_for_profile(self, profile_name: str | None) -> tuple[ScanSettings, dict[str, str]]:
         settings = self.scan
@@ -402,6 +405,10 @@ class LoadedConfig:
             "scan": scan,
             "extract": extract,
             "check": check,
+            "memory": {
+                key: {"value": value, "source": self.memory_sources.get(key, "по умолчанию")}
+                for key, value in self.memory.public().items()
+            },
             "profiles": profiles,
             "doctor": {
                 "programs": list(self.doctor_programs),
@@ -841,6 +848,10 @@ def _merge_file(
 ) -> None:
     document = _read_document(path)
     label = f"конфигурация {path}"
+    if "memory" in document:
+        values = validate_memory(document["memory"])
+        state.setdefault("memory", {}).update(values)
+        state.setdefault("memory_sources", {}).update({key: label for key in values})
     if "scan" in document:
         values = _validate_scan(document["scan"], f"{label}.scan", partial=True)
         scan.update(values)
@@ -1013,6 +1024,8 @@ def load_config(explicit_path: str | Path | None = None) -> LoadedConfig:
         sources=scan_sources,
         extract_sources=extract_sources,
         check=check_settings,
+        memory=MemorySettings(**state.get("memory", {})),
+        memory_sources=state.get("memory_sources", {}),
         check_sources=check_sources,
         profiles=compiled_profiles,
         profile_sources=profile_sources,

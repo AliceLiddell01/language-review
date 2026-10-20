@@ -1,0 +1,22 @@
+name: language-review-memory
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg18-trixie@sha256:9d9c930220cb9bf2f956d10a8f909cf9973d9672ca0278aef2c1e6facccad2e0
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: language_review
+      POSTGRES_DB: language_review
+      POSTGRES_PASSWORD: ${LANGUAGE_REVIEW_DB_PASSWORD:?Set LANGUAGE_REVIEW_DB_PASSWORD}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    ports:
+      - "127.0.0.1:${LANGUAGE_REVIEW_DB_PORT:-54329}:5432"
+    volumes:
+      - memory-data:/var/lib/postgresql
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    shm_size: 128mb
+volumes:
+  memory-data:

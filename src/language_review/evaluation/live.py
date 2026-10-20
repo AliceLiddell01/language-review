@@ -70,6 +70,9 @@ def capture(
         ]
         for engine in engines:
             command += ["--engine", engine]
+        # Split передаётся продукту независимо от конфигурации. Test/holdout никогда
+        # не ставятся в консолидацию/индекс; повторы не обучаются на предыдущем test.
+        command += ["--memory-dataset", "test" if split in {"test", "validation"} else "dev"]
         environment = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
         for repetition in range(1, repetitions + 1):
             start = perf_counter()

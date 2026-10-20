@@ -30,6 +30,7 @@ class CheckUnit:
     has_russian: bool = True
     # Применимость по движкам: движок → причина пропуска. Движок без записи проверяет единицу.
     skip_reasons: dict[str, str] = field(default_factory=dict)
+    memory_context: list[dict[str, Any]] = field(default_factory=list)
 
     def checked_by(self, engine: str) -> bool:
         return engine in self.engines and engine not in self.skip_reasons
@@ -177,3 +178,4 @@ class CheckResult:
     engines: list[EngineRun]
     status: str
     settings: dict[str, Any]
+    memory: dict[str, Any] = field(default_factory=dict)

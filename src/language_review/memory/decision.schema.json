@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "project_id", "run_id", "item_id", "decision"],
+  "properties": {
+    "schema": {"const": "language-review.decision"},
+    "schema_version": {"const": "1.0"},
+    "project_id": {"type": "string", "format": "uuid"},
+    "run_id": {"type": "string", "format": "uuid"},
+    "item_id": {"type": "string", "minLength": 1, "maxLength": 200},
+    "decision": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "expected_revision", "status", "actor", "reason", "suggestion", "scope", "public_rule"],
+      "properties": {
+        "id": {"type": "string", "format": "uuid"},
+        "expected_revision": {"type": "integer", "minimum": 0},
+        "status": {"enum": ["accepted", "rejected", "disputed"]},
+        "actor": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "suggestion": {"type": ["integer", "null"], "minimum": 0},
+        "scope": {"enum": ["project", "global"]},
+        "public_rule": {"type": ["string", "null"], "minLength": 1, "maxLength": 1000}
+      }
+    }
+  }
+}

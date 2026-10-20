@@ -77,6 +77,12 @@ try {
         if ($LASTEXITCODE -ne 0 -or $installedVersion -ne $expectedVersion) {
             throw "Метаданные установленного $kind не совпадают с версией pyproject.toml."
         }
+        & $environmentPython -I -c 'from importlib.resources import files; import json; p=files("language_review.memory"); assert "CREATE EXTENSION" in p.joinpath("migrations/001.sql").read_text(); assert json.loads(p.joinpath("decision.schema.json").read_text())["type"] == "object"'
+        if ($LASTEXITCODE -ne 0) { throw "В $kind отсутствуют ресурсы памяти." }
+        $memoryHelp = (& $launcher memory --help) -join [Environment]::NewLine
+        if ($LASTEXITCODE -ne 0 -or $memoryHelp -notmatch 'migrate') {
+            throw "В $kind недоступен CLI памяти без optional extra."
+        }
         $jsonOutput = (& $launcher scan $sample --format json) -join [Environment]::NewLine
         if ($LASTEXITCODE -ne 0) { throw "Установленная команда $kind scan завершилась ошибкой." }
         if ((Get-FileHash -LiteralPath $sampleFile -Algorithm SHA256).Hash -ne $sampleHash) {
@@ -239,6 +245,16 @@ try {
         }
         # Ожидаемый код 5 проверен выше; он не должен стать кодом завершения всего скрипта.
         $global:LASTEXITCODE = 0
+        & uv pip install --python $environmentPython ($artifact.FullName + '[memory]')
+        if ($LASTEXITCODE -ne 0) { throw "Не установлено memory extra для $kind." }
+        & $environmentPython -I -c 'import psycopg; from language_review.memory.store import Store; from language_review.memory.settings import MemorySettings; assert Store(MemorySettings()).settings.enabled is False'
+        if ($LASTEXITCODE -ne 0) { throw "Не работает optional memory extra для $kind." }
+        if ($env:LANGUAGE_REVIEW_MEMORY_TEST_DSN) {
+            $memoryConfig = Join-Path $tempRoot ("memory-$kind.toml")
+            [IO.File]::WriteAllText($memoryConfig, "[memory]`ndsn_env=`"LANGUAGE_REVIEW_MEMORY_TEST_DSN`"`n")
+            & $launcher --config $memoryConfig memory health
+            if ($LASTEXITCODE -ne 0) { throw "Установленный $kind не подключился к тестовой БД." }
+        }
         Write-Output "${kind}: установка, CLI, python -m, scan, extract, check, review и eval прошли."
     }
 }

@@ -24,9 +24,15 @@ dependencies = [
 language-review = "language_review.cli:main"
 language-review-eval = "language_review.evaluation.cli:main"
 
+[project.optional-dependencies]
+memory = [
+    "psycopg[binary]>=3.3",
+]
+
 [dependency-groups]
 dev = [
     "mypy>=2.4.0",
+    "psycopg[binary]>=3.3",
     "pytest>=9.1.1",
     "pytest-xdist>=3.8.0",
     "ruamel-yaml>=0.19.1",

@@ -604,6 +604,7 @@ def check_paths(
     cli_overrides: dict[str, Any] | None = None,
     check_overrides: dict[str, Any] | None = None,
     engine_factory: EngineFactory = default_engine_factory,
+    memory_options: dict[str, Any] | None = None,
 ) -> CheckResult:
     """Проверить тексты, извлечённые `extract`, выбранными движками без изменения исходников."""
     base_settings, base_sources = config.check_settings_for_profile(None, check_overrides)
@@ -627,6 +628,15 @@ def check_paths(
     ]
     for unit in units:
         documents[unit.document_index].units.append(unit)
+
+    # Импорт ленивый: обычный read-only check не требует драйвера PostgreSQL или Docker.
+    from language_review.memory.pipeline import MemorySession
+
+    memory = MemorySession.open(
+        config.memory, extract, memory_options or {}, policies=[asdict(item) for item in settings]
+    )
+    if memory is not None:
+        memory.prepare(units)
 
     # Профиль документа может сузить набор движков; без документов действует базовый набор.
     selected = {name for item in settings for name in item.engines} or set(base_settings.engines)
@@ -694,7 +704,7 @@ def check_paths(
         document.diagnostics = sorted(set(document.extract.diagnostics))
 
     status = overall_status(documents, runs, bool(extract.scan_result.input_errors))
-    return CheckResult(
+    result = CheckResult(
         extract=extract,
         documents=documents,
         engines=runs,
@@ -709,6 +719,9 @@ def check_paths(
             },
         },
     )
+    if memory is not None:
+        memory.finish(result)
+    return result
 
 
 def _record_outcome(

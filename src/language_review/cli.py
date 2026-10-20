@@ -21,6 +21,8 @@ from language_review.doctor import doctor_exit_code, doctor_human, run_doctor
 from language_review.errors import ConfigurationError, InputError, OutputError
 from language_review.extract_report import extract_document, extract_human
 from language_review.extraction import extract_paths
+from language_review.memory.cli import add_commands as add_memory_commands
+from language_review.memory.store import MemoryFeatureError
 from language_review.report import scan_document, scan_human, write_report
 from language_review.review_report import render_review, review_document
 from language_review.review_verify import load_review, verify_review
@@ -117,6 +119,7 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="транспорт LLM: llama_cpp (по умолчанию) или ollama",
     )
+    add_memory_commands(commands, check)
 
     show_review = commands.add_parser("show-review", help="показать сохранённое ревью без анализа")
     show_review.add_argument("report", type=Path)
@@ -205,6 +208,9 @@ def _config_human(mapping: dict[str, Any]) -> str:
     lines.append("Параметры языковой проверки:")
     for key, item in sorted(mapping["check"].items()):
         lines.append(f"  {key}: {item['value']} (источник: {item['source']})")
+    lines.append("Предметная память:")
+    for key, item in sorted(mapping["memory"].items()):
+        lines.append(f"  {key}: {item['value']} (источник: {item['source']})")
     lines.append("Профили:")
     if not mapping["profiles"]:
         lines.append("  не настроены")
@@ -280,6 +286,10 @@ def _run(arguments: argparse.Namespace) -> int:
         )
         return 0 if verified["status"] == "current" else 4
     config: LoadedConfig = load_config(arguments.config)
+    if arguments.command in {"memory", "decide-review"}:
+        from language_review.memory.cli import run as run_memory
+
+        return run_memory(arguments, config)
     if arguments.command == "scan":
         scan_result = scan_paths(
             arguments.paths,
@@ -343,7 +353,16 @@ def _run(arguments: argparse.Namespace) -> int:
                 ),
                 "llm.provider": arguments.llm_provider,
             },
+            memory_options={
+                "enabled": arguments.memory,
+                "project": arguments.memory_project,
+                "run_id": arguments.memory_run,
+                "mode": arguments.memory_mode,
+                "dataset": arguments.memory_dataset,
+            },
         )
+        if check_result.memory:
+            print("Память: " + json.dumps(check_result.memory, ensure_ascii=False), file=sys.stderr)
         review = review_document(check_result) if arguments.view == "review" else None
         content = _emit(
             lambda: review if review is not None else check_document(check_result),
@@ -405,6 +424,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except OutputError as exc:
         print(f"Ошибка отчёта: {exc}", file=sys.stderr)
         return 3
+    except MemoryFeatureError as exc:
+        print(f"Ошибка памяти: {exc}.", file=sys.stderr)
+        return 6
     except KeyboardInterrupt:
         print("Операция прервана.", file=sys.stderr)
         return 130

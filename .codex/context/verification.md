@@ -40,4 +40,19 @@ uv run --locked python .github/scripts/check_pr_body.py --body-file путь\к\
 
 ## Статусы
 
+Предметная память: `scripts/verify-memory.ps1` запускает изолированную PostgreSQL/pgvector
+через Docker Desktop, pytest с восемью workers, restart/recreate и реальный backup →
+потерю volume → restore с digest-проверкой таблиц и vector retrieval. Live LLM/embedding
+включаются отдельными аргументами; без них соответствующие проверки NOT_RUN. Подробности
+и команды — [docs/memory.md](../../docs/memory.md). CI `memory-integration` проверяет
+реальную PostgreSQL в Ubuntu, не заменяя приемку Windows.
+
+`scripts/verify-memory-service.ps1` из чистого клона проверяет собственный независимый
+deployment: установку, Scheduler, реальный `check` → автоматическую очередь/LLM/embedding,
+аварийный restart, откат при управляемых сбоях установки/обновления, отсутствие Docker
+recovery при не-БД ошибке worker и восстановление БД; временные task/volume удаляются в finally.
+Нужны Docker Desktop/Ollama и модели из `docs/memory.md`. Перезагрузка ПК — отдельное
+NOT_RUN, если она не выполнялась. `test_memory_service_windows.py` дополнительно
+проверяет отсутствие консоли у реальной дочерней PowerShell и отказ неверного project.
+
 `PASS` — реально запущено и прошло; `FAIL` — запущено и не прошло; `PARTIAL` — проверена лишь часть; `NOT_RUN` — не запускалось. Указывай точную среду и недоказанные аспекты. CI в Ubuntu и анализ CodeQL не подтверждают работу в Windows. После изменения HEAD прежние результаты CI и CodeRabbit автоматически не переносятся.

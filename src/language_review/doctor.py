@@ -155,10 +155,19 @@ def run_doctor(
         _check_http(name, url) for name, url in sorted(config.doctor_http_services.items())
     ]
     check_settings, engine_checks = _check_engines(config, engine_factory)
+    memory: dict[str, Any] = {"status": "disabled"}
+    if config.memory.enabled:
+        from language_review.memory.store import MemoryFeatureError, Store
+
+        try:
+            memory = Store(config.memory).health()
+        except MemoryFeatureError as exc:
+            memory = {"status": "unavailable", "reason": str(exc)}
     failures = (
         any(check["status"] != "available" for check in program_checks)
         or any(check["status"] in {"unavailable", "unhealthy"} for check in http_checks)
         or any(check["status"] != "available" for check in engine_checks)
+        or memory["status"] == "unavailable"
     )
     input_errors = any(check["status"] != "available" for check in path_checks)
     return {
@@ -182,6 +191,7 @@ def run_doctor(
         "http_services": http_checks,
         "check": check_settings,
         "engines": engine_checks,
+        "memory": memory,
         "input_errors": input_errors,
         "external_failures": failures,
     }
@@ -195,6 +205,7 @@ def doctor_human(result: dict[str, Any]) -> str:
     lines.append(f"Пакет: {package['name']} {package['version']} ({package['status']})")
     loaded = result["configuration"]["loaded_files"]
     lines.append(f"Конфигурация: корректна; загружено файлов: {len(loaded)}")
+    lines.append(f"Предметная память: {result['memory']['status']}")
     for check in result["paths"]:
         detail = check.get("error") or check.get("kind", "")
         lines.append(

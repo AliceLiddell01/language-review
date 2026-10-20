@@ -44,6 +44,39 @@ jobs:
       - name: Проверить скрипты репозитория
         run: uv run --locked python -m unittest discover -s .github/scripts -p 'test_*.py'
 
+  memory-integration:
+    name: PostgreSQL / pgvector • интеграция (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.7-pg18-trixie@sha256:9d9c930220cb9bf2f956d10a8f909cf9973d9672ca0278aef2c1e6facccad2e0
+        env:
+          POSTGRES_USER: language_review
+          POSTGRES_DB: language_review
+          POSTGRES_PASSWORD: synthetic-ci-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U language_review -d language_review"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      LANGUAGE_REVIEW_MEMORY_TEST_DSN: postgresql://language_review:synthetic-ci-only@127.0.0.1:5432/language_review
+    steps:
+      - name: Получить исходники
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Установить uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.13.1"
+      - name: Установить Python
+        run: uv python install
+      - name: Установить закреплённые зависимости
+        run: uv sync --locked --extra memory
+      - name: Проверить настоящий PostgreSQL
+        run: uv run --locked --extra memory pytest -n 8 tests/test_memory.py tests/test_memory_integration.py tests/test_memory_worker.py
+
   windows-smoke:
     name: Python 3.15 • пакет и CLI (Windows)
     runs-on: windows-latest

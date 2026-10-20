@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import sys
 import tempfile
 import time
 from collections.abc import Iterator
@@ -17,7 +18,7 @@ from language_review.chatgpt_http import CloudError
 
 
 def dpapi(data: bytes, *, decrypt: bool = False) -> bytes:
-    if os.name != "nt":
+    if sys.platform != "win32":
         raise CloudError("chatgpt_windows_storage_required")
 
     class Blob(ctypes.Structure):
@@ -73,7 +74,7 @@ class CredentialStore:
 
     @contextmanager
     def locked(self) -> Iterator[dict[str, Any]]:
-        if os.name != "nt":
+        if sys.platform != "win32":
             raise CloudError("chatgpt_windows_storage_required")
         import msvcrt
 

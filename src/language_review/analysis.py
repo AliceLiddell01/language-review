@@ -158,7 +158,8 @@ def _verify(
                     "evidence": "Позицию гипотезы нельзя отобразить в masked context.",
                 }
             )
-            row.update(status="not_applicable", reason="verification_unlocalized")
+            if row["status"] != "failed":
+                row.update(status="not_applicable", reason="verification_unlocalized")
             if "verification_unlocalized" not in run.diagnostics:
                 run.diagnostics.append("verification_unlocalized")
             continue

@@ -268,3 +268,65 @@ def test_unmappable_local_hypothesis_does_not_fail_check_unit(
     assert verification["status"] == "not_applicable"
     assert verification["reason"] == "verification_unlocalized"
     assert "verification_unlocalized" in llm_run.diagnostics
+
+
+def test_unmappable_hypothesis_does_not_hide_prior_verification_failure(
+    tmp_path: Path,
+    isolated_appdata: Path,
+    json_server: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    text = "Это опечатка и хыбака."
+    source = tmp_path / "input.txt"
+    source.write_text(text, encoding="utf-8")
+    json_server.responder = languagetool_responder({"опечатка": ["опечатку"], "хыбака": ["рыбака"]})
+    original_view_range = EngineView.view_range
+
+    def view_range(self: EngineView, start: int, end: int) -> tuple[int, int] | None:
+        if self.text[start:end] == "хыбака":
+            return None
+        return original_view_range(self, start, end)
+
+    monkeypatch.setattr(EngineView, "view_range", view_range)
+    config = replace(
+        load_config(),
+        check=CheckSettings(
+            engines=("languagetool", "llm"),
+            languagetool_endpoint=json_server.url,
+            analysis_verify=True,
+        ),
+    )
+
+    def respond(_system: str, payload: dict[str, Any]) -> Any:
+        if "hypotheses" not in payload:
+            return {"findings": []}
+        hypothesis = payload["hypotheses"][0]
+        return {
+            "decisions": [
+                {
+                    "id": hypothesis["id"],
+                    "excerpt": "неверная цитата",
+                    "decision": "confirmed",
+                    "evidence": "Проверочная цитата намеренно не совпадает.",
+                }
+            ]
+        }
+
+    provider = Provider(respond)
+    result = check_paths(
+        [str(source)],
+        config,
+        engine_factory=lambda name, settings: (
+            LlmEngine(settings, provider) if name == "llm" else LanguageToolEngine(settings)
+        ),
+    )
+
+    llm_run = next(engine for engine in result.engines if engine.name == "llm")
+    verification = llm_run.details["analysis"]["passes"][1]
+    assert result.documents[0].status == "partial"
+    assert verification["status"] == "failed"
+    assert verification["reason"] == "verification_invalid_response"
+    assert [decision["decision"] for decision in verification["decisions"]] == [
+        "uncertain",
+        "uncertain",
+    ]

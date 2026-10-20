@@ -703,6 +703,7 @@ def test_cloud_product_check_validates_stream_and_same_review_contract(
     assert verify_review(report_path, {"root-0001": source})["status"] == "current"
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows CLI/DPAPI acceptance")
 def test_cli_cloud_consent_config_and_doctor_are_observable(
     tmp_path: Path, isolated_appdata: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -155,12 +155,19 @@ Effort Luna: `none/low/medium/high/xhigh/max`; Sol: `low/medium/high/xhigh/max`.
 вернул. `max` включается явно и может расходовать больше квоты. Превосходство профилей
 не доказано. Профиль применяется ко всем выбранным ступеням данного запуска.
 
+Облачный транспорт использует системные настройки HTTPS proxy (включая Windows proxy),
+сохраняя проверку TLS и allowlist адресов OpenAI; перенаправления запрещены.
+Локальные движки по-прежнему обходят proxy. Если вход в браузере проходит, а приложение
+получает `connection_failed`, проверьте доступность системного proxy для Python.
+
 Транспорт использует только публичный `POST https://api.openai.com/v1/responses`,
 `store=false`, `stream=true`, массив input, instructions и reasoning.effort. Поля
 temperature/max_output_tokens/previous_response_id и инструменты не отправляются.
 Схема передаётся инструкцией, без предположения о structured output через OAuth;
-фактический JSON строго проверяется продуктом. Нужен `response.completed`;
-failed/incomplete, обрыв SSE, timeout и неверный JSON не считаются чистым анализом.
+фактический JSON строго проверяется продуктом. Если заголовок Content-Type отсутствует,
+принимается только корректный SSE-поток
+с `response.completed`; явно неверный Content-Type отклоняется. Failed/incomplete,
+обрыв SSE, timeout и неверный JSON не считаются чистым анализом.
 
 При usage limit отправка прекращается. Доступные токены и latency отражены в отчёте;
 процент квоты и стоимость остаются null. Тариф API не пересчитывается в подписочный
@@ -194,8 +201,10 @@ config hash/commit/corpus/split, scoring — telemetry и покрытие. Ме
 
 Detection precision/recall/F0.5, pipeline recall, correction, FP, overediting и разрезы
 форматов/категорий принадлежат evaluator. Непокрытые случаи не TN. Синтетика и внешние
-exact-match corrections не заменяют независимую разметку. Live OAuth/catalog/inference
-и реальный human baseline этого этапа — **NOT_RUN**; прирост качества не заявляется.
+exact-match corrections не заменяют независимую разметку. Реальные OAuth/catalog/inference
+и сценарии CLI проверены на синтетических входах —
+результаты в [матрице проверки](multistage-validation.md). Реальный human baseline
+остаётся **NOT_RUN**; прирост качества не заявляется.
 
 Внешний контракт сверяется с официальной документацией OpenAI:
 [регистрация](https://developers.openai.com/siwc/token-sharing-open-source/sign-in),

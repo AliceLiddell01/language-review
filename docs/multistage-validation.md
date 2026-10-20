@@ -31,9 +31,9 @@ DPAPI, loopback listener, межпроцессная блокировка и у�
   первый поиск чистый, второй находит гипотезу; `verify-review` подтвердил исходные байты.
 - **PASS, Windows:** настоящий DPAPI и сериализация refresh двух процессов; crypto/JWT
   extra устанавливается из wheel и sdist, базовая установка обходится без него.
-- **NOT_RUN, live OAuth:** собственных OAuth-регистраций приложения на проверяемом
-  хосте нет. Реальные `/v1/models`, Luna/Sol inference и совместимость effort конкретного
-  плана не подтверждены. Нет доступа к credentials Codex или чужим аккаунтам.
+- **PASS, live OAuth:** пользователь самостоятельно вошёл через продукт; реальные
+  `/v1/models`, refresh и Luna/Sol inference подтверждены. Сценарии и ограничения
+  приведены ниже. Credentials Codex и API keys не используются.
 - **NOT_RUN, human baseline:** независимый реальный русский gold не предоставлен.
   Detection precision/recall/F0.5, correction, FP/overediting и прирост от режимов/памяти
   не измерены. Протокольные сценарии не являются заменой этих метрик.
@@ -45,3 +45,35 @@ DPAPI, loopback listener, межпроцессная блокировка и у�
 Канонические команды и статусы — [verification](../.codex/context/verification.md).
 Пользовательский запуск и ограничения — [руководство](multistage-analysis.md).
 Фактические результаты полного прогона и CI привязываются к опубликованному HEAD в PR.
+
+## Реальные проверки ChatGPT
+
+Дата: 2026-10-20. Windows / PowerShell / Python 3.15.0. Пользователь лично выполнил
+Sign in with ChatGPT; затем запускался настоящий CLI на внешних синтетических входах.
+Исходники сторонних проектов и предметная память не отправлялись; `--no-memory`.
+OAuth-сессия остаётся подключённой для последующих пользовательских проверок.
+
+| Сценарий | Результат |
+| --- | --- |
+| Browser OAuth, DPAPI session, `/v1/models`, явный refresh | PASS; каталог содержит обе разрешённые модели |
+| Luna medium, normal, Markdown | PASS; 1 запрос, 4/4 единицы, 2 замечания, 1300 input / 113 output tokens |
+| Sol high, normal, Markdown/Rust/C#/C++ | PASS; 4 запроса, 7/7 единиц, 5 замечаний, 4864 input / 287 output tokens |
+| Luna low, adaptive, Rust | PASS; 1 запрос, 1/1 единица, 1 замечание; дополнительные стратегии имеют `adaptive_no_signal` |
+| Sol high, deep, spelling + verification, Rust | PASS; 4 запроса, 1/1 единица, две гипотезы проходов confirmed, 3232 input / 230 output tokens |
+| Sol high, deep, grammar + spelling + verification, Markdown | PARTIAL; 8 запросов, один timeout 180 секунд и затем `analysis_request_budget`; 3/4 единицы полны, первичные evidence сохранены |
+| OAuth есть, cloud consent выключен | PASS; `cloud_consent_required`, 0 запросов, результат unavailable |
+| Luna low, deep, max_requests=1 | PASS для ограничения бюджета; ровно 1 запрос, сохранены 2 замечания, обязательный проход остановлен с `analysis_request_budget`, результат unavailable, не clean |
+
+Обнаружены и исправлены две реальные несовместимости: облачный транспорт обходил
+системный proxy Windows, а корректный SSE-поток без Content-Type отвергался до чтения.
+Проверка TLS/allowlist и запрет redirects сохранены; локальные движки обходят proxy.
+`show-review` прочитал все семь сохранённых отчётов, `verify-review` подтвердил
+`current`; SHA-256 всех четырёх исходных файлов остались прежними.
+Регрессии: `test_cloud_https_uses_system_proxy_without_exposing_bearer`,
+`test_sse_without_content_type_still_requires_completed`,
+`test_nonstream_json_is_never_a_completed_response`.
+
+Эти результаты подтверждают работоспособность транспорта и продуктового конвейера,
+но не precision/recall на независимом корпусе. Число замечаний не является метрикой
+качества; межмодельное сравнение на этих разных входах не выполняется. Отзыв сессии,
+смена аккаунта и принудительное исчерпание квоты в live не запускались.

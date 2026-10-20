@@ -16,6 +16,7 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from email.message import Message
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -525,6 +526,50 @@ def test_responses_public_route_allowed_payload_and_completed_json(
     assert request.get_header("Authorization") == "Bearer synthetic-access"
 
 
+@pytest.mark.parametrize("completed", [True, False], ids=["completed", "interrupted"])
+def test_sse_without_content_type_still_requires_completed(
+    monkeypatch: pytest.MonkeyPatch, completed: bool
+) -> None:
+    events = [{"type": "response.output_text.delta", "delta": '{"findings": []}'}]
+    if completed:
+        events.append(
+            {
+                "type": "response.completed",
+                "response": {"status": "completed", "model": "gpt-6-luna"},
+            }
+        )
+
+    class Opener:
+        def open(self, request: Any, **kw: Any) -> Stream:
+            stream = Stream(sse(*events))
+            del stream.headers["Content-Type"]
+            return stream
+
+    monkeypatch.setattr(http, "_OPENER", Opener())
+    if completed:
+        assert http.stream_response({}, "synthetic", 1)["content"] == '{"findings": []}'
+    else:
+        with pytest.raises(CloudError, match="sse_missing_completed"):
+            http.stream_response({}, "synthetic", 1)
+
+
+@pytest.mark.parametrize("header", [None, "application/json"], ids=["absent", "json"])
+def test_nonstream_json_is_never_a_completed_response(
+    monkeypatch: pytest.MonkeyPatch, header: str | None
+) -> None:
+    class Opener:
+        def open(self, request: Any, **kw: Any) -> Stream:
+            stream = Stream(b'{"findings": []}', header or "text/event-stream")
+            if header is None:
+                del stream.headers["Content-Type"]
+            return stream
+
+    monkeypatch.setattr(http, "_OPENER", Opener())
+    expected = "sse_missing_completed" if header is None else "sse_content_type"
+    with pytest.raises(CloudError, match=expected):
+        http.stream_response({}, "synthetic", 1)
+
+
 @pytest.mark.parametrize(
     "events,code",
     [
@@ -631,6 +676,52 @@ def test_http_errors_redact_detail_and_preserve_code_shape(monkeypatch: pytest.M
 def test_cloud_endpoint_is_fixed(url: str) -> None:
     with pytest.raises(CloudError, match="unsafe_cloud_endpoint"):
         http.cloud_json(url)
+
+
+def test_cloud_https_uses_system_proxy_without_exposing_bearer() -> None:
+    requests: list[tuple[str, str | None]] = []
+
+    class Proxy(BaseHTTPRequestHandler):
+        def do_CONNECT(self) -> None:
+            requests.append((self.path, self.headers.get("Authorization")))
+            self.send_error(403)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            pass
+
+    with HTTPServer(("127.0.0.1", 0), Proxy) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            environment = {
+                key: value
+                for key, value in os.environ.items()
+                if key.lower() not in {"http_proxy", "https_proxy", "all_proxy", "no_proxy"}
+            }
+            environment["https_proxy"] = f"http://127.0.0.1:{server.server_port}"
+            environment["no_proxy"] = ""
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from language_review.chatgpt_http import cloud_json, CloudError, DISCOVERY\n"
+                    "try:\n"
+                    "    cloud_json(DISCOVERY, token='synthetic-bearer', timeout=2)\n"
+                    "except CloudError as error:\n"
+                    "    print(error.code)\n",
+                ],
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "connection_failed"
+    assert requests == [("auth.openai.com:443", None)]
+    assert "synthetic-bearer" not in result.stdout + result.stderr
 
 
 @pytest.mark.parametrize(

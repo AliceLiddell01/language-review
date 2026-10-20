@@ -1,4 +1,4 @@
-"""Ограниченный публичный OAuth HTTP/SSE; никаких ключей, proxy или redirects."""
+"""Публичный OAuth HTTP/SSE через системный proxy, без API-ключей и redirects."""
 
 from __future__ import annotations
 
@@ -19,7 +19,9 @@ API = "https://api.openai.com/v1"
 ISSUER = "https://auth.openai.com"
 TOKEN = ISSUER + "/api/accounts/oauth/token"
 DISCOVERY = ISSUER + "/.well-known/openid-configuration"
-_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+# Облачный HTTPS следует настройкам сети ОС; TLS и allowlist действуют и в туннеле.
+# Локальные движки по-прежнему обходят proxy через собственный engine_http.
+_OPENER = urllib.request.build_opener(_NoRedirect)
 _CODE = re.compile(r"[a-zA-Z0-9_.-]{1,120}\Z")
 
 
@@ -141,7 +143,12 @@ def stream_response(payload: dict[str, Any], token: str, timeout: float) -> dict
     with open_response(
         API + "/responses", payload=payload, token=token, timeout=timeout
     ) as response:
-        if response.headers.get_content_type() != "text/event-stream":
+        # SIWC может опускать Content-Type: в этом случае доверяем только полностью
+        # разобранному SSE с response.completed, а не пустому/частичному тексту.
+        if (
+            response.headers.get("Content-Type") is not None
+            and response.headers.get_content_type() != "text/event-stream"
+        ):
             raise CloudError("sse_content_type")
         data: list[str] = []
         text: list[str] = []

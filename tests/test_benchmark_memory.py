@@ -62,7 +62,7 @@ def test_benchmark_reports_missing_model_instead_of_stop_iteration(
         lambda *_args, **_kwargs: SimpleNamespace(body={"models": []}),
     )
 
-    with pytest.raises(ValueError, match="model is not installed"):
+    with pytest.raises(ValueError, match="Модель Ollama не установлена"):
         benchmark.benchmark("missing-model")
 
 

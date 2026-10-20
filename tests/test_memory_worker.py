@@ -97,12 +97,38 @@ def test_all_projects_worker_discovers_future_projects_and_bounds_jobs_and_index
     assert work(worker_store, None, CheckSettings(), limit=8)["jobs"] == []
 
 
+def test_health_ignores_physical_row_order_and_still_rejects_drift(worker_store: Store) -> None:
+    from language_review.memory.store import MemoryFeatureError
+
+    with worker_store.connect() as db:
+        # Перезапись первой версии переносит её в конец heap: seq scan без ORDER BY даёт 2, 1.
+        first = db.execute(
+            "DELETE FROM lr_migrations WHERE version=1 RETURNING version,checksum,applied_at"
+        ).fetchone()
+        db.execute(
+            "INSERT INTO lr_migrations(version,checksum,applied_at) "
+            "VALUES (%(version)s,%(checksum)s,%(applied_at)s)",
+            first,
+        )
+        physical = db.execute("SELECT version FROM lr_migrations").fetchall()
+    assert [row["version"] for row in physical] == [2, 1]
+    assert worker_store.health()["schema_version"] == 2
+    with worker_store.connect() as db:
+        db.execute("UPDATE lr_migrations SET checksum='drift' WHERE version=2")
+    with pytest.raises(MemoryFeatureError, match="memory_migration_required"):
+        worker_store.health()
+    with worker_store.connect() as db:
+        db.execute("DELETE FROM lr_migrations WHERE version=2")
+    with pytest.raises(MemoryFeatureError, match="memory_migration_required"):
+        worker_store.health()
+
+
 def test_scoped_worker_keeps_other_projects_pending_and_global_worker_repairs_index(
     worker_store: Store, stored: dict[str, Any]
 ) -> None:
     first = seed(worker_store, stored["report"])
     second = seed(worker_store, stored["report"])
-    # An unavailable embedding service must leave consolidation and original events durable.
+    # Недоступный embedding-сервис не должен терять консолидацию и исходные события.
     worker_store.settings = replace(worker_store.settings, embedding_revision="b" * 64)
     outcome = work(worker_store, first, CheckSettings(), limit=8)
     assert outcome["status"] == "partial"

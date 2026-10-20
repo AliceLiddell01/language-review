@@ -1,4 +1,4 @@
-"""Windowless Scheduler entry point; wait for and supervise the foreground service."""
+"""Безоконная точка входа планировщика: запускает и сопровождает supervisor переднего плана."""
 
 import ctypes
 import json
@@ -36,7 +36,7 @@ class ExtendedLimits(ctypes.Structure):
 
 
 def own_process_tree():
-    """Scheduler terminates the actual wrapper; its last job handle kills descendants."""
+    """Планировщик завершает сам wrapper; закрытие последнего handle job убивает потомков."""
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
     kernel.CreateJobObjectW.restype = wintypes.HANDLE
@@ -57,10 +57,10 @@ def own_process_tree():
     limits.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
     if not kernel.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
         raise ctypes.WinError(ctypes.get_last_error())
-    # Assign before spawning anything. Windows 10/11 allow this nested job inside Scheduler.
+    # Назначаем до запуска потомков. Windows 10/11 допускают вложенный job внутри Scheduler.
     if not kernel.AssignProcessToJobObject(job, kernel.GetCurrentProcess()):
         raise ctypes.WinError(ctypes.get_last_error())
-    return job  # Keep this non-inheritable handle open until wrapper process exit.
+    return job  # Ненаследуемый handle остаётся открытым до завершения wrapper.
 
 
 def main():

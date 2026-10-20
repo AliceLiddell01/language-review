@@ -49,7 +49,8 @@ uv run --locked python .github/scripts/check_pr_body.py --body-file путь\к\
 
 `scripts/verify-memory-service.ps1` из чистого клона проверяет собственный независимый
 deployment: установку, Scheduler, реальный `check` → автоматическую очередь/LLM/embedding,
-аварийный restart и восстановление БД; временные task/volume удаляются в finally.
+аварийный restart, откат при управляемых сбоях установки/обновления, отсутствие Docker
+recovery при не-БД ошибке worker и восстановление БД; временные task/volume удаляются в finally.
 Нужны Docker Desktop/Ollama и модели из `docs/memory.md`. Перезагрузка ПК — отдельное
 NOT_RUN, если она не выполнялась. `test_memory_service_windows.py` дополнительно
 проверяет отсутствие консоли у реальной дочерней PowerShell и отказ неверного project.

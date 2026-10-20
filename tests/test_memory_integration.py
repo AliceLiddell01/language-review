@@ -365,6 +365,212 @@ def test_related_cases_form_one_incremental_hypothesis_and_retain_each_original(
     assert sum(row["count"] for row in store.status(stored["project"])["findings"]) == 2
 
 
+class LineageProvider(ConsolidationProvider):
+    """Группирует видимые случаи; текст зависит от их числа, чтобы проверить переиндексацию."""
+
+    def __init__(self, group: bool = True, relation: str = "pattern", during: Any = None) -> None:
+        super().__init__()
+        self.group = group
+        self.relation = relation
+        self.during = during
+
+    def complete(self, system: str, user: str, schema: dict) -> ProviderReply:
+        if self.during:
+            self.during()
+        cases = json.loads(user)["cases"]
+        evidence = [case["id"] for case in cases] if self.group else ["c1"]
+        rule = {
+            "text": f"праверить — вероятная опечатка ({len(evidence)} случ.)",
+            "category": cases[0]["category"],
+            "relation": self.relation,
+            "evidence": evidence,
+        }
+        return ProviderReply(json.dumps({"rules": [rule]}, ensure_ascii=False), truncated=False)
+
+
+def _embedding_store(stored: dict, json_server: JsonServer) -> Store:
+    from conftest import RecordedRequest
+
+    languagetool = languagetool_responder({"праверить": ["проверить"]})
+
+    def respond(request: RecordedRequest) -> tuple[int, object]:
+        if request.path == "/api/tags":
+            return 200, {"models": [{"name": "embeddinggemma:300m", "digest": "a" * 64}]}
+        if request.path == "/api/embed":
+            return 200, {"embeddings": [[1.0, 0.5] for _ in request.body["input"]]}
+        return languagetool(request)
+
+    json_server.responder = respond
+    return Store(
+        replace(
+            stored["store"].settings,
+            embedding_model="embeddinggemma:300m",
+            embedding_revision="a" * 64,
+            embedding_endpoint=json_server.url,
+            embedding_dimensions=2,
+        )
+    )
+
+
+def _add_case(stored: dict, name: str) -> None:
+    (stored["source"] / name).write_text("// Нужно праверить CLI.\n", encoding="utf-8")
+    assert check_paths([str(stored["source"])], stored["config"]).memory["status"] == "committed"
+
+
+def _hypotheses(store: Store, project: str) -> list[dict[str, Any]]:
+    with store.connect() as db:
+        return list(
+            db.execute(
+                "SELECT * FROM lr_rules WHERE project_id=%s AND kind='hypothesis' ORDER BY id",
+                (project,),
+            ).fetchall()
+        )
+
+
+def test_sequential_related_cases_extend_one_lineage_with_history_recall_and_index(
+    stored: dict, json_server: JsonServer
+) -> None:
+    store = _embedding_store(stored, json_server)
+    project = stored["project"]
+    for _ in range(2):
+        assert process_one(store, project, CheckSettings(), LineageProvider())["status"] == "done"
+    [lineage] = _hypotheses(store, project)
+    assert index_rules(store, project)["indexed"] == 1
+    # Новые случаи поступают после публикации обобщения, по одному.
+    for count, name in [(3, "c.rs"), (4, "d.rs"), (5, "e.rs")]:
+        _add_case(stored, name)
+        outcome = process_one(store, project, CheckSettings(), LineageProvider())
+        assert outcome and outcome["status"] == "done"
+        assert outcome["successions"] == [
+            {"rule": lineage["id"], "revision": count, "superseded": []}
+        ]
+        rules = _hypotheses(store, project)
+        assert [row["id"] for row in rules] == [lineage["id"]]
+        assert rules[0]["state"] == "hypothesis" and rules[0]["revision"] == count
+        assert len(rules[0]["payload"]["evidence"]) == count
+        assert index_rules(store, project)["indexed"] == 1
+    with store.connect() as db:
+        history = db.execute(
+            "SELECT revision,payload FROM lr_rule_history WHERE rule_id=%s ORDER BY revision",
+            (lineage["id"],),
+        ).fetchall()
+        findings = db.execute(
+            "SELECT id FROM lr_findings WHERE project_id=%s", (project,)
+        ).fetchall()
+        embeddings = db.execute(
+            "SELECT e.text_hash=md5(r.text) AS current FROM lr_embeddings e "
+            "JOIN lr_rules r ON r.id=e.rule_id WHERE r.project_id=%s",
+            (project,),
+        ).fetchall()
+    assert [row["revision"] for row in history] == [1, 2, 3, 4, 5]
+    assert [len(row["payload"]["payload"]["evidence"]) for row in history] == [2, 2, 3, 4, 5]
+    assert set(rules[0]["payload"]["evidence"]) == {row["id"] for row in findings}
+    assert embeddings == [{"current": True}]
+    status = store.status(project)
+    assert status["index"] == {"rules": 1, "indexed": 1}
+    assert {row["state"] for row in status["findings"]} == {"unverified"}
+    recalled = recall(store, project, "праверить", include_hypotheses=True)["results"]
+    hypotheses = [row for row in recalled if row["state"] == "hypothesis"]
+    assert [row["id"] for row in hypotheses] == [lineage["id"]]
+    assert hypotheses[0]["text"].endswith("(5 случ.)") and len(hypotheses[0]["evidence"]) == 5
+    assert not [
+        row for row in recall(store, project, "праверить")["results"] if row["kind"] == "hypothesis"
+    ]
+
+
+def test_ungrouped_and_other_relation_cases_stay_separate_until_llm_links_them(
+    stored: dict, json_server: JsonServer
+) -> None:
+    store = _embedding_store(stored, json_server)
+    project = stored["project"]
+    for _ in range(2):
+        process_one(store, project, CheckSettings(), LineageProvider())
+    [first] = _hypotheses(store, project)
+    # Та же категория и цитата без связи от LLM — не повод объединять дефекты.
+    _add_case(stored, "c.rs")
+    process_one(store, project, CheckSettings(), LineageProvider(group=False))
+    _add_case(stored, "d.rs")
+    process_one(store, project, CheckSettings(), LineageProvider(relation="terminology"))
+    active = [row for row in _hypotheses(store, project) if row["state"] == "hypothesis"]
+    assert len(active) == 3 and first["id"] in {row["id"] for row in active}
+    single = next(row for row in active if len(row["payload"]["evidence"]) == 1)
+    # Явная группировка свидетельств связывает ветви: младшая замещается, история остаётся.
+    _add_case(stored, "e.rs")
+    outcome = process_one(store, project, CheckSettings(), LineageProvider())
+    assert outcome["successions"] == [
+        {"rule": first["id"], "revision": 3, "superseded": [single["id"]]}
+    ]
+    rules = {row["id"]: row for row in _hypotheses(store, project)}
+    assert rules[single["id"]]["state"] == "superseded"
+    assert rules[single["id"]]["payload"]["superseded_by"] == first["id"]
+    assert len(rules[first["id"]]["payload"]["evidence"]) == 5
+    terminology = [row for row in rules.values() if row["payload"]["relation"] == "terminology"]
+    assert [row["state"] for row in terminology] == ["hypothesis"]
+    assert index_rules(store, project)["indexed"] == 2
+    recalled = recall(store, project, "праверить", include_hypotheses=True)["results"]
+    assert single["id"] not in {row["id"] for row in recalled}
+    with store.connect() as db:
+        merged = db.execute(
+            "SELECT revision,payload FROM lr_rule_history WHERE rule_id=%s ORDER BY revision",
+            (single["id"],),
+        ).fetchall()
+    assert [row["payload"]["state"] for row in merged] == ["hypothesis", "superseded"]
+
+
+def test_decision_during_llm_never_revives_superseded_lineage(
+    stored: dict, json_server: JsonServer
+) -> None:
+    store = _embedding_store(stored, json_server)
+    project = stored["project"]
+    for _ in range(2):
+        process_one(store, project, CheckSettings(), LineageProvider())
+    [lineage] = _hypotheses(store, project)
+    _add_case(stored, "c.rs")
+    rejected = LineageProvider(during=lambda: submit_decision(store, decision(stored, "rejected")))
+    outcome = process_one(store, project, CheckSettings(), rejected)
+    assert outcome["stale"] is True and outcome["rules"] == 0
+    rules = _hypotheses(store, project)
+    assert [(row["id"], row["state"]) for row in rules] == [(lineage["id"], "superseded")]
+    with store.connect() as db:
+        case = db.execute(
+            "SELECT state FROM lr_rules WHERE project_id=%s AND kind='case'", (project,)
+        ).fetchall()
+    assert case == [{"state": "rejected"}]
+    assert not [
+        row
+        for row in recall(store, project, "праверить", include_hypotheses=True)["results"]
+        if row["state"] == "hypothesis"
+    ]
+    # Повторная обработка после решения формирует свежую гипотезу, решение остаётся отрицательным.
+    while (job := process_one(store, project, CheckSettings(), LineageProvider())) is not None:
+        assert job["status"] == "done"
+    active = [row for row in _hypotheses(store, project) if row["state"] == "hypothesis"]
+    assert len(active) == 1
+    states = {row["state"] for row in store.status(project)["findings"]}
+    assert states == {"rejected", "unverified"}
+
+
+def test_concurrent_related_jobs_keep_one_active_lineage(
+    stored: dict, json_server: JsonServer
+) -> None:
+    store = _embedding_store(stored, json_server)
+    project = stored["project"]
+    for _ in range(2):
+        process_one(store, project, CheckSettings(), LineageProvider())
+    _add_case(stored, "c.rs")
+    _add_case(stored, "d.rs")
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(
+            pool.map(
+                lambda _: process_one(store, project, CheckSettings(), LineageProvider()), [0, 1]
+            )
+        )
+    assert all(row and row["status"] == "done" for row in outcomes)
+    active = [row for row in _hypotheses(store, project) if row["state"] == "hypothesis"]
+    assert len(active) == 1 and len(active[0]["payload"]["evidence"]) == 4
+    assert process_one(store, project, CheckSettings(), LineageProvider()) is None
+
+
 def test_automatic_recall_reaches_real_llm_transport_and_keeps_protected_tokens(
     stored: dict,
     json_server: JsonServer,
@@ -460,6 +666,49 @@ def test_global_scope_requires_reviewed_public_text_and_never_exports_private_co
     assert results[0]["text"] == document["decision"]["public_rule"]
     assert "synthetic-reviewer" not in json.dumps(results)
     assert "context" not in results[0] and "path" not in results[0]
+
+
+def test_decide_review_cli_refuses_whitespace_global_rule_and_keeps_scope_limits(
+    stored: dict, tmp_path: Path, isolated_appdata: Path
+) -> None:
+    from support.check_helpers import _run
+
+    config = tmp_path / "decide.toml"
+    config.write_text(
+        '[memory]\nenabled=true\ndsn_env="LANGUAGE_REVIEW_MEMORY_TEST_DSN"\n', encoding="utf-8"
+    )
+    path = tmp_path / "decision.json"
+
+    def decide(document: dict[str, Any]) -> Any:
+        path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+        return _run(["--config", str(config), "decide-review", str(path)], isolated_appdata)
+
+    blank = decision(stored)
+    blank["decision"].update(scope="global", public_rule=" \t ")
+    refused = decide(blank)
+    assert refused.returncode == 2 and refused.stdout == ""
+    assert "Некорректный контракт решения" in refused.stderr
+    # Серверная граница отклоняет то же значение и без JSON-схемы.
+    with pytest.raises(MemoryFeatureError, match="public_rule_required"):
+        stored["store"].decide(
+            blank["project_id"], blank["run_id"], blank["item_id"], dict(blank["decision"])
+        )
+    project_rule = decision(stored)
+    project_rule["decision"]["public_rule"] = "Проектное исключение."
+    conflict = decide(project_rule)
+    assert conflict.returncode == 6 and "memory_public_rule_scope_conflict" in conflict.stderr
+    assert {row["state"] for row in stored["store"].status(stored["project"])["findings"]} == {
+        "unverified"
+    }
+    # Глобальное правило видно всем проектам общей тестовой БД: термин уникален.
+    term = "Глобальныйтермин" + uuid4().hex
+    meaningful = decision(stored)
+    meaningful["decision"].update(scope="global", public_rule=f"{term} пишется латиницей.")
+    accepted = decide(meaningful)
+    assert accepted.returncode == 0, accepted.stderr
+    assert json.loads(accepted.stdout)["revision"] == 1
+    found = recall(stored["store"], str(uuid4()), term, hybrid=False)["results"]
+    assert [row["text"] for row in found] == [meaningful["decision"]["public_rule"]]
 
 
 def test_conflicting_delivery_rolls_back_without_erasing_original(stored: dict) -> None:

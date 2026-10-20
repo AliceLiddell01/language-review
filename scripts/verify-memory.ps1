@@ -9,7 +9,7 @@ $repo = Split-Path $PSScriptRoot -Parent
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('language-review-memory-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $scratch | Out-Null
 $project = 'lr-memory-acceptance-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
-if ($project -notmatch '^lr-memory-acceptance-[0-9a-f]{12}$') { throw 'Unsafe test project identity' }
+if ($project -notmatch '^lr-memory-acceptance-[0-9a-f]{12}$') { throw 'Небезопасная идентичность тестового project.' }
 $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
 $listener.Start()
 $port = $listener.LocalEndpoint.Port
@@ -23,7 +23,7 @@ $previous = @{}
 foreach ($name in $names) { $previous[$name] = [Environment]::GetEnvironmentVariable($name) }
 function Invoke-Checked([string]$Executable, [string[]]$CommandArguments) {
     & $Executable @CommandArguments
-    if ($LASTEXITCODE -ne 0) { throw "$Executable failed: $LASTEXITCODE" }
+    if ($LASTEXITCODE -ne 0) { throw "$Executable завершился с кодом $LASTEXITCODE." }
 }
 $compose = @('compose', '-f', (Join-Path $repo 'compose.memory.yml'), '-p', $project)
 $summary = @{status='FAIL'; environment='Windows/PowerShell/Python'; artifact_directory=$scratch}
@@ -69,10 +69,10 @@ try {
     [IO.File]::WriteAllText($source, 'Корректный русский текст.')
     $unavailable = & uv run --locked --extra memory language-review check $source --engine vale `
         --memory --memory-project ([guid]::NewGuid()) --format json 2> (Join-Path $scratch 'db-failure.stderr.log')
-    if ($LASTEXITCODE -ne 6 -or $unavailable) { throw 'Database failure did not fail closed' }
+    if ($LASTEXITCODE -ne 6 -or $unavailable) { throw 'Отказ БД не привёл к безопасному завершению.' }
     & uv run --locked language-review check $source --engine vale --no-memory --format json `
         1> (Join-Path $scratch 'without-memory.json') 2> (Join-Path $scratch 'without-memory.stderr.log')
-    if ($LASTEXITCODE -notin @(0,1,5)) { throw 'Disabled memory changed baseline behavior' }
+    if ($LASTEXITCODE -notin @(0,1,5)) { throw 'Отключённая память изменила базовое поведение.' }
     $summary.status = 'PASS'
     $summary.database_loss_restore = 'PASS'
     $summary.restart_recreate = 'PASS'
@@ -85,5 +85,5 @@ try {
         foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $previous[$name]) }
         Pop-Location
     }
-    Write-Output "Acceptance artifacts: $scratch"
+    Write-Output "Артефакты приёмки: $scratch"
 }

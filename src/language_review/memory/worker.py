@@ -161,24 +161,69 @@ def process_one(
             ).fetchall()
             versions = {row["id"]: row["revision"] for row in cases}
             stale = any(versions[row["id"]] != row["revision"] for row in locked)
+            successions = []
             if not stale and current["revision"] == job["revision"]:
+                # Преемственность гипотез одной области сериализуется независимо от набора
+                # заблокированных случаев: родственные jobs могут видеть разные окна.
+                db.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (digest(["hypothesis-lineage", project, current["dataset"]]),),
+                )
+                published: set[str] = set()
                 for rule in document["rules"]:
                     # Группа производная; канонические случаи/решения никогда не объединяются.
-                    identifier = digest(
-                        [
-                            project,
-                            current["dataset"],
-                            rule["category"],
-                            rule["relation"],
-                            sorted(rule["evidence"]),
-                        ]
+                    # Преемником считается только гипотеза с общим свидетельством, которое
+                    # сама LLM отнесла к той же category/relation; похожий текст не учитывается.
+                    overlapping = [
+                        row
+                        for row in db.execute(
+                            "SELECT r.*,(SELECT min(h.created_at) FROM lr_rule_history h "
+                            "WHERE h.rule_id=r.id) AS born FROM lr_rules r "
+                            "WHERE r.project_id=%s AND r.dataset=%s AND r.kind='hypothesis' "
+                            "AND r.state='hypothesis' AND r.category=%s "
+                            "AND r.payload->>'relation'=%s AND EXISTS (SELECT 1 FROM "
+                            "jsonb_array_elements_text(r.payload->'evidence') e(id) "
+                            "WHERE e.id=ANY(%s)) ORDER BY r.id FOR UPDATE OF r",
+                            (
+                                project,
+                                current["dataset"],
+                                rule["category"],
+                                rule["relation"],
+                                rule["evidence"],
+                            ),
+                        ).fetchall()
+                        if row["id"] not in published
+                    ]
+                    overlapping.sort(key=lambda row: (row["born"], row["id"]))
+                    # Невидимые этому ответу свидетельства прежнего обобщения не опровергнуты
+                    # и переносятся; видимые, но исключённые LLM, больше не подтверждают его.
+                    evidence = sorted(
+                        set(rule["evidence"]).union(
+                            *(set(row["payload"]["evidence"]) - permitted for row in overlapping)
+                        )
                     )
-                    previous = db.execute(
-                        "SELECT revision FROM lr_rules WHERE id=%s FOR UPDATE", (identifier,)
-                    ).fetchone()
-                    revision = previous["revision"] + 1 if previous else 1
+                    if overlapping:
+                        identifier = overlapping[0]["id"]
+                        revision = overlapping[0]["revision"] + 1
+                    else:
+                        identifier = digest(
+                            [
+                                project,
+                                current["dataset"],
+                                rule["category"],
+                                rule["relation"],
+                                sorted(rule["evidence"]),
+                            ]
+                        )
+                        previous = db.execute(
+                            "SELECT revision FROM lr_rules WHERE id=%s FOR UPDATE", (identifier,)
+                        ).fetchone()
+                        revision = previous["revision"] + 1 if previous else 1
+                    replaced = [row["id"] for row in overlapping[1:]]
                     payload = {
                         **rule,
+                        "evidence": evidence,
+                        "supersedes": replaced,
                         "prompt_version": PROMPT_VERSION,
                         "prompt_sha256": digest([SYSTEM_PROMPT, SCHEMA]),
                         "provider": client.name,
@@ -204,8 +249,31 @@ def process_one(
                         payload,
                         current["dataset"],
                     )
+                    published.add(identifier)
+                    for row in overlapping[1:]:
+                        # Объединённые ветви остаются в истории, но не в recall и индексе.
+                        store._rule(
+                            db,
+                            row["id"],
+                            project,
+                            row["finding_id"],
+                            None,
+                            "hypothesis",
+                            "superseded",
+                            row["revision"] + 1,
+                            row["category"],
+                            row["context_kind"],
+                            row["text"],
+                            {**row["payload"], "superseded_by": identifier},
+                            row["dataset"],
+                        )
+                    if overlapping or revision > 1:
+                        successions.append(
+                            {"rule": identifier, "revision": revision, "superseded": replaced}
+                        )
             result = {
                 "rules": 0 if stale else len(document["rules"]),
+                "successions": successions,
                 "stale": stale,
                 "prompt_version": PROMPT_VERSION,
                 "model": public_model_name(client.model),

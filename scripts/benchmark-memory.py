@@ -52,7 +52,7 @@ def benchmark(model: str) -> dict:
         (row for row in tags if isinstance(row, dict) and row.get("name") == model), None
     )
     if installed is None or not isinstance(installed.get("digest"), str):
-        raise ValueError(f"Ollama model is not installed or has no digest: {model}")
+        raise ValueError(f"Модель Ollama не установлена или не имеет digest: {model}")
     revision = installed["digest"]
     probe = request_json(
         "http://127.0.0.1:11434/api/embed",
@@ -66,7 +66,7 @@ def benchmark(model: str) -> dict:
         or not isinstance(embeddings[0], list)
         or not embeddings[0]
     ):
-        raise ValueError(f"Ollama returned no embedding dimensions for model: {model}")
+        raise ValueError(f"Ollama не вернула размерность embedding для модели: {model}")
     dimensions = len(embeddings[0])
     embedder = Embedder(
         Store(

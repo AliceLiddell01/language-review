@@ -40,7 +40,7 @@ def main() -> None:
     if arguments.expect:
         expected = json.loads(arguments.expect.read_text("utf-8"))
         if result != expected:
-            raise SystemExit("Snapshot mismatch after restart/recreate/restore")
+            raise SystemExit("Snapshot не совпал после restart/recreate/restore.")
     with arguments.output.open("x", encoding="utf-8") as stream:
         json.dump(result, stream, indent=2, sort_keys=True)
     print(json.dumps({"status": "PASS", "tables": len(tables), "vectors_retrieved": vectors}))

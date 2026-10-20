@@ -20,7 +20,7 @@
         "reason": {"type": "string", "minLength": 1, "maxLength": 2000},
         "suggestion": {"type": ["integer", "null"], "minimum": 0},
         "scope": {"enum": ["project", "global"]},
-        "public_rule": {"type": ["string", "null"], "minLength": 1, "maxLength": 1000}
+        "public_rule": {"type": ["string", "null"], "minLength": 1, "maxLength": 1000, "pattern": "\\S"}
       }
     }
   }

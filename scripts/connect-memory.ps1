@@ -1,4 +1,4 @@
-# Dot-source to load this installation's credentials into the current process only.
+# Подключайте через dot-source: учётные данные установки загружаются только в текущий процесс.
 $languageReviewDeployment = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'deployment.json') | ConvertFrom-Json
 $languageReviewCredential = Import-Clixml -LiteralPath (Join-Path $PSScriptRoot 'database.credential.xml')
 $env:LANGUAGE_REVIEW_DB_PASSWORD = $languageReviewCredential.GetNetworkCredential().Password

@@ -16,6 +16,11 @@
   Общий worker ограничивает jobs/embedding и обнаруживает новые проекты из БД.
   Windows deployment — `install-memory-service.ps1`: отдельный wheel/runtime,
   DPAPI credentials, пользовательская logon task; checkout не нужен процессу.
+  Обновление фиксируется только после readiness задачи, иначе откатываются файлы runtime
+  и задача; миграции БД не откатываются. Supervisor вызывает `compose up` только при
+  `memory_database_failed` и остановленном по данным Docker собственном PostgreSQL.
+- LLM-гипотеза продолжает активную ветвь с общим свидетельством той же
+  category/relation/dataset; объединённые ветви становятся `superseded` с историей.
 - Recall фильтруется по области, provenance/dataset и состоянию; global требует явного
   public_rule. Автоматический контекст не содержит private payload другого проекта.
 - Основной LLM prompt версионируется existing PROMPT_VERSION/fingerprint; отдельный

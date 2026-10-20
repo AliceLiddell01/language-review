@@ -104,7 +104,9 @@ class Store:
             ).fetchone()["present"]
             if not exists:
                 raise MemoryFeatureError("memory_migration_required")
-            migration = db.execute("SELECT version, checksum FROM lr_migrations").fetchall()
+            migration = db.execute(
+                "SELECT version, checksum FROM lr_migrations ORDER BY version"
+            ).fetchall()
             if migration != expected:
                 raise MemoryFeatureError("memory_migration_required")
             extension = db.execute(
@@ -317,6 +319,7 @@ class Store:
             decision["status"] != "accepted"
             or not isinstance(public, str)
             or not 1 <= len(public) <= 1000
+            or not public.strip()
             or sanitize(public) != public
         ):
             raise MemoryFeatureError("memory_public_rule_required")

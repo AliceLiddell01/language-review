@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from argparse import Namespace
 from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
@@ -11,6 +12,7 @@ from support.check_helpers import _config, _run
 
 from language_review.config import load_config
 from language_review.errors import ConfigurationError, InputError
+from language_review.memory.cli import run as run_memory
 from language_review.memory.cli import submit_decision
 from language_review.memory.safety import safe_text, sanitize
 from language_review.memory.search import Embedder
@@ -123,6 +125,65 @@ def test_worker_cli_requires_one_explicit_scope(
     assert result.returncode == 6
     assert "memory_dsn_missing" in result.stderr
     assert result.stdout == ""
+
+
+def test_watch_retries_temporary_database_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = load_config(_config(tmp_path, ""))
+    arguments = Namespace(
+        command="memory", memory_command="work", project=str(uuid4()), limit=1, watch=True
+    )
+    health_calls = 0
+    work_results = iter([MemoryError("memory_database_failed"), {"status": "processed"}])
+
+    def health(_: Store) -> dict:
+        nonlocal health_calls
+        health_calls += 1
+        if health_calls == 1:
+            raise MemoryError("memory_database_failed")
+        return {"status": "ok"}
+
+    def do_work(*_: object, **__: object) -> dict:
+        result = next(work_results)
+        if isinstance(result, MemoryError):
+            raise result
+        return result
+
+    sleep_calls = 0
+
+    class StopWatch(Exception):
+        pass
+
+    def stop_after_recovery(_: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 3:
+            raise StopWatch
+
+    monkeypatch.setattr(Store, "health", health)
+    monkeypatch.setattr("language_review.memory.worker.work", do_work)
+    monkeypatch.setattr("language_review.memory.cli.time.sleep", stop_after_recovery)
+
+    with pytest.raises(StopWatch):
+        run_memory(arguments, config)
+
+    results = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [result["status"] for result in results] == ["waiting", "waiting", "processed"]
+    assert health_calls == 3
+
+
+def test_watch_does_not_retry_permanent_worker_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = load_config(_config(tmp_path, ""))
+    arguments = Namespace(
+        command="memory", memory_command="work", project=str(uuid4()), limit=0, watch=True
+    )
+    monkeypatch.setattr(Store, "health", lambda _: {"status": "ok"})
+
+    with pytest.raises(MemoryError, match="memory_worker_limit_invalid"):
+        run_memory(arguments, config)
 
 
 @pytest.mark.parametrize("vector", [[], [0, 0], [1], [True, 1], ["1", "2"]])

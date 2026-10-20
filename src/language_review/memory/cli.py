@@ -144,7 +144,9 @@ def run(arguments: argparse.Namespace, config: LoadedConfig) -> int:
             )
         else:
             project = project_uuid(arguments.project) if arguments.project else ""
-            store.health()
+            watch = operation == "work" and arguments.watch
+            if not watch:
+                store.health()
             if operation == "status":
                 result = store.status(project)
             elif operation == "finding":
@@ -236,9 +238,20 @@ def run(arguments: argparse.Namespace, config: LoadedConfig) -> int:
             else:
                 from language_review.memory.worker import work
 
+                database_ready = not watch
                 while True:
-                    result = work(store, project or None, config.check, limit=arguments.limit)
-                    if not arguments.watch:
+                    try:
+                        if not database_ready:
+                            store.health()
+                        result = work(store, project or None, config.check, limit=arguments.limit)
+                    except MemoryError as exc:
+                        if not watch or str(exc) != "memory_database_failed":
+                            raise
+                        database_ready = False
+                        result = {"status": "waiting", "reason": str(exc)}
+                    else:
+                        database_ready = True
+                    if not watch:
                         break
                     print(json.dumps(result, ensure_ascii=False, default=str), flush=True)
                     time.sleep(2)

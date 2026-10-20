@@ -30,8 +30,6 @@ PowerShell 7, Git, uv, Docker Desktop (Linux containers) и локальная O
 ```powershell
 git clone https://github.com/AliceLiddell01/language-review.git
 Set-Location language-review
-# До merge используйте ветку PR с этой возможностью.
-git switch feat/domain-memory
 ollama pull qwen3.5:4b
 ollama pull embeddinggemma:300m
 .\scripts\install-memory-service.ps1

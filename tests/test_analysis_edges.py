@@ -58,6 +58,27 @@ def test_nonstring_error_parameter_does_not_escape_diagnostics(
     assert caught.value.metadata()["param"] is None
 
 
+def test_top_level_sse_error_preserves_quota_and_parameter(monkeypatch: pytest.MonkeyPatch) -> None:
+    from language_review.chatgpt_http import stream_response
+
+    install_stream(
+        monkeypatch,
+        sse(
+            {
+                "type": "error",
+                "code": "subscription_sharing_usage_limit_exceeded",
+                "param": "model",
+                "message": "untrusted diagnostic",
+            }
+        ),
+    )
+    with pytest.raises(CloudError) as caught:
+        stream_response({"model": "gpt-6-luna"}, "synthetic-access", 1)
+    assert caught.value.code == "subscription_sharing_usage_limit_exceeded"
+    assert caught.value.metadata()["param"] == "model"
+    assert "untrusted diagnostic" not in str(caught.value.metadata())
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows protected storage")
 @pytest.mark.parametrize(
     "content",

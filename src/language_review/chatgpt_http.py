@@ -52,6 +52,8 @@ class CloudError(EngineHttpError):
 
 def error_from(body: Any, status: int | None = None, request_id: str | None = None) -> CloudError:
     error = body.get("error") if isinstance(body, dict) else None
+    if isinstance(body, dict) and body.get("type") == "error" and "code" in body:
+        error = body  # Responses SSE error fields are at the event's top level.
     code = error.get("code") or error.get("type") if isinstance(error, dict) else None
     if isinstance(error, str):  # OAuth token endpoint
         code = error

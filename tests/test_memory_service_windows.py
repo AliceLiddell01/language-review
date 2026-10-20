@@ -13,8 +13,9 @@ pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows Scheduler entry
 
 
 def test_windowless_entrypoint_creates_no_console_and_returns_supervisor_failure(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("POWERSHELL_UPDATECHECK", "Default")
     pwsh = shutil.which("pwsh")
     assert pwsh, "PowerShell 7 is required for Windows development"
     runtime = tmp_path / "runtime with spaces"
@@ -33,6 +34,7 @@ public static class ServiceConsoleProbe {
 '@
 $handle = [ServiceConsoleProbe]::GetConsoleWindow().ToInt64().ToString()
 [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'console.txt'), $handle)
+[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'updatecheck.txt'), $env:POWERSHELL_UPDATECHECK)
 exit 17
 """,
         encoding="utf-8",
@@ -46,6 +48,8 @@ exit 17
     assert completed.returncode == 17
     assert (runtime / "console.txt").read_text() == "0"
     assert (runtime / "bootstrap.stderr.log").read_bytes() == b""
+    assert (runtime / "updatecheck.txt").read_text() == "Off"
+    assert os.environ["POWERSHELL_UPDATECHECK"] == "Default"
 
 
 @pytest.mark.parametrize("project", ["hindsight-memory/..", "project with spaces"])

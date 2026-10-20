@@ -1,12 +1,14 @@
 """Windowless Scheduler entry point; wait for and supervise the foreground service."""
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 runtime = Path(__file__).resolve().parent
 deployment = json.loads((runtime / "deployment.json").read_text("utf-8"))
+environment = {**os.environ, "POWERSHELL_UPDATECHECK": "Off"}
 with (runtime / "bootstrap.stderr.log").open("ab") as errors:
     result = subprocess.run(
         [
@@ -21,6 +23,7 @@ with (runtime / "bootstrap.stderr.log").open("ab") as errors:
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=errors,
+        env=environment,
         check=False,
     )
 sys.exit(result.returncode)

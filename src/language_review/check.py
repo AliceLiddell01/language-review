@@ -27,7 +27,7 @@ from language_review.check_models import (
 from language_review.config import CheckSettings, LoadedConfig
 from language_review.coordinates import position_within
 from language_review.engine_languagetool import LanguageToolEngine
-from language_review.engine_llm import LlmEngine
+from language_review.engine_llm import PROMPT_VERSION, LlmEngine
 from language_review.engine_vale import ValeEngine
 from language_review.extract_models import ExtractDocument, ResolvedFragment
 from language_review.extract_report import fragment_id
@@ -437,8 +437,9 @@ def _same_defect(first: Candidate, second: Candidate) -> bool:
 
 def _rule_key(raw: RawFinding) -> str | None:
     # Проходы одной LLM сохраняют provenance в rule_id, но не становятся разными движками.
-    if raw.engine == "llm" and raw.rule_id and raw.rule_id.startswith("ru-technical-review/4:"):
-        return "ru-technical-review/4:" + raw.category
+    prefix = f"{PROMPT_VERSION}:"
+    if raw.engine == "llm" and raw.rule_id and raw.rule_id.startswith(prefix):
+        return prefix + raw.category
     return raw.rule_id
 
 

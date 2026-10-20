@@ -102,6 +102,11 @@ try {
     if ($wheel.Count -ne 1) { throw 'Expected one built wheel.' }
     & $uv pip install --python $python --no-deps $wheel[0].FullName
     if ($LASTEXITCODE -ne 0) { throw 'Wheel install failed.' }
+    # venv launchers are redirectors: Scheduler must own the actual pythonw process.
+    $pythonw = (& $python -I -c "import pathlib,sys; print(pathlib.Path(sys._base_executable).with_name('pythonw.exe'))").Trim()
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $pythonw -PathType Leaf)) {
+        throw 'Cannot locate the base windowless Python interpreter.'
+    }
     $sourceSha = (& git rev-parse HEAD).Trim()
     $sourceDirty = [bool](& git status --porcelain=v1 --untracked-files=normal)
 } finally { Pop-Location }
@@ -152,9 +157,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Database startup failed; credentials and volum
 if ($LASTEXITCODE -ne 0) { throw 'Database migration failed; task not started.' }
 & $python -I -m language_review --config $workerConfig memory health
 if ($LASTEXITCODE -ne 0) { throw 'Database health failed; task not started.' }
-$action = New-ScheduledTaskAction -Execute (Join-Path $release 'venv\Scripts\pythonw.exe') -Argument (
+$action = New-ScheduledTaskAction -Execute $pythonw -Argument (
     '-I "' + (Join-Path $runtime 'run-memory-service.pyw') + '"')
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity.Name
+$trigger = @(
+    (New-ScheduledTaskTrigger -AtLogOn -User $identity.Name),
+    (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1))
+)
 $principal = New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `

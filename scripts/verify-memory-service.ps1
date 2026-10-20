@@ -60,7 +60,8 @@ try {
     Assert-Check 'current_user_logon_trigger_and_restart_policy' (
         $definition.Triggers[0].CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' -and
         $definition.Principal.LogonType -eq 'Interactive' -and $definition.Settings.MultipleInstances -eq 'IgnoreNew' -and
-        $definition.Settings.ExecutionTimeLimit -eq 'PT0S' -and $definition.Settings.RestartCount -eq 999)
+        $definition.Settings.ExecutionTimeLimit -eq 'PT0S' -and $definition.Settings.RestartCount -eq 999 -and
+        $definition.Triggers[1].Repetition.Interval -eq 'PT1M')
     $container = (docker inspect "${project}-postgres-1" | ConvertFrom-Json)[0]
     Assert-Check 'own_volume_loopback_port_and_restart_policy' (
         $container.HostConfig.RestartPolicy.Name -eq 'unless-stopped' -and
@@ -106,6 +107,15 @@ try {
     Assert-Check 'supervisor_recovers_own_database_without_data_loss' ($recovered.State.Health.Status -eq 'healthy' -and $recovered.State.Running)
     $persisted = Wait-Processed $projectId
     Assert-Check 'original_events_persist_across_database_restart' ($persisted.durable_events -eq $status.durable_events)
+    $owned = Get-Content -Raw -LiteralPath $stateFile | ConvertFrom-Json
+    Stop-ScheduledTask -TaskName $task
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        Start-Sleep -Milliseconds 250
+        $remaining = Get-Process -Id $owned.supervisor_pid -ErrorAction SilentlyContinue
+    } while ($remaining -and [DateTime]::UtcNow -lt $deadline)
+    Assert-Check 'stopping_task_terminates_supervisor_tree' (-not $remaining)
+    Start-ScheduledTask -TaskName $task
     $summary.status = 'PASS'
     $summary.source_sha = $deployment.source_sha
     $summary.wheel_sha256 = $deployment.wheel_sha256

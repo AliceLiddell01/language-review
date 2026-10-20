@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -95,3 +96,52 @@ def test_installer_preserves_unrelated_nonempty_directory(tmp_path: Path) -> Non
     assert result.returncode != 0
     assert marker.read_text("utf-8") == "Keep these bytes"
     assert sorted(path.name for path in tmp_path.iterdir()) == ["unrelated.txt"]
+
+
+def test_terminating_actual_windowless_wrapper_kills_supervisor_child(tmp_path: Path) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    pwsh = shutil.which("pwsh")
+    assert pwsh
+    wrapper = tmp_path / "run-memory-service.pyw"
+    shutil.copyfile(Path(__file__).parents[1] / "scripts" / wrapper.name, wrapper)
+    (tmp_path / "deployment.json").write_text(json.dumps({"pwsh": pwsh}), encoding="utf-8")
+    (tmp_path / "run-memory-service.ps1").write_text(
+        "[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'child.txt'), [string]$PID)\n"
+        "Start-Sleep -Seconds 300\n",
+        encoding="utf-8",
+    )
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    child = None
+    # Same actual interpreter as Scheduler: no venv redirector between it and Windows.
+    process = subprocess.Popen(
+        [str(Path(sys._base_executable).with_name("pythonw.exe")), "-I", str(wrapper)],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    try:
+        deadline = time.monotonic() + 20
+        child_file = tmp_path / "child.txt"
+        while not child_file.exists() and time.monotonic() < deadline and process.poll() is None:
+            time.sleep(0.05)
+        assert child_file.exists(), (tmp_path / "bootstrap.stderr.log").read_text("utf-8")
+        child = kernel.OpenProcess(0x100001, False, int(child_file.read_text()))
+        assert child
+        process.terminate()
+        process.wait(timeout=5)
+        assert kernel.WaitForSingleObject(child, 5000) == 0, "Supervisor survived its owner"
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        if child:
+            # Handle identifies this exact owned child, even if its PID is later reused.
+            if kernel.WaitForSingleObject(child, 0) != 0:
+                kernel.TerminateProcess(child, 1)
+            kernel.CloseHandle(child)

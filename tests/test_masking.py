@@ -80,6 +80,29 @@ def test_view_range_maps_source_spans_through_masks() -> None:
     assert view.view_range(token_start + 1, token_start + len("FooBar")) is None
 
 
+def test_view_range_maps_plain_span_at_decoded_entity_boundary(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    text = "ошибка&amp; слово"
+    source = tmp_path / "doc.md"
+    source.write_text(text, encoding="utf-8")
+    view = _units(source)[0].views["plain"]
+
+    assert view.text == "ошибка& слово"
+    entity = next(
+        segment
+        for segment in view.segments
+        if segment.source_end - segment.source_start != segment.engine_end - segment.engine_start
+    )
+    assert entity.masked
+    mapped_before = view.view_range(0, entity.source_start)
+    mapped_after = view.view_range(entity.source_end, len(text))
+    assert mapped_before is not None
+    assert view.text[mapped_before[0] : mapped_before[1]] == "ошибка"
+    assert mapped_after is not None
+    assert view.text[mapped_after[0] : mapped_after[1]] == " слово"
+
+
 def test_literal_interpretation_of_escapes_entities_and_markdown(
     tmp_path: Path, isolated_appdata: Path
 ) -> None:

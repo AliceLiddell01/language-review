@@ -20,13 +20,21 @@ if (-not $tempRoot.StartsWith($tempBase, [StringComparison]::OrdinalIgnoreCase))
 }
 $previousAppData = $env:APPDATA
 $previousLocalAppData = $env:LOCALAPPDATA
+$previousUvCacheDir = $env:UV_CACHE_DIR
 $previousPythonIOEncoding = $env:PYTHONIOENCODING
 $previousOutputEncoding = [Console]::OutputEncoding
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
-$env:APPDATA = Join-Path $tempRoot 'appdata'
-$env:LOCALAPPDATA = Join-Path $tempRoot 'localappdata'
-New-Item -ItemType Directory -Path $env:APPDATA | Out-Null
 try {
+    if ([string]::IsNullOrWhiteSpace($env:UV_CACHE_DIR)) {
+        $uvCacheDirectory = (& uv cache dir).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $uvCacheDirectory) {
+            throw 'Не удалось определить каталог кэша uv.'
+        }
+        $env:UV_CACHE_DIR = $uvCacheDirectory
+    }
+    $env:APPDATA = Join-Path $tempRoot 'appdata'
+    $env:LOCALAPPDATA = Join-Path $tempRoot 'localappdata'
+    New-Item -ItemType Directory -Path $env:APPDATA | Out-Null
     $env:PYTHONIOENCODING = 'utf-8'
     [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
     $distributionDirectory = Join-Path $tempRoot 'dist'
@@ -284,6 +292,7 @@ try {
 finally {
     $env:APPDATA = $previousAppData
     $env:LOCALAPPDATA = $previousLocalAppData
+    $env:UV_CACHE_DIR = $previousUvCacheDir
     $env:PYTHONIOENCODING = $previousPythonIOEncoding
     [Console]::OutputEncoding = $previousOutputEncoding
     $finalTemp = [IO.Path]::GetFullPath($tempRoot)

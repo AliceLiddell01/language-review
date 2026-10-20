@@ -75,7 +75,7 @@ jobs:
       - name: Установить закреплённые зависимости
         run: uv sync --locked --extra memory
       - name: Проверить настоящий PostgreSQL
-        run: uv run --locked --extra memory pytest -n 8 tests/test_memory.py tests/test_memory_integration.py
+        run: uv run --locked --extra memory pytest -n 8 tests/test_memory.py tests/test_memory_integration.py tests/test_memory_worker.py
 
   windows-smoke:
     name: Python 3.15 • пакет и CLI (Windows)

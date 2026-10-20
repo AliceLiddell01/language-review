@@ -109,6 +109,22 @@ def test_memory_decision_schema_rejects_invented_status_and_foreign_keys() -> No
         submit_decision(Store(MemorySettings()), {"status": "model_confirmed"})
 
 
+def test_worker_cli_requires_one_explicit_scope(
+    tmp_path: Path, isolated_appdata: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("LANGUAGE_REVIEW_MEMORY_DSN", raising=False)
+    config = _config(tmp_path, "")
+    command = ["--config", str(config), "memory", "work"]
+    for scope in [[], ["--all-projects", "--project", str(uuid4())]]:
+        result = _run([*command, *scope], isolated_appdata)
+        assert result.returncode == 2
+        assert result.stdout == ""
+    result = _run([*command, "--all-projects"], isolated_appdata)
+    assert result.returncode == 6
+    assert "memory_dsn_missing" in result.stderr
+    assert result.stdout == ""
+
+
 @pytest.mark.parametrize("vector", [[], [0, 0], [1], [True, 1], ["1", "2"]])
 def test_embedding_schema_does_not_mark_malformed_vectors_indexed(
     vector: list,

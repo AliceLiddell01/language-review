@@ -1,0 +1,135 @@
+param(
+    [string]$LlmModel = 'qwen3.5:4b',
+    [string]$EmbeddingModel = 'embeddinggemma:300m',
+    [string]$EmbeddingRevision = '85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1',
+    [int]$EmbeddingDimensions = 768
+)
+# Real installed CLI + live Ollama + own database/task. Run from a clean clone for portability.
+$ErrorActionPreference = 'Stop'
+$scratch = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) ('lr-service-' + [guid]::NewGuid().ToString('N'))))
+$runtime = Join-Path $scratch 'runtime with spaces'
+New-Item -ItemType Directory -Path $scratch | Out-Null
+$project = 'lr-service-test-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+$task = 'LanguageReview-Memory-' + $project
+$listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+$listener.Start()
+$port = $listener.LocalEndpoint.Port
+$listener.Stop()
+$envNames = @('APPDATA', 'XDG_CONFIG_HOME', 'LANGUAGE_REVIEW_MEMORY_DSN', 'LANGUAGE_REVIEW_DB_PASSWORD', 'LANGUAGE_REVIEW_DB_PORT')
+$previous = @{}
+foreach ($name in $envNames) { $previous[$name] = [Environment]::GetEnvironmentVariable($name) }
+$summary = [ordered]@{status = 'FAIL'; project = $project; port = $port; reboot = 'NOT_RUN'; checks = @()}
+$compose = @('compose', '-f', (Join-Path $runtime 'compose.memory.yml'), '-p', $project)
+function Assert-Check([string]$Name, [bool]$Condition) {
+    if (-not $Condition) { throw "FAIL: $Name" }
+    $script:summary.checks += $Name
+}
+function Invoke-Cli([string[]]$CliArguments, [int[]]$Codes = @(0)) {
+    $output = & $script:deployment.python -I -m language_review --config $script:deployment.config `
+        @CliArguments 2> (Join-Path $scratch 'cli.stderr.log')
+    if ($LASTEXITCODE -notin $Codes) { throw "CLI failed ($LASTEXITCODE); inspect cli.stderr.log" }
+    return ($output -join "`n") | ConvertFrom-Json
+}
+function Wait-Processed([string]$ProjectId) {
+    $deadline = [DateTime]::UtcNow.AddMinutes(5)
+    do {
+        $status = Invoke-Cli @('memory', 'status', '--project', $ProjectId)
+        if (@($status.jobs).Count -gt 0 -and @($status.jobs | Where-Object state -NE 'done').Count -eq 0 -and
+            $status.index.rules -gt 0 -and $status.index.indexed -eq $status.index.rules) {
+            return $status
+        }
+        if (@($status.jobs | Where-Object state -EQ 'failed').Count) {
+            throw 'Worker exhausted attempts; inspect saved job errors.'
+        }
+        Start-Sleep -Seconds 2
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'Automatic worker processing timed out.'
+}
+try {
+    foreach ($name in @('LANGUAGE_REVIEW_MEMORY_DSN', 'LANGUAGE_REVIEW_DB_PASSWORD', 'LANGUAGE_REVIEW_DB_PORT')) {
+        [Environment]::SetEnvironmentVariable($name, $null)
+    }
+    & (Join-Path $PSScriptRoot 'install-memory-service.ps1') -RuntimeDirectory $runtime -Project $project -Port $port `
+        -LlmModel $LlmModel -EmbeddingModel $EmbeddingModel -EmbeddingRevision $EmbeddingRevision -EmbeddingDimensions $EmbeddingDimensions
+    $script:deployment = Get-Content -Raw -LiteralPath (Join-Path $runtime 'deployment.json') | ConvertFrom-Json
+    Assert-Check 'installed_release_independent_of_checkout' ($deployment.python.StartsWith($runtime + '\') -and -not $deployment.source_dirty)
+    . (Join-Path $runtime 'connect-memory.ps1')
+    $env:APPDATA = Join-Path $scratch 'empty-appdata'
+    $env:XDG_CONFIG_HOME = $env:APPDATA
+    $definition = Get-ScheduledTask -TaskName $task
+    Assert-Check 'current_user_logon_trigger_and_restart_policy' (
+        $definition.Triggers[0].CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' -and
+        $definition.Principal.LogonType -eq 'Interactive' -and $definition.Settings.MultipleInstances -eq 'IgnoreNew' -and
+        $definition.Settings.ExecutionTimeLimit -eq 'PT0S' -and $definition.Settings.RestartCount -eq 999)
+    $container = (docker inspect "${project}-postgres-1" | ConvertFrom-Json)[0]
+    Assert-Check 'own_volume_loopback_port_and_restart_policy' (
+        $container.HostConfig.RestartPolicy.Name -eq 'unless-stopped' -and
+        $container.Mounts[0].Name -eq "${project}_memory-data" -and
+        $container.HostConfig.PortBindings.'5432/tcp'[0].HostIp -eq '127.0.0.1' -and
+        $container.HostConfig.PortBindings.'5432/tcp'[0].HostPort -eq [string]$port)
+    $sample = Join-Path $scratch 'собственные данные.md'
+    Set-Content -LiteralPath $sample -Encoding utf8NoBOM -Value 'Нужно праверить параметр конфигурации. Этот параметр возврощает результат проверки.'
+    $sourceHash = (Get-FileHash -LiteralPath $sample).Hash
+    $projectId = [guid]::NewGuid().ToString()
+    $report = Invoke-Cli @('check', $sample, '--memory-project', $projectId, '--memory-dataset', 'synthetic', '--view', 'review', '--format', 'json') @(0, 1, 4)
+    Assert-Check 'real_check_automatically_enqueues_observations' ($report.schema -eq 'language-review.review' -and @($report.items).Count -gt 0)
+    $status = Wait-Processed $projectId
+    $status | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $scratch 'processed.json') -Encoding utf8NoBOM
+    Assert-Check 'scheduled_worker_automatically_consolidates_and_indexes' ($status.latest_consolidation.model -eq $LlmModel -and $status.index.indexed -gt 0)
+    Assert-Check 'hypotheses_do_not_become_human_decisions' (@($status.findings | Where-Object state -NE 'unverified').Count -eq 0)
+    Assert-Check 'source_bytes_unchanged' ((Get-FileHash -LiteralPath $sample).Hash -eq $sourceHash)
+    $stateFile = Join-Path $runtime 'logs\service-state.json'
+    $before = Get-Content -Raw -LiteralPath $stateFile | ConvertFrom-Json
+    # Kill only the recorded supervisor of our generated task; Scheduler restarts on failure.
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($before.supervisor_pid)"
+    Assert-Check 'owned_supervisor_identity' ($process.CommandLine.Contains((Join-Path $runtime 'run-memory-service.ps1')))
+    Stop-Process -Id $before.supervisor_pid -Force
+    $deadline = [DateTime]::UtcNow.AddSeconds(100)
+    do {
+        Start-Sleep -Seconds 2
+        $after = Get-Content -Raw -LiteralPath $stateFile | ConvertFrom-Json
+        if ($after.supervisor_pid -ne $before.supervisor_pid -and $after.status -ne 'waiting') { break }
+    } while ([DateTime]::UtcNow -lt $deadline)
+    Assert-Check 'scheduler_restarts_crashed_supervisor' ($after.supervisor_pid -ne $before.supervisor_pid -and $after.status -ne 'waiting')
+    $secondProject = [guid]::NewGuid().ToString()
+    $null = Invoke-Cli @('check', $sample, '--memory-project', $secondProject, '--memory-dataset', 'synthetic', '--view', 'review', '--format', 'json') @(0, 1, 4)
+    $second = Wait-Processed $secondProject
+    Assert-Check 'new_project_processed_after_restart_without_manual_work' ($second.index.indexed -gt 0)
+    & docker @compose stop postgres
+    if ($LASTEXITCODE -ne 0) { throw 'Own test database stop failed.' }
+    $deadline = [DateTime]::UtcNow.AddSeconds(90)
+    do {
+        Start-Sleep -Seconds 2
+        $recovered = (docker inspect "${project}-postgres-1" | ConvertFrom-Json)[0]
+        if ($recovered.State.Health.Status -eq 'healthy' -and $recovered.State.Running) { break }
+    } while ([DateTime]::UtcNow -lt $deadline)
+    Assert-Check 'supervisor_recovers_own_database_without_data_loss' ($recovered.State.Health.Status -eq 'healthy' -and $recovered.State.Running)
+    $persisted = Wait-Processed $projectId
+    Assert-Check 'original_events_persist_across_database_restart' ($persisted.durable_events -eq $status.durable_events)
+    $summary.status = 'PASS'
+    $summary.source_sha = $deployment.source_sha
+    $summary.wheel_sha256 = $deployment.wheel_sha256
+    $summary.llm_revision = $deployment.llm_revision
+    $summary.embedding_revision = $deployment.embedding_revision
+} finally {
+    $ownedTask = Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
+    if ($ownedTask -and $ownedTask.Description -eq "Language Review memory: $runtime") {
+        Stop-ScheduledTask -TaskName $task
+        Unregister-ScheduledTask -TaskName $task -Confirm:$false
+        Start-Sleep -Seconds 2
+    }
+    if ($project -notmatch '^lr-service-test-[0-9a-f]{12}$') { throw 'Unsafe cleanup project.' }
+    if (Test-Path -LiteralPath (Join-Path $runtime 'compose.memory.yml')) {
+        & docker @compose down --volumes
+        if ($LASTEXITCODE -ne 0) { throw 'Test Compose cleanup failed.' }
+    }
+    $summary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $scratch 'acceptance.json') -Encoding utf8NoBOM
+    foreach ($name in $envNames) { [Environment]::SetEnvironmentVariable($name, $previous[$name]) }
+    # Keep non-secret evidence; remove the generated credential and installed runtime only.
+    if ([IO.Path]::GetFullPath($runtime) -ne (Join-Path $scratch 'runtime with spaces') -or
+        -not $runtime.StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()), [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Unsafe runtime cleanup path.'
+    }
+    if (Test-Path -LiteralPath $runtime) { Remove-Item -LiteralPath $runtime -Recurse -Force }
+    Write-Output "Service acceptance artifacts: $scratch"
+}

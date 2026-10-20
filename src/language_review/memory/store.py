@@ -541,21 +541,22 @@ class Store:
             ]
         )
 
-    def claim(self, project: str) -> dict[str, Any] | None:
+    def claim(self, project: str | None) -> dict[str, Any] | None:
         with self.connect() as db:
             db.execute(
                 "UPDATE lr_jobs j SET state='failed',error='attempts_exhausted' FROM lr_findings f "
-                "WHERE j.finding_id=f.id AND f.project_id=%s AND j.state='running' "
+                "WHERE j.finding_id=f.id AND (%s::uuid IS NULL OR f.project_id=%s) "
+                "AND j.state='running' "
                 "AND j.lease_until<clock_timestamp() AND j.attempts>=%s",
-                (project, self.settings.max_attempts),
+                (project, project, self.settings.max_attempts),
             )
             row = db.execute(
-                "SELECT j.* FROM lr_jobs j JOIN lr_findings f ON f.id=j.finding_id "
-                "WHERE f.project_id=%s AND j.attempts<%s AND ("
+                "SELECT j.*,f.project_id FROM lr_jobs j JOIN lr_findings f ON f.id=j.finding_id "
+                "WHERE (%s::uuid IS NULL OR f.project_id=%s) AND j.attempts<%s AND ("
                 "(j.state='pending' AND j.available_at<=clock_timestamp()) OR "
                 "(j.state='running' AND j.lease_until<clock_timestamp())) "
                 "ORDER BY j.created_at,j.id FOR UPDATE OF j SKIP LOCKED LIMIT 1",
-                (project, self.settings.max_attempts),
+                (project, project, self.settings.max_attempts),
             ).fetchone()
             if row is None:
                 return None

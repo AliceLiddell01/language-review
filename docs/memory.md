@@ -18,6 +18,94 @@ Python остаётся нативным Windows-процессом. Нужны 
 Python/uv из манифестов и явно настроенная локальная LLM. Docker используется для БД.
 Базовая установка и `--no-memory` работают без PostgreSQL и optional extra.
 
+### Постоянная установка из клона
+
+Одинаковый deployment не требует файлов автора: Compose и digest образа находятся
+в репозитории, зависимости устанавливаются из `uv.lock`. Нужны Windows,
+PowerShell 7, Git, uv, Docker Desktop (Linux containers) и локальная Ollama.
+Включите запуск Docker Desktop и Ollama при входе в Windows в настройках этих
+приложений. Для этих пользовательских сервисов автозапуск worker означает
+**после перезагрузки и входа того же пользователя**, а не до входа в систему.
+
+```powershell
+git clone https://github.com/AliceLiddell01/language-review.git
+Set-Location language-review
+# До merge используйте ветку PR с этой возможностью.
+git switch feat/domain-memory
+ollama pull qwen3.5:4b
+ollama pull embeddinggemma:300m
+.\scripts\install-memory-service.ps1
+```
+
+Установщик проверяет модель/digest/размерность, создаёт новый случайный пароль
+БД и защищает его Windows DPAPI текущего пользователя. В `$HOME\.language-review\memory`
+он сохраняет Compose, конфигурацию, credentials и отдельное установленное окружение
+из wheel с закреплёнными зависимостями. ACL каталога разрешает доступ пользователю
+и SYSTEM. В `deployment.json` записаны SHA исходников, dirty-признак, хеши wheel/lock
+и digest моделей. Worker не зависит от shell, активации venv или сохранения клона.
+Не переносите `database.credential.xml` на другую машину: там создаются собственные
+credentials/volume. Для переноса данных используйте backup/restore ниже.
+
+Создаётся задача `LanguageReview-Memory-language-review-memory`: текущий пользователь,
+logon trigger, без ограничения времени, `IgnoreNew`, повтор после аварии через минуту.
+Она запускается сразу. `pythonw.exe` и `CreateNoWindow` исключают всплывающие консоли.
+Супервизор каждые пять секунд вызывает bounded worker всей очереди этой БД:
+новые UUID проектов не требуют новых задач. LLM/embedding digest проверяются до
+захвата заданий; недоступность/замена модели оставляет очередь ожидающей. При отказе
+БД супервизор поднимает **только свой Compose project**, после доступности Docker.
+Ошибки отдельных заданий сохраняют ограниченные retry и диагностику `memory status`.
+Исчерпанные задания требуют осмысленного устранения причины и `memory retry`.
+
+Повторный запуск установщика обновляет установленный пакет и задачу, сохраняя пароль,
+идентичность БД и volume. При существующем volume без исходного credential-файла
+установка отказывается угадывать или сбрасывать пароль. Старые releases сохраняются
+для диагностики; работающий release указан в manifest. При сбое обновления смотрите
+логи/статус задачи: успешная регистрация сама по себе не доказывает работу worker.
+
+```powershell
+$runtime = Join-Path $HOME '.language-review\memory'
+. (Join-Path $runtime 'connect-memory.ps1')
+$deployment = Get-Content (Join-Path $runtime 'deployment.json') -Raw | ConvertFrom-Json
+Get-ScheduledTask -TaskName $deployment.task
+Get-Content (Join-Path $runtime 'logs\service-state.json')
+# Один раз задайте постоянный UUID своего проекта и сохраняйте его при следующих check.
+$projectId = [guid]::NewGuid().ToString()
+& $deployment.python -I -m language_review --config $deployment.config `
+    check $source --memory-project $projectId --view review --format json
+& $deployment.python -I -m language_review --config $deployment.config `
+    memory status --project $projectId
+# Управление worker; данные БД эти команды не удаляют.
+Stop-ScheduledTask -TaskName $deployment.task
+Start-ScheduledTask -TaskName $deployment.task
+```
+
+Вместо `--memory-project` можно сохранить UUID в `[memory.projects]` пользовательского
+конфига, как ниже. Сбор инициирует `check`; worker самостоятельно консолидирует
+наблюдения и индексирует их, сохраняя статус гипотезы. Его полный доступ ограничен
+собственной БД оператора, а не отдельным UUID. Для независимой установки задайте
+`-RuntimeDirectory`, `-Project`, `-Port`; чужие контейнеры и volumes не используются.
+Теги Ollama могут изменяться: сверяйте `/api/tags`, передавайте явный
+`-EmbeddingRevision` и соответствующие `-EmbeddingDimensions`; другая модель
+не подставляется автоматически. При осознанном обновлении LLM повторно запустите
+установщик, чтобы зафиксировать новый digest.
+
+Проверка воспроизводимости из **чистого клона**, с отдельными паролем, конфигом,
+пустым APPDATA, портом, volume и временной задачей:
+
+```powershell
+.\scripts\verify-memory-service.ps1
+```
+
+Она запускает установленный CLI на собственном синтетическом тексте, ожидает
+автоматические LLM-гипотезы и embedding, аварийно завершает свой supervisor и
+проверяет автоматический restart, обработку нового проекта, восстановление своей
+БД и сохранность исходных байтов/событий. В `finally` удаляются только сгенерированные
+тестовые task/container/volume/runtime; не содержащий credentials отчёт остаётся
+в `%TEMP%\lr-service-*`. Проверка не перезагружает ПК и не доказывает работу на
+другой ОС или без перечисленных зависимостей.
+
+### Ручной запуск БД
+
 ```powershell
 uv sync --locked --extra memory
 # Сохраните пароль в своём менеджере секретов, а UUID — в пользовательском конфиге.
@@ -92,8 +180,9 @@ taskkill /PID $workerProcessId /T /F
 
 Без работающего worker первичные события всё равно устойчиво записываются, очередь
 видна через `memory status`; подтверждённые структурные случаи доступны сразу.
-`--watch` не является Windows service: после завершения процесса его нужно запускать
-снова (при постоянной эксплуатации — через настроенный оператором Task Scheduler).
+`--watch` сам по себе не регистрирует автозапуск. Для постоянной эксплуатации используйте
+установщик выше. `memory work --all-projects` — явный операторский режим всей БД;
+он взаимоисключается с `--project`, общий бюджет jobs и embeddings ограничен `--limit`.
 
 ## Решение как штатный вход продукта
 

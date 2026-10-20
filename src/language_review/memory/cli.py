@@ -51,7 +51,14 @@ def add_commands(commands: Any, check: argparse.ArgumentParser) -> None:
         ("retry", "явно повторить исчерпавшие попытки задания"),
     ):
         command = actions.add_parser(name, help=help_text)
-        command.add_argument("--project", required=True, metavar="UUID")
+        if name == "work":
+            scope = command.add_mutually_exclusive_group(required=True)
+            scope.add_argument("--project", metavar="UUID")
+            scope.add_argument(
+                "--all-projects", action="store_true", help="оператор всей очереди этой БД"
+            )
+        else:
+            command.add_argument("--project", required=True, metavar="UUID")
         if name == "run":
             command.add_argument("run_id")
         if name == "finding":
@@ -136,7 +143,7 @@ def run(arguments: argparse.Namespace, config: LoadedConfig) -> int:
                 arguments.dataset,
             )
         else:
-            project = project_uuid(arguments.project)
+            project = project_uuid(arguments.project) if arguments.project else ""
             store.health()
             if operation == "status":
                 result = store.status(project)
@@ -230,7 +237,7 @@ def run(arguments: argparse.Namespace, config: LoadedConfig) -> int:
                 from language_review.memory.worker import work
 
                 while True:
-                    result = work(store, project, config.check, limit=arguments.limit)
+                    result = work(store, project or None, config.check, limit=arguments.limit)
                     if not arguments.watch:
                         break
                     print(json.dumps(result, ensure_ascii=False, default=str), flush=True)

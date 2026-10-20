@@ -61,11 +61,12 @@ SCHEMA: dict[str, Any] = {
 
 
 def process_one(
-    store: Store, project: str, settings: CheckSettings, provider: Provider | None = None
+    store: Store, project: str | None, settings: CheckSettings, provider: Provider | None = None
 ) -> dict[str, Any] | None:
     job = store.claim(project)
     if job is None:
         return None
+    project = str(job["project_id"])
     try:
         with store.connect() as db:
             current = db.execute(
@@ -220,7 +221,9 @@ def process_one(
         return {"job": job["id"], "status": "retry_or_failed", "reason": str(exc)}
 
 
-def work(store: Store, project: str, settings: CheckSettings, *, limit: int = 8) -> dict[str, Any]:
+def work(
+    store: Store, project: str | None, settings: CheckSettings, *, limit: int = 8
+) -> dict[str, Any]:
     if not 1 <= limit <= 256:
         raise MemoryError("memory_worker_limit_invalid")
     results = []
@@ -229,14 +232,38 @@ def work(store: Store, project: str, settings: CheckSettings, *, limit: int = 8)
         if result is None:
             break
         results.append(result)
-    try:
-        indexed = index_rules(store, project, limit=limit)
-    except MemoryError as exc:
-        indexed = {"reason": str(exc), "indexed": 0}
+    if project is None:
+        # Общий оператор обслуживает и очередь новых проектов, и незавершённые индексы.
+        # Общий бюджет embedding сохраняется; обход всей базы на Python не нужен.
+        with store.connect() as db:
+            pending = db.execute(
+                "SELECT f.project_id,min(r.updated_at) AS oldest FROM lr_rules r "
+                "JOIN lr_findings f ON f.id=r.finding_id LEFT JOIN lr_embeddings e "
+                "ON e.rule_id=r.id AND e.space_id=%s WHERE r.state!='superseded' "
+                "AND r.dataset NOT IN ('test','holdout') "
+                "AND (e.rule_id IS NULL OR e.text_hash!=md5(r.text)) "
+                "GROUP BY f.project_id ORDER BY oldest,f.project_id LIMIT %s",
+                (store.space_id, limit),
+            ).fetchall()
+        projects = [str(row["project_id"]) for row in pending]
+    else:
+        projects = [project]
+    indexed: dict[str, Any] = {"indexed": 0, "space": store.space_id}
+    errors = []
+    for identifier in projects:
+        remaining = limit - indexed["indexed"]
+        if not remaining:
+            break
+        try:
+            indexed["indexed"] += index_rules(store, identifier, limit=remaining)["indexed"]
+        except MemoryError as exc:
+            errors.append({"project": identifier, "reason": str(exc)})
+    if errors:
+        indexed["errors"] = errors
     return {
         "jobs": results,
         "index": indexed,
         "status": "partial"
-        if any(row["status"] != "done" for row in results) or "reason" in indexed
+        if any(row["status"] != "done" for row in results) or errors
         else "processed",
     }

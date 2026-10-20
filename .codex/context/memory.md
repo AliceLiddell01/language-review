@@ -12,6 +12,10 @@
   Runtime report IDs не являются постоянным ключом. Project UUID задаётся явно.
 - Primary events/jobs коммитятся транзакционно. Ошибка записи — exit 6 без успешного
   отчёта; started-run не считается завершённым. Retry/lease/fencing не создают решений.
+- `memory work` требует явный `--project` либо операторский `--all-projects`.
+  Общий worker ограничивает jobs/embedding и обнаруживает новые проекты из БД.
+  Windows deployment — `install-memory-service.ps1`: отдельный wheel/runtime,
+  DPAPI credentials, пользовательская logon task; checkout не нужен процессу.
 - Recall фильтруется по области, provenance/dataset и состоянию; global требует явного
   public_rule. Автоматический контекст не содержит private payload другого проекта.
 - Основной LLM prompt версионируется existing PROMPT_VERSION/fingerprint; отдельный

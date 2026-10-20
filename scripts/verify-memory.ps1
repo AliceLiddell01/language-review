@@ -40,7 +40,7 @@ try {
     Invoke-Checked uv @('run','--locked','--extra','memory','language-review','memory','migrate')
     Invoke-Checked uv @('run','--locked','--extra','memory','language-review','memory','health')
     Invoke-Checked uv @('run','--locked','--extra','memory','pytest','-n','8',
-        'tests/test_memory.py','tests/test_memory_integration.py')
+        'tests/test_memory.py','tests/test_memory_integration.py','tests/test_memory_worker.py')
     $before = Join-Path $scratch 'before.json'
     Invoke-Checked uv @('run','--locked','--extra','memory','python','scripts/memory-snapshot.py','--output',$before)
     Invoke-Checked docker ($compose + @('restart','postgres'))

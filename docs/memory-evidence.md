@@ -5,6 +5,52 @@ Docker Engine 29.8.2, Compose v5.6.0. Проверки выполняются н
 данных вне checkout; исходники сторонних проектов не использовались.
 Подробная процедура: [memory.md](memory.md).
 
+## Постоянный worker и чистый клон
+
+20.10.2026 проверен runtime commit `a38a04c2efd2bca20bb028b05f9d205d729254d6`.
+Установщик запущен из нового клона GitHub, с чистым деревом, отдельным runtime
+(включая пробелы в пути), пустым APPDATA, новыми credentials, project/port/volume
+и собственной задачей Scheduler. Ручной `memory work` в live-проверке не вызывался.
+Использованы реальные Ollama 0.40.6, Qwen3.5 4B и EmbeddingGemma 300M.
+Image ID PostgreSQL основного и изолированного deployment совпал с закреплённым
+Compose digest `sha256:9d9c930220cb9bf2f956d10a8f909cf9973d9672ca0278aef2c1e6facccad2e0`.
+
+| Требование | Доказательство / результат |
+| --- | --- |
+| Новые проекты без регистрации отдельных workers, bounded jobs/index | `test_all_projects_worker_discovers_future_projects_and_bounds_jobs_and_index` — PASS на PostgreSQL |
+| Изоляция scoped worker, восстановление незавершённого индекса | `test_scoped_worker_keeps_other_projects_pending_and_global_worker_repairs_index` — PASS |
+| Явный операторский режим | `test_worker_cli_requires_one_explicit_scope` — PASS |
+| Отсутствие всплывающих консолей, scoped update-notification workaround | `test_windowless_entrypoint_creates_no_console_and_returns_supervisor_failure` — PASS, реальный console handle дочернего PowerShell = 0 |
+| Остановка владельца завершает дочерние процессы | `test_terminating_actual_windowless_wrapper_kills_supervisor_child` и live `stopping_task_terminates_supervisor_tree` — PASS |
+| Установщик не меняет посторонний каталог | `test_installer_preserves_unrelated_nonempty_directory` — PASS |
+| Установка из клона с собственными данными | `scripts/verify-memory-service.ps1`: 13 проверок — PASS; включая logon/periodic triggers, restart policy, свой loopback port/volume и установленный wheel вне checkout |
+| Настоящий check → автоматическая очередь → LLM → embedding | В чистом клоне: 2 unverified-наблюдения, 2 done jobs, 1 hypothesis, 1 вектор, 5 durable events; ошибок нет, исходные байты сохранены |
+| Автоматический restart после аварии | Live `scheduler_restarts_crashed_supervisor`, затем `new_project_processed_after_restart_without_manual_work` — PASS |
+| Самостоятельное восстановление своей остановленной БД | Live `supervisor_recovers_own_database_without_data_loss`, `original_events_persist_across_database_restart` — PASS |
+| Постоянный deployment | Отдельный реальный `check`: 2 задания автоматически стали done, 1 гипотеза проиндексирована; source bytes неизменны. При обновлениях сохранены исходные container ID, volume, credentials и время запуска PostgreSQL |
+
+В ходе проверки исправлены два эксплуатационных дефекта: видимые консоли у native
+дочерних процессов и потеря владения process tree через venv redirector.
+Операторский wrapper теперь запускается реальным `pythonw.exe` и удерживает Windows
+Job Object; периодический trigger с `IgnoreNew` обеспечивает повторный запуск даже
+после аварийного завершения. Первые незавершённые попытки не засчитаны как PASS;
+финальная проверка выполнена после исправлений. Её task/container/volume/runtime
+удалены, основной worker продолжает работу. Пользовательский Hindsight не менялся:
+его container ID, время старта и mounts до/после совпали.
+
+PASS: Windows `verify-memory.ps1` — 51 passed, 3 live skips (модели проверены отдельно
+через service acceptance); финальный локальный pytest — 503 passed, 32 skipped;
+wheel/sdist smoke; Ruff/mypy/actionlint/валидаторы; CI на этом runtime
+commit: Windows 499 passed, 36 skipped, пакет; Ubuntu quality и PostgreSQL 51 passed,
+3 skipped; CodeQL. Пропуски не объявляются проверкой внешних языковых движков.
+
+**NOT_RUN:** реальная перезагрузка ПК и запуск до входа пользователя; второй физический
+компьютер/другая ОС; производительность на произвольном пользовательском корпусе.
+Клон проверен на той же Windows-машине с установленными зависимостями, но независимо
+от исходного checkout, его venv, credentials, конфигурации и хранилища.
+Это воспроизводимость процедуры при заявленных prerequisites, а не гарантия для
+произвольной ОС/аппаратуры или меняющихся тегов моделей.
+
 ## Проверяемые сценарии
 
 | Требование | Доказательство |

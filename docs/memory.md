@@ -83,8 +83,11 @@ uv run --locked --extra memory language-review --config $config check $source --
 ```powershell
 uv run --locked --extra memory language-review --config $config memory work --project $projectId --watch
 # Либо отдельный скрытый Windows-процесс; вернётся PID для контролируемой остановки.
-uv run --locked --extra memory pwsh -File .\scripts\start-memory-worker.ps1 `
+.venv\Scripts\Activate.ps1
+$workerProcessId = .\scripts\start-memory-worker.ps1 `
     -Config $config -Project $projectId -LogDirectory $externalLogDirectory
+# Остановка собственного worker вместе с Python launcher-процессами:
+taskkill /PID $workerProcessId /T /F
 ```
 
 Без работающего worker первичные события всё равно устойчиво записываются, очередь

@@ -117,7 +117,7 @@ document не находится через recall/reflect. Benchmark отдел
 На неизменённом `tests/fixtures/evaluation/corpus.json`, split `dev`, выполнены
 три настоящих `language-review-eval run` через Ollama Qwen3.5 4B, по одному повтору.
 Синтетический учебный опыт хранится отдельно с `knowledge_dataset="synthetic"`;
-две содержательные synthetic-решения переданы через обычный `decide-review`.
+два содержательных синтетических решения переданы через обычный `decide-review`.
 Gold оценщика не импортируется в память. Результаты сопоставлены штатным `compare`.
 
 | Режим | Pipeline TP / FP / FN | Precision | Recall | Статус оценщика |
@@ -149,3 +149,11 @@ uv run --locked language-review-eval compare $baselineEvaluation $candidateEvalu
 Массовая нагрузка, ANN-оптимизация, авторизация нескольких недоверенных операторов,
 криптографическое удостоверение reviewer и гарантированное обнаружение произвольных
 секретов — не доказаны данным запуском.
+
+Итоговая проверка runtime commit `199b62ca1989dbdbb0518b84a2f9514de90a582e`:
+полный Windows pytest — **515 passed, 12 skipped**; отдельная Docker-приёмка с
+реальными Ollama/EmbeddingGemma — **51 passed**, restart/recreate/backup-loss-restore
+всех 13 таблиц и двух векторов — PASS. Wheel и sdist после установки optional extra
+успешно выполнили `memory health` на настоящей БД. Ruff, mypy, actionlint и проектные
+валидаторы прошли. Скрытый worker отдельно запущен в Windows и остановлен вместе с
+его process tree; Python CLI и исходники от этой проверки не изменились.

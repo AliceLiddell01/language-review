@@ -117,7 +117,7 @@ def _parser() -> argparse.ArgumentParser:
         "--llm-provider",
         choices=LLM_PROVIDERS,
         default=None,
-        help="транспорт LLM: llama_cpp (по умолчанию) или ollama",
+        help="транспорт LLM: llama_cpp (по умолчанию), ollama или chatgpt с согласием на облако",
     )
     add_memory_commands(commands, check)
     from language_review.chatgpt_cli import add_commands as add_chatgpt_commands

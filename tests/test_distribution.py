@@ -1868,6 +1868,24 @@ def test_setup_rejects_malformed_managed_toml_without_writing(isolated_appdata: 
     assert target.read_bytes() == before
 
 
+def test_setup_preserves_endpoint_from_neighbor_toml_section(isolated_appdata: Path) -> None:
+    from language_review.config import load_config, user_config_path
+
+    configure_endpoints({"languagetool": "http://localhost:8081"})
+    target = user_config_path()
+    target.write_text(
+        target.read_text("utf-8") + '\n[check.llm.ollama]\nendpoint = "http://localhost:11434"\n',
+        encoding="utf-8",
+    )
+
+    configure_endpoints({"languagetool": "http://localhost:8082"})
+
+    text = target.read_text("utf-8")
+    assert '[check.llm.ollama]\nendpoint = "http://localhost:11434"' in text
+    assert "http://localhost:8082" in text
+    load_config(target)
+
+
 def test_setup_repeated_endpoint_updates_preserve_neighbor_sections(isolated_appdata: Path) -> None:
     from language_review.config import load_config, user_config_path
 

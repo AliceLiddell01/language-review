@@ -73,8 +73,11 @@ def configure_endpoints(values: dict[str, str]) -> None:
     if text:
         import tomllib
 
+        if text.count(begin) != 1 or text.count(end) != 1 or text.index(begin) > text.index(end):
+            raise ReleaseError("Маркеры setup повреждены; настройте TOML вручную.")
         try:
-            parsed = tomllib.loads(text)
+            tomllib.loads(text)
+            parsed = tomllib.loads(text.split(begin, 1)[1].split(end, 1)[0])
         except tomllib.TOMLDecodeError as exc:
             raise ReleaseError(
                 "Пользовательский TOML синтаксически повреждён; файл сохранён."
@@ -91,8 +94,6 @@ def configure_endpoints(values: dict[str, str]) -> None:
                 previous[service] = node["endpoint"]
         # Setup владеет только точным сгенерированным блоком. Дополненные ключи
         # и комментарии сохраняются отказом до записи, а не пересборкой TOML.
-        if text.count(begin) != 1 or text.count(end) != 1 or text.index(begin) > text.index(end):
-            raise ReleaseError("Маркеры setup повреждены; настройте TOML вручную.")
         managed = text.split(begin, 1)[1].split(end, 1)[0].strip()
         expected = []
         for service, value in previous.items():

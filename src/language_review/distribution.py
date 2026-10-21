@@ -516,6 +516,7 @@ try {
 }
 $python = Join-Path $release 'venv/Scripts/python.exe'
 $exitCode = 1
+$env:LANGUAGE_REVIEW_LAUNCHER_PID = [string]$PID
 try {
     & $python -I -m $module @forward
     $exitCode = $LASTEXITCODE
@@ -835,6 +836,12 @@ def schedule_cleanup(root: Path) -> None:
     script.write_bytes(
         files("language_review").joinpath("distribution_assets/uninstall-cleanup.ps1").read_bytes()
     )
+    try:
+        launcher_pid = int(os.environ.get("LANGUAGE_REVIEW_LAUNCHER_PID", "0"))
+    except ValueError:
+        launcher_pid = 0
+    if not 0 < launcher_pid <= 0x7FFFFFFF:
+        launcher_pid = 0
     subprocess.Popen(
         [
             "pwsh",
@@ -847,6 +854,8 @@ def schedule_cleanup(root: Path) -> None:
             str(os.getpid()),
             "-WaitForParentPid",
             str(os.getppid()),
+            "-WaitForLauncherPid",
+            str(launcher_pid),
         ],
         creationflags=subprocess.CREATE_NO_WINDOW,
         stdin=subprocess.DEVNULL,

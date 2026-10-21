@@ -692,14 +692,102 @@ def test_uninstall_cleanup_preserves_runtime_with_live_cli_lease(tmp_path: Path)
         lock_process.wait(timeout=5)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Контракт PowerShell Windows")
+def test_uninstall_cleanup_waits_for_launcher_before_checking_lease(tmp_path: Path) -> None:
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 не найден.")
+    root = tmp_path / "application"
+    identifier = "c" * 32
+    release = root / "releases" / identifier
+    leases = release / ".run-leases"
+    leases.mkdir(parents=True)
+    protocol = leases / "protocol"
+    protocol.write_text("1\n", encoding="ascii")
+    lease = leases / "running.lock"
+    lease.write_bytes(b"1")
+    runtime = release / "venv" / "Scripts" / "python.exe"
+    runtime.parent.mkdir(parents=True)
+    runtime.write_bytes(b"synthetic venv redirector")
+    (root / "installation.json").write_text(
+        json.dumps({"owner": deploy.OWNER, "root": str(root), "uninstalled": True}),
+        encoding="utf-8",
+    )
+    (release / "owned-files.json").write_text(
+        json.dumps(
+            {
+                "owner": deploy.OWNER,
+                "files": {
+                    str(Path(".run-leases") / "protocol"): digest(protocol),
+                    "venv/Scripts/python.exe": digest(runtime),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    marker = tmp_path / "launcher-ready"
+    holder = tmp_path / "hold-launcher-lease.ps1"
+    holder.write_text(
+        "$handle = [IO.File]::Open($args[0], 'Open', 'ReadWrite', 'None')\n"
+        "[IO.File]::WriteAllText($args[1], 'ready')\n"
+        "Start-Sleep -Milliseconds 700\n"
+        "$handle.Dispose()\n",
+        encoding="utf-8",
+    )
+    launcher = subprocess.Popen(
+        [pwsh, "-NoProfile", "-File", str(holder), str(lease), str(marker)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not marker.exists():
+            if launcher.poll() is not None or time.monotonic() > deadline:
+                pytest.fail("Не удалось захватить runtime lease процессом launcher.")
+            time.sleep(0.02)
+        script = tmp_path / "uninstall-cleanup.ps1"
+        script.write_bytes(
+            Path("src/language_review/distribution_assets/uninstall-cleanup.ps1")
+            .resolve()
+            .read_bytes()
+        )
+
+        result = subprocess.run(
+            [
+                pwsh,
+                "-NoProfile",
+                "-File",
+                str(script),
+                "-Root",
+                str(root),
+                "-WaitForLauncherPid",
+                str(launcher.pid),
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+
+        assert result.returncode == 0, result.stderr
+        outcome = json.loads((root / "uninstall-result.json").read_text(encoding="utf-8"))
+        assert outcome["status"] == "uninstalled"
+        assert outcome["preserved"] == []
+        assert not runtime.exists()
+    finally:
+        if launcher.poll() is None:
+            launcher.terminate()
+        launcher.wait(timeout=5)
+
+
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 не найден")
 def test_generated_launcher_parses_in_powershell(tmp_path: Path) -> None:
     pwsh = shutil.which("pwsh")
     assert pwsh is not None
     launcher = tmp_path / "language-review-launch.ps1"
-    launcher.write_bytes(
-        deploy.launcher_files(tmp_path)[tmp_path / "bin/language-review-launch.ps1"]
-    )
+    launcher_bytes = deploy.launcher_files(tmp_path)[tmp_path / "bin/language-review-launch.ps1"]
+    assert b"$env:LANGUAGE_REVIEW_LAUNCHER_PID = [string]$PID" in launcher_bytes
+    launcher.write_bytes(launcher_bytes)
     parser = tmp_path / "parse-powershell.ps1"
     parser.write_text(
         "param([string]$Path)\n"
@@ -725,6 +813,7 @@ def test_schedule_cleanup_waits_for_venv_parent_process(tmp_path: Path, monkeypa
     monkeypatch.setattr(deploy.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(deploy.os, "getpid", lambda: 1234)
     monkeypatch.setattr(deploy.os, "getppid", lambda: 5678)
+    monkeypatch.setenv("LANGUAGE_REVIEW_LAUNCHER_PID", "8765")
     captured: dict[str, Any] = {}
 
     def fake_popen(args: list[str], **kwargs: Any) -> None:
@@ -738,6 +827,7 @@ def test_schedule_cleanup_waits_for_venv_parent_process(tmp_path: Path, monkeypa
     args = captured["args"]
     assert args[args.index("-WaitForPid") + 1] == "1234"
     assert args[args.index("-WaitForParentPid") + 1] == "5678"
+    assert args[args.index("-WaitForLauncherPid") + 1] == "8765"
     assert captured["kwargs"]["creationflags"] == subprocess.CREATE_NO_WINDOW
 
 
@@ -978,8 +1068,18 @@ def test_distribution_verifier_requires_a_strictly_newer_upgrade() -> None:
 @pytest.mark.parametrize("prerelease", [False, True])
 @pytest.mark.parametrize("channel", ["stable", "prerelease"])
 def test_bootstrap_checks_release_channel_consistency(
-    tmp_path: Path, prerelease: bool, channel: str
+    tmp_path: Path, monkeypatch: Any, prerelease: bool, channel: str
 ) -> None:
+    pwsh = shutil.which("pwsh")
+    assert pwsh is not None
+    uv_bin = tmp_path / "uv-bin"
+    uv_bin.mkdir()
+    (uv_bin / "uv.cmd").write_text("@echo off\r\necho uv 0.13.1\r\n", encoding="utf-8")
+    windows_root = Path(os.environ["SystemRoot"])
+    monkeypatch.setenv(
+        "PATH",
+        os.pathsep.join([str(uv_bin), str(windows_root / "System32"), str(windows_root)]),
+    )
     # Подменяется только сеть. AST выделяет downloader; guard и весь основной
     # установщик выполняются PowerShell без изменений.
     (tmp_path / "release.json").write_text(
@@ -1037,7 +1137,7 @@ $root = Join-Path $Fixtures 'unused-root'
     )
     result = subprocess.run(
         [
-            "pwsh",
+            pwsh,
             "-NoProfile",
             "-File",
             str(wrapper),
@@ -1585,16 +1685,10 @@ def test_setup_preserves_edited_managed_toml(isolated_appdata: Path) -> None:
     )
     target.write_text(text, encoding="utf-8")
     before = target.read_bytes()
-    try:
+    with pytest.raises(ReleaseError, match="Блок setup изменён пользователем"):
         configure_endpoints({"ollama": "http://localhost:11435"})
-        configure_endpoints({"ollama": "http://localhost:11435"})
-    except ReleaseError:
-        assert target.read_bytes() == before
-    else:
-        assert "# Мой тайм-аут" in target.read_text("utf-8")
-        assert "timeout_seconds = 75" in target.read_text("utf-8")
-        assert target.read_text("utf-8").count("[check.languagetool]") == 1
-        load_config(target)
+    assert target.read_bytes() == before
+    load_config(target)
 
 
 def test_setup_repeated_endpoint_updates_preserve_neighbor_sections(isolated_appdata: Path) -> None:

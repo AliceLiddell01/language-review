@@ -1,6 +1,6 @@
-param([Parameter(Mandatory)][string]$Root, [int]$WaitForPid, [int]$WaitForParentPid)
+param([Parameter(Mandatory)][string]$Root, [int]$WaitForPid, [int]$WaitForParentPid, [int]$WaitForLauncherPid)
 $ErrorActionPreference = 'Stop'
-$waitForPids = @($WaitForPid, $WaitForParentPid) | Where-Object { $_ -gt 0 } | Select-Object -Unique
+$waitForPids = @($WaitForPid, $WaitForParentPid, $WaitForLauncherPid) | Where-Object { $_ -gt 0 } | Select-Object -Unique
 if ($waitForPids.Count) { Wait-Process -Id $waitForPids -Timeout 60 -ErrorAction SilentlyContinue }
 $rootPath = [IO.Path]::GetFullPath($Root)
 $lockPath = Join-Path $rootPath '.install-lock'

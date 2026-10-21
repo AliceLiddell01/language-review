@@ -42,9 +42,12 @@ uv run --locked python .github/scripts/check_pr_body.py --body-file путь\к\
 
 Дистрибуция: `tests/test_distribution.py` проверяет идентичность/отказы/ownership и
 отсутствие auto-release. `scripts/verify-distribution.py --candidate КАТАЛОГ --output ОТЧЁТ`
-проверяет настоящий bootstrap скачанного тестового комплекта в отдельном профиле
-Windows без checkout, PATH, skills и сохранность входов. Это не public Release,
-live обнаружение skill агентом или worker/DB acceptance; эти границы отражаются отдельно.
+проверяет настоящий bootstrap тестового комплекта в отдельном профиле Windows без
+зависимости от checkout и PATH. `--codex-executable ПУТЬ` добавляет read-only
+`skills/list` через Codex app-server без вызова модели; `--upgrade-candidate КАТАЛОГ`
+проверяет смену версии и rollback. Без соответствующего аргумента каждая из этих
+дополнительных проверок имеет статус `NOT_RUN`. Это не public Release, вызов skill
+моделью или worker/DB acceptance.
 
 SIWC и расширенные проходы: `tests/test_chatgpt.py`/`test_analysis.py` проверяют протоколы,
 JWT, настоящий loopback callback, DPAPI и межпроцессный refresh в Windows, SSE,

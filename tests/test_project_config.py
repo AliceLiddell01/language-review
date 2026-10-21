@@ -75,6 +75,30 @@ def test_fixture_preparation_refuses_roots_outside_temporary_directory(
     assert policy.read_bytes() == original
 
 
+def test_fixture_preparation_preserves_existing_project_policy(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    root = project(
+        tmp_path / "repo",
+        """schema_version: 1
+default_profile: explicit
+profiles:
+  explicit:
+    engines: [llm]
+    llm: {provider: ollama, model: explicit-model}
+""",
+    )
+    (root / ".git").mkdir()
+    source = root / "notes.md"
+    source.write_text("Текст.", encoding="utf-8")
+    policy = root / FILENAME
+    original = policy.read_bytes()
+
+    project_inputs.prepare([str(source)], load_config())
+
+    assert policy.read_bytes() == original
+
+
 def test_missing_policy_never_uses_parent_or_global_profile(
     tmp_path: Path, isolated_appdata: Path
 ) -> None:

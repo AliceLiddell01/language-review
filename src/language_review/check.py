@@ -649,10 +649,12 @@ def check_paths(
             root_config if root_config.project_root is not None else environment_config
         )
     policies = [root_configs[document.root] for document in extract.documents]
-    effective = [
-        policy.check_settings_for_profile(document.profile, check_overrides)
-        for document, policy in zip(extract.documents, policies, strict=True)
-    ]
+    effective: list[tuple[CheckSettings, dict[str, str]]] = []
+    for extract_document, policy in zip(extract.documents, policies, strict=True):
+        profile = extract_document.profile
+        if profile is None and policy.project_root is not None:
+            profile = requested_profile or policy.default_profile
+        effective.append(policy.check_settings_for_profile(profile, check_overrides))
     base_config = next(
         (item for item in root_configs.values() if item.project_root is not None),
         environment_config,

@@ -154,25 +154,28 @@ language-review check .\repo --format json --output .\check-report.json
 Отчёт имеет схему `language-review.check` версии `1.0`: [JSON Schema](docs/check-report.schema.json) и [реальный пример](docs/check-report.example.json), построенный командой `check` с LanguageTool 6.6 и Vale 3.24.0 на фикстурах `tests/fixtures/check`. Схемы `scan` и `extract` не меняются.
 
 ~~~toml
-[check]
-engines = ["languagetool", "vale", "llm"]
-categories = []                       # пусто — все категории
-terms = { "фреймворк" = "каркас" }    # терминология проекта для Vale и LLM
-
 [check.languagetool]
 endpoint = "http://127.0.0.1:8081"
 
-[check.llm]
-provider = "llama_cpp"                # или "ollama"
-
 [check.llm.llama_cpp]
 endpoint = "http://127.0.0.1:8080"
-
-[profiles.docs.check]
-engines = ["languagetool", "vale"]
 ~~~
 
-Профиль может переопределять `engines`, `categories` и `terms`; адреса и параметры движков задаются в основном разделе `[check]`. Нелокальные адреса допускаются только при явном `check.allow_remote_endpoints = true`.
+~~~yaml
+schema_version: 1
+default_profile: everyday
+profiles:
+  everyday:
+    engines: [languagetool, vale, llm]
+    terms: {"фреймворк": "каркас"}
+    llm: {provider: llama_cpp}
+  docs:
+    engines: [languagetool, vale]
+path_rules:
+  - {path: 'docs/**', profile: docs}
+~~~
+
+TOML хранит среду: адреса локальных сервисов, `vale.program`, `vale.config` и отдельные согласия. Политика проекта — `engines`, категории, термины, модели и `path_rules` — задаётся в корневом `.language-review.yaml`. Нелокальные адреса допускаются только при явном `check.allow_remote_endpoints = true`.
 
 Каталоги зависимостей и сборки, в том числе `.git`, `.venv`, `node_modules`, `target`, `bin`, `obj`, `build` и `dist`, исключаются по умолчанию. Для пользовательских исключений используй `--exclude 'docs/generated/**'`. Также поддерживаются `.gitignore` и отрицательные правила Git; обход ссылок выключен по умолчанию. `--follow-symlinks` включает ссылки только в пределах явно указанного корня и защищает от циклов.
 

@@ -306,6 +306,36 @@ provider = "chatgpt"
     assert result.settings["sources"]["engines"].startswith(".language-review.yaml")
 
 
+def test_duplicate_input_without_profile_uses_project_default_profile(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    root = inputs(tmp_path / "repo", "Первый")
+    source = root / "src" / "file0.md"
+    engine_names: list[str] = []
+
+    class UnavailableEngine:
+        def describe(self) -> dict[str, Any]:
+            return {}
+
+        def probe(self) -> ProbeResult:
+            return ProbeResult("unavailable")
+
+        def run(self, units: Any, run: Any) -> Any:
+            return iter(())
+
+        def close(self) -> None:
+            return None
+
+    def engine_factory(name: str, settings: Any) -> UnavailableEngine:
+        engine_names.append(name)
+        return UnavailableEngine()
+
+    check_paths([str(source), str(source)], load_config(), engine_factory=engine_factory)
+
+    assert engine_names
+    assert set(engine_names) == {"llm"}
+
+
 def test_unavailable_selected_model_is_not_replaced(
     tmp_path: Path, isolated_appdata: Path, responses: Any, monkeypatch: Any
 ) -> None:

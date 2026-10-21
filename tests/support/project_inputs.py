@@ -19,6 +19,8 @@ from language_review.config import CHECK_KEYS, LoadedConfig, load_config
 from language_review.errors import ConfigurationError
 from language_review.project_config import ENVIRONMENT_KEYS, FILENAME, repository_root
 
+_GENERATED_POLICY_MARKER = "# Синтетическая политика из TOML для тестов."
+
 
 def _policy(settings: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {}
@@ -54,6 +56,16 @@ def prepare(paths: list[str], config: LoadedConfig) -> None:
             continue
         if not root.is_relative_to(temporary):
             raise AssertionError("Подготовка фикстуры вышла за системный временный каталог.")
+        policy_path = root / FILENAME
+        regenerate = False
+        if policy_path.exists():
+            try:
+                with policy_path.open("r", encoding="utf-8") as existing:
+                    regenerate = existing.readline().rstrip("\r\n") == _GENERATED_POLICY_MARKER
+            except OSError, UnicodeError:
+                continue
+            if not regenerate:
+                continue
         profile = _choose_profile(config, root, None) or "fixture"
         definitions = {}
         rules = []
@@ -88,7 +100,15 @@ def prepare(paths: list[str], config: LoadedConfig) -> None:
         }
         stream = io.StringIO()
         YAML(typ="safe", pure=True).dump(document, stream)
-        (root / FILENAME).write_text(stream.getvalue(), encoding="utf-8")
+        generated = f"{_GENERATED_POLICY_MARKER}\n{stream.getvalue()}"
+        if regenerate:
+            policy_path.write_text(generated, encoding="utf-8")
+        else:
+            try:
+                with policy_path.open("x", encoding="utf-8") as target:
+                    target.write(generated)
+            except FileExistsError:
+                continue
 
 
 def prepare_cli(arguments: list[str], appdata: Path) -> None:

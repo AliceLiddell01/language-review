@@ -34,7 +34,7 @@ from language_review.extract_models import ExtractDocument, ResolvedFragment
 from language_review.extract_report import fragment_id
 from language_review.extraction import extract_paths
 from language_review.masking import EngineView, ViewFragment, build_view
-from language_review.project_config import matched_rule
+from language_review.project_config import ENVIRONMENT_KEYS, matched_rule
 
 # Порядок запуска: быстрые детерминированные движки до LLM.
 ENGINE_ORDER = ("languagetool", "vale", "llm")
@@ -620,16 +620,43 @@ def check_paths(
     extract = extract_paths(
         paths, config, requested_profile=requested_profile, cli_overrides=cli_overrides
     )
-    root_configs = {
-        f"root-{index:04d}": extract.scan_result.project_configs.get(str(root["path"]), config)
-        for index, root in enumerate(extract.scan_result.roots, 1)
-    }
+    environment_check = replace(
+        CheckSettings(),
+        **{key.replace(".", "_"): config.check.value(key) for key in ENVIRONMENT_KEYS},
+    )
+    environment_config = replace(
+        config,
+        check=environment_check,
+        check_sources={
+            key: config.check_sources.get(key, "по умолчанию")
+            if key in ENVIRONMENT_KEYS
+            else "по умолчанию"
+            for key in CHECK_KEYS
+        },
+        profiles={},
+        profile_sources={},
+        default_profile=None,
+        default_profile_source="по умолчанию",
+        project_root=None,
+        path_rules=(),
+        project_id=None,
+        project_files=(),
+    )
+    root_configs: dict[str, LoadedConfig] = {}
+    for index, root in enumerate(extract.scan_result.roots, 1):
+        root_config = extract.scan_result.project_configs.get(str(root["path"]), config)
+        root_configs[f"root-{index:04d}"] = (
+            root_config if root_config.project_root is not None else environment_config
+        )
     policies = [root_configs[document.root] for document in extract.documents]
     effective = [
         policy.check_settings_for_profile(document.profile, check_overrides)
         for document, policy in zip(extract.documents, policies, strict=True)
     ]
-    base_config = next(iter(root_configs.values()), config)
+    base_config = next(
+        (item for item in root_configs.values() if item.project_root is not None),
+        environment_config,
+    )
     base_settings, base_sources = base_config.check_settings_for_profile(
         base_config.default_profile, check_overrides
     )

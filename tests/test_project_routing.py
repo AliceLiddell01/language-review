@@ -16,6 +16,7 @@ from test_project_config import project
 from language_review import chatgpt_http
 from language_review.chatgpt_auth import ChatGptAuth
 from language_review.check import check_paths
+from language_review.check_models import ProbeResult
 from language_review.check_report import check_document
 from language_review.config import load_config
 from language_review.engine_chatgpt import ChatGptProvider
@@ -247,6 +248,62 @@ def test_project_cloud_selection_without_consent_sends_zero_requests(
     result = check_paths([str(root / "docs/file0.md")], load_config(), engine_factory=factory)
     assert result.status == "unavailable" and responses == []
     assert "cloud_consent_required" in result.engines[0].diagnostics
+
+
+def test_missing_first_root_does_not_supply_legacy_toml_check_settings(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    root = project(
+        tmp_path / "repo",
+        """schema_version: 1
+default_profile: project
+profiles:
+  project:
+    engines: [llm]
+    llm: {provider: ollama, model: local-model}
+""",
+    )
+    (root / ".git").mkdir()
+    source = root / "notes.md"
+    source.write_text("Текст для проверки.\n", encoding="utf-8")
+    missing = tmp_path / "missing.md"
+    legacy = tmp_path / "legacy.toml"
+    legacy.write_text(
+        """default_profile = "legacy"
+[profiles.legacy.check]
+engines = ["vale"]
+[check]
+engines = ["vale"]
+[check.llm]
+provider = "chatgpt"
+""",
+        encoding="utf-8",
+    )
+
+    class UnavailableEngine:
+        def describe(self) -> dict[str, Any]:
+            return {}
+
+        def probe(self) -> ProbeResult:
+            return ProbeResult("unavailable")
+
+        def run(self, units: Any, run: Any) -> Any:
+            return iter(())
+
+        def close(self) -> None:
+            return None
+
+    def engine_factory(name: str, settings: Any) -> UnavailableEngine:
+        return UnavailableEngine()
+
+    result = check_paths(
+        [str(missing), str(root)], load_config(legacy), engine_factory=engine_factory
+    )
+
+    assert result.status == "error"
+    assert result.settings["engines"] == ["llm"]
+    assert result.settings["llm_provider"] == "ollama"
+    assert result.settings["sources"]["engines"].startswith(".language-review.yaml")
 
 
 def test_unavailable_selected_model_is_not_replaced(

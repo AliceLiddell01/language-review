@@ -15,7 +15,7 @@ from support.project_inputs import check_fixture_paths as check_paths
 
 from language_review.check_report import check_document
 from language_review.config import load_config
-from language_review.errors import InputError
+from language_review.errors import ConfigurationError, InputError
 from language_review.evaluation.cli import main, render
 from language_review.evaluation.comparison import (
     check_expectation,
@@ -482,6 +482,51 @@ def test_materialization_contains_no_labels_and_keeps_bytes(tmp_path: Path) -> N
         corpus["documents"][0]
     ).raw
     assert len(list(destination.rglob("*.json"))) == 0
+
+
+def test_live_capture_validates_the_selected_yaml_inside_its_temporary_root(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    (source_root / ".git").mkdir()
+    (source_root / ".language-review.yaml").write_text(
+        """schema_version: 1
+default_profile: valid
+profiles:
+  valid:
+    engines: [vale]
+""",
+        encoding="utf-8",
+    )
+    selected_policy = source_root / "policies" / ".language-review.yaml"
+    selected_policy.parent.mkdir()
+    selected_policy.write_text(
+        """schema_version: 1
+default_profile: invalid
+profiles:
+  invalid:
+    engines: [unknown]
+""",
+        encoding="utf-8",
+    )
+
+    def unexpected_subprocess(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError(
+            "Некорректная выбранная политика должна быть отклонена до запуска check."
+        )
+
+    monkeypatch.setattr("language_review.evaluation.live.subprocess.run", unexpected_subprocess)
+
+    with pytest.raises(ConfigurationError, match="неизвестные значения"):
+        capture(
+            make_corpus(),
+            "dev",
+            ["vale"],
+            selected_policy,
+            tmp_path / "runs",
+            "a" * 40,
+        )
 
 
 def test_packaged_check_schema_is_exact_existing_contract() -> None:

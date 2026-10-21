@@ -70,6 +70,7 @@ def capture(
         )
         for repository in bindings.values():
             root = inputs / repository
+            (root / ".git").mkdir()
             if project_yaml is None:
                 init_project(root)
             else:
@@ -78,16 +79,25 @@ def capture(
 
                 if project_yaml.name != FILENAME:
                     raise InputError(f"Политика оценщика должна называться {FILENAME}.")
-                load_project(load_config(), project_yaml.parent)
                 definition = _yaml(project_yaml)
-                prompt_sets = [definition.get("prompts", {})] + [
-                    profile.get("prompts", {}) for profile in definition["profiles"].values()
-                ]
+                profiles = definition.get("profiles")
+                prompt_sets = [definition.get("prompts", {})]
+                if isinstance(profiles, dict):
+                    prompt_sets.extend(
+                        profile.get("prompts", {})
+                        for profile in profiles.values()
+                        if isinstance(profile, dict)
+                    )
                 copied: set[str] = set()
                 for prompt_set in prompt_sets:
+                    if not isinstance(prompt_set, dict):
+                        continue
+                    strategies = prompt_set.get("strategies", {})
+                    if not isinstance(strategies, dict):
+                        continue
                     values = [
                         value for key, value in prompt_set.items() if key != "strategies"
-                    ] + list(prompt_set.get("strategies", {}).values())
+                    ] + list(strategies.values())
                     for value in values:
                         relative = (
                             value
@@ -112,6 +122,7 @@ def capture(
                 with (root / FILENAME).open("xb") as stream:
                     assert policy_bytes is not None
                     stream.write(policy_bytes)
+                load_project(load_config(), root)
         initial = {
             path: hashlib.sha256(path.read_bytes()).hexdigest()
             for path in inputs.rglob("*")

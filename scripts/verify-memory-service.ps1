@@ -1,4 +1,6 @@
 param(
+    [string]$ReleaseDirectory,
+    [string]$ResultFile,
     [string]$LlmModel = 'qwen3.5:4b',
     [string]$EmbeddingModel = 'embeddinggemma:300m',
     [string]$EmbeddingRevision = '85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1',
@@ -38,7 +40,10 @@ function Invoke-Cli([string[]]$CliArguments, [int[]]$Codes = @(0)) {
 function Install-Service([string]$Fault) {
     $env:LANGUAGE_REVIEW_TEST_INSTALL_FAULT = $Fault
     try {
-        & (Join-Path $PSScriptRoot 'install-memory-service.ps1') -RuntimeDirectory $runtime -Project $project -Port $port `
+        $installer = if ($ReleaseDirectory) { Join-Path $ReleaseDirectory 'install-memory-service.ps1' } else { Join-Path $PSScriptRoot 'install-memory-service.ps1' }
+        $releaseArgs = @{}
+        if ($ReleaseDirectory) { $releaseArgs.ReleaseDirectory = $ReleaseDirectory }
+        & $installer @releaseArgs -RuntimeDirectory $runtime -Project $project -Port $port `
             -LlmModel $LlmModel -EmbeddingModel $EmbeddingModel -EmbeddingRevision $EmbeddingRevision `
             -EmbeddingDimensions $EmbeddingDimensions | Out-Host
     } finally { $env:LANGUAGE_REVIEW_TEST_INSTALL_FAULT = $null }
@@ -277,6 +282,7 @@ try {
     if ($operationFailure) { $summary.failure = $operationFailure.Message }
     try {
         $summary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $scratch 'acceptance.json') -Encoding utf8NoBOM
+        if ($ResultFile) { $summary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $ResultFile -Encoding utf8NoBOM }
     } catch {
         $cleanupErrors.Add("Не удалось записать итог приёмки: $($_.Exception.GetType().Name)")
     }

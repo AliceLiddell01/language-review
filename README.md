@@ -1,5 +1,9 @@
 # Language Review
 
+Установка Windows, глобальные пользовательские skills и управление установленным CLI:
+[руководство установки](docs/installation.md). Подготовка кандидата и отдельно
+разрешаемый GitHub Release: [политика выпуска](docs/releases.md).
+
 [![Проверки проекта](https://github.com/AliceLiddell01/language-review/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/AliceLiddell01/language-review/actions/workflows/ci.yml)
 
 **Локальная CLI-утилита для языкового ревью русского технического текста в исходном коде и документации.**

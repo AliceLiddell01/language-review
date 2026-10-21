@@ -40,6 +40,12 @@ uv run --locked python .github/scripts/check_pr_body.py --body-file путь\к\
 
 ## Статусы
 
+Дистрибуция: `tests/test_distribution.py` проверяет идентичность/отказы/ownership и
+отсутствие auto-release. `scripts/verify-distribution.py --candidate КАТАЛОГ --output ОТЧЁТ`
+проверяет настоящий bootstrap скачанного тестового комплекта в отдельном профиле
+Windows без checkout, PATH, skills и сохранность входов. Это не public Release,
+live обнаружение skill агентом или worker/DB acceptance; эти границы отражаются отдельно.
+
 SIWC и расширенные проходы: `tests/test_chatgpt.py`/`test_analysis.py` проверяют протоколы,
 JWT, настоящий loopback callback, DPAPI и межпроцессный refresh в Windows, SSE,
 бюджеты/routing/coverage и совместимость evaluator. Это не live OpenAI: каталог и

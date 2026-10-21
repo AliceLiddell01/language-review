@@ -1,0 +1,134 @@
+name: Релиз • ручная подготовка и отдельная публикация
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'prepare не создаёт тегов; publish требует отдельного решения'
+        type: choice
+        options: [prepare, publish]
+        required: true
+      version:
+        description: 'Осмысленно выбранная SemVer версия (без v)'
+        required: true
+      channel:
+        type: choice
+        options: [stable, prerelease]
+        required: true
+      commit:
+        description: 'Полный target SHA'
+        required: true
+      previous:
+        description: 'Последний опубликованный stable tag или none'
+        required: true
+      notes:
+        description: 'Путь notes в target commit, разделы по docs/releases.md'
+        required: true
+      candidate_run:
+        description: 'Только publish: ID успешного prepare run'
+      authorization:
+        description: 'Только publish: publish vВЕРСИЯ ПОЛНЫЙ_SHA'
+      notes_sha256:
+        description: 'Только publish: подтверждённый SHA-256 release-notes.md'
+
+permissions:
+  contents: read
+concurrency:
+  group: language-review-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: inputs.operation == 'prepare'
+    runs-on: windows-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: '0.13.1'
+      - run: uv sync --locked
+      - name: Подготовить из точного SHA без публичного тега
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LR_VERSION: ${{ inputs.version }}
+          LR_CHANNEL: ${{ inputs.channel }}
+          LR_COMMIT: ${{ inputs.commit }}
+          LR_PREVIOUS: ${{ inputs.previous }}
+          LR_NOTES: ${{ inputs.notes }}
+        run: |
+          if ($env:LR_COMMIT -notmatch '^[a-f0-9]{40}$') { throw 'Нужен полный SHA' }
+          git merge-base --is-ancestor $env:LR_COMMIT origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Target должен принадлежать main' }
+          $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          git show "${env:LR_COMMIT}:$env:LR_NOTES" | Set-Content -LiteralPath $notesPath -Encoding utf8NoBOM
+          if ($LASTEXITCODE -ne 0) { throw 'Не найдены notes' }
+          uv run --locked python scripts/release.py prepare --version $env:LR_VERSION --channel $env:LR_CHANNEL --commit $env:LR_COMMIT --previous $env:LR_PREVIOUS --notes $notesPath --output candidate
+          if ($LASTEXITCODE -ne 0) { throw 'Подготовка не завершена' }
+      - name: Проверить установку из кандидата в Windows
+        run: |
+          uv run --locked python scripts/verify-distribution.py --candidate candidate --output acceptance.json
+          if ($LASTEXITCODE -ne 0) { throw 'Приёмка не пройдена' }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-candidate
+          path: |
+            candidate/*
+            acceptance.json
+          retention-days: 14
+          if-no-files-found: error
+
+  publish:
+    if: inputs.operation == 'publish' && github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    # Для production включить required reviewers в настройках GitHub Environment.
+    environment: release-publication
+    permissions:
+      contents: write
+      actions: read
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: '0.13.1'
+      - run: uv sync --locked
+      - name: Проверить происхождение candidate run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LR_CANDIDATE_RUN: ${{ inputs.candidate_run }}
+        run: |
+          if ($env:LR_CANDIDATE_RUN -notmatch '^\d+$') { throw 'Нужен prepare run ID' }
+          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:LR_CANDIDATE_RUN" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $run.path -ne '.github/workflows/release.yml' -or $run.event -ne 'workflow_dispatch' -or $run.conclusion -ne 'success' -or $run.head_branch -ne 'main') { throw 'Недоверенный candidate run' }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-candidate
+          run-id: ${{ inputs.candidate_run }}
+          github-token: ${{ github.token }}
+          path: prepared
+      - name: Отдельно разрешённая публикация полного комплекта
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LR_RELEASE_AUTHORIZATION: ${{ inputs.authorization }}
+          LR_NOTES_SHA256: ${{ inputs.notes_sha256 }}
+          LR_VERSION: ${{ inputs.version }}
+          LR_COMMIT: ${{ inputs.commit }}
+          LR_CHANNEL: ${{ inputs.channel }}
+          LR_PREVIOUS: ${{ inputs.previous }}
+        run: |
+          $manifest = Get-Content -Raw prepared/candidate/release.json | ConvertFrom-Json
+          if ($manifest.version -ne $env:LR_VERSION -or $manifest.commit -ne $env:LR_COMMIT -or $manifest.channel -ne $env:LR_CHANNEL -or $manifest.previous_stable -ne $env:LR_PREVIOUS) { throw 'Параметры публикации отличаются от кандидата' }
+          uv run --locked python scripts/release.py publish --candidate prepared/candidate --evidence prepared/acceptance.json
+          if ($LASTEXITCODE -ne 0) { throw 'Публикация не завершена; проверьте draft вручную' }

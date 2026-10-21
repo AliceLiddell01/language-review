@@ -351,6 +351,12 @@ def verify(
                 inputs / "repo-b",
             )
             assert result == "language-review " + manifest["package_version"]
+            evaluator = command(
+                ["pwsh", "-NoProfile", "-Command", "language-review-eval --help"],
+                launch_env,
+                inputs / "repo-b",
+            )
+            assert "language-review-eval" in evaluator
         finally:
             if added:
                 change_path(install_root / "bin", add=False)
@@ -546,11 +552,18 @@ def verify(
         command([*cli, "installation", "uninstall"], env, root)
         import time
 
-        deadline = time.monotonic() + 30
-        while not (install_root / "uninstall-result.json").exists():
+        deadline = time.monotonic() + 180
+        while (
+            not (install_root / "uninstall-result.json").exists()
+            or (install_root / ".install-lock").exists()
+        ):
             if time.monotonic() > deadline:
                 raise RuntimeError("Внешняя очистка uninstall не завершена.")
             time.sleep(0.2)
+        assert (
+            json.loads((install_root / "uninstall-result.json").read_text("utf-8"))["status"]
+            == "uninstalled"
+        )
         assert user_file.read_bytes() == b"preserve" and codex.is_file()
         assert not (home / ".claude/skills/language-review/SKILL.md").exists()
         assert not (install_root / "bin/language-review.cmd").exists()

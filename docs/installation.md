@@ -52,6 +52,7 @@ OAuth DPAPI остаётся в соседнем `LanguageReview/chatgpt`; су�
 
 ```powershell
 language-review --version
+language-review-eval --help
 language-review installation status
 language-review doctor --format json
 language-review config show --environment --format json

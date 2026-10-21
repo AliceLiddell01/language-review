@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import json
 import os
 import shutil
@@ -218,6 +219,7 @@ def probe(release: Path, version: str) -> None:
             "json",
         ]
     )
+    execute([python, "-I", "-m", "language_review.evaluation", "--help"])
     # Недоступные optional движки — допустимый диагностический результат ядра.
     report = json.loads(
         execute(
@@ -238,7 +240,8 @@ def change_path(bin_path: Path, *, add: bool) -> bool:
             value, kind = winreg.QueryValueEx(key, "Path")
         except FileNotFoundError:
             value, kind = "", winreg.REG_EXPAND_SZ
-        parts = [p for p in value.split(";") if p]
+        # Пустые элементы/последний разделитель чужого PATH сохраняются побайтово.
+        parts = value.split(";") if value else []
         present = any(
             os.path.normcase(os.path.expandvars(p)) == os.path.normcase(str(bin_path))
             for p in parts
@@ -265,11 +268,12 @@ def change_path(bin_path: Path, *, add: bool) -> bool:
 
 
 def path_conflict(root: Path) -> None:
-    found = shutil.which("language-review")
-    if found and Path(found).resolve().parent != (root / "bin").resolve():
-        raise ReleaseError(
-            "В PATH уже есть другой language-review; устраните конфликт, чужой файл не изменён."
-        )
+    for name in ("language-review", "language-review-eval"):
+        found = shutil.which(name)
+        if found and Path(found).resolve().parent != (root / "bin").resolve():
+            raise ReleaseError(
+                "В PATH уже есть другой " + name + "; устраните конфликт, чужой файл не изменён."
+            )
 
 
 def launcher_files(root: Path) -> dict[Path, bytes]:
@@ -279,12 +283,22 @@ $root = Split-Path -Parent $PSScriptRoot
 $file = Join-Path $root 'installation.json'
 $installation = Get-Content -Raw -LiteralPath $file | ConvertFrom-Json
 $python = Join-Path $root ('releases/' + $installation.active + '/venv/Scripts/python.exe')
-& $python -I -m language_review @args
+$module = switch ($args[0]) {
+    'review' { 'language_review' }
+    'eval' { 'language_review.evaluation' }
+    default { throw 'Неизвестный launcher Language Review.' }
+}
+$forward = @($args | Select-Object -Skip 1)
+& $python -I -m $module @forward
 exit $LASTEXITCODE
 """
-    cmd = '@echo off\r\npwsh.exe -NoProfile -File "%~dp0language-review-launch.ps1" %*\r\n'
+    cmd = '@echo off\r\npwsh.exe -NoProfile -File "%~dp0language-review-launch.ps1" review %*\r\n'
+    evaluator = (
+        '@echo off\r\npwsh.exe -NoProfile -File "%~dp0language-review-launch.ps1" eval %*\r\n'
+    )
     return {
         root / "bin/language-review.cmd": cmd.encode(),
+        root / "bin/language-review-eval.cmd": evaluator.encode(),
         root / "bin/language-review-launch.ps1": script.encode("utf-8"),
     }
 
@@ -322,6 +336,13 @@ def install(
                 "Содержимое уже установленной версии изменилось; требуется новый tag/version."
             )
         path_conflict(root)
+        launchers = launcher_files(root)
+        for path in launchers:
+            safe_path(path)
+            if path.exists() and digest(path) != old.get("launchers", {}).get(path.name):
+                raise ReleaseError(
+                    "Launcher изменён пользователем или принадлежит другой установке."
+                )
         if (
             old
             and version_key(data["version"]) < version_key(old["version"])
@@ -340,6 +361,7 @@ def install(
         ):
             probe(root / "releases" / old["active"], data["package_version"])
             current = {**old, "skills": skills}
+            writes.update(launchers)
             writes[root / "installation.json"] = json_bytes(current)
             transaction(root, writes)
             return current
@@ -412,8 +434,11 @@ def install(
                 "path_added": added or old.get("path_added", False),
                 "path_requested": add_path,
                 "uv": str(private_uv),
+                "launchers": {
+                    p.name: hashlib.sha256(content).hexdigest() for p, content in launchers.items()
+                },
             }
-            writes.update(launcher_files(root))
+            writes.update(launchers)
             writes[root / "installation.json"] = json_bytes(current)
             transaction(root, writes)
             return current
@@ -505,10 +530,8 @@ def uninstall(root: Path) -> list[str]:
                 writes[path] = None
             elif path.exists():
                 preserved.append("Изменённый skill сохранён: " + agent)
-        for path, content in launcher_files(root).items():
-            import hashlib
-
-            if path.exists() and digest(path) == hashlib.sha256(content).hexdigest():
+        for path in launcher_files(root):
+            if path.exists() and digest(path) == old.get("launchers", {}).get(path.name):
                 writes[path] = None
             elif path.exists():
                 preserved.append("Изменённый launcher сохранён: " + path.name)

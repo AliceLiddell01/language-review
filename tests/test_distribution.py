@@ -483,6 +483,21 @@ def test_installation_from_checkout_is_explained(capsys: Any) -> None:
     assert "управляемую установку" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("name", ["language-review", "language-review-eval"])
+def test_path_conflict_preserves_foreign_program(
+    tmp_path: Path, monkeypatch: Any, name: str
+) -> None:
+    foreign = tmp_path / "foreign" / (name + ".cmd")
+    foreign.parent.mkdir()
+    foreign.write_bytes(b"foreign executable")
+    monkeypatch.setattr(
+        deploy.shutil, "which", lambda value: str(foreign) if value == name else None
+    )
+    with pytest.raises(ReleaseError, match="В PATH"):
+        deploy.path_conflict(tmp_path / "application")
+    assert foreign.read_bytes() == b"foreign executable"
+
+
 def test_default_application_root_preserves_existing_oauth_directory(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
@@ -495,6 +510,27 @@ def test_default_application_root_preserves_existing_oauth_directory(
     with deploy.locked(root):
         assert deploy.status(root) == {"status": "not_installed"}
     assert oauth.read_bytes() == b"existing encrypted user data"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Пользовательский реестр Windows")
+def test_path_roundtrip_preserves_foreign_empty_entries(tmp_path: Path, monkeypatch: Any) -> None:
+    import contextlib
+    import ctypes
+    import winreg
+
+    values = {"Path": "A;;B;"}
+    monkeypatch.setattr(winreg, "CreateKey", lambda *args: contextlib.nullcontext(object()))
+    monkeypatch.setattr(
+        winreg, "QueryValueEx", lambda *args: (values["Path"], winreg.REG_EXPAND_SZ)
+    )
+    monkeypatch.setattr(
+        winreg, "SetValueEx", lambda key, name, zero, kind, value: values.update({name: value})
+    )
+    monkeypatch.setattr(ctypes.windll.user32, "SendMessageTimeoutW", lambda *args: 1)
+    assert deploy.change_path(tmp_path / "bin", add=True)
+    assert values["Path"] == "A;;B;;" + str(tmp_path / "bin")
+    assert deploy.change_path(tmp_path / "bin", add=False)
+    assert values["Path"] == "A;;B;"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-установки")
@@ -525,3 +561,9 @@ def test_install_failure_preserves_pointer_and_skills(
     assert skill.read_bytes() == original
     assert deploy.status(root)["version"] == first["version"]
     assert len(list((root / "releases").iterdir())) == 1
+    monkeypatch.setattr(deploy, "probe", lambda *args: None)
+    launcher = root / "bin/language-review.cmd"
+    launcher.write_bytes(b"user launcher")
+    with pytest.raises(ReleaseError, match="Launcher"):
+        deploy.install(bundle, root, uv=str(fake_uv), home=home, add_path=False)
+    assert launcher.read_bytes() == b"user launcher"

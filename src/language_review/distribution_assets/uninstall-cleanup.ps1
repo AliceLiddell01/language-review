@@ -11,13 +11,18 @@ $state = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json
 if ($state.owner -ne 'language-review.installer/1' -or -not $state.uninstalled -or $state.root -ne $rootPath) {
     throw 'Внешняя очистка требует ownership и завершённый uninstall.'
 }
+$checkedPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 function Assert-NoLink([string]$Path) {
-    $item = [IO.FileInfo]::new($Path)
-    while ($item) {
-        if ($item.Exists -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Очистка ссылки запрещена.' }
-        $parent = Split-Path -Parent $item.FullName
-        if (-not $parent -or $parent -eq $item.FullName) { break }
-        $item = [IO.DirectoryInfo]::new($parent)
+    $current = [IO.Path]::GetFullPath($Path)
+    while ($current) {
+        if ($checkedPaths.Contains($current)) { return }
+        if (([IO.File]::Exists($current) -or [IO.Directory]::Exists($current)) -and
+            ([IO.File]::GetAttributes($current) -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Очистка ссылки запрещена.'
+        }
+        $null = $checkedPaths.Add($current)
+        $parent = [IO.Directory]::GetParent($current)
+        $current = if ($parent) { $parent.FullName } else { $null }
     }
 }
 Assert-NoLink $rootPath
@@ -52,4 +57,8 @@ foreach ($release in Get-ChildItem -LiteralPath $releasesPath -Directory) {
 @{status = 'uninstalled'; preserved = @($preserved); data = 'Пользовательские данные, OAuth и memory deployment сохранены'} |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $rootPath 'uninstall-result.json') -Encoding utf8NoBOM
 Remove-Item -LiteralPath $PSCommandPath
+} catch {
+    @{status = 'cleanup_failed'; reason = $_.Exception.GetType().Name; data = 'Пользовательские данные сохранены; проверьте остатки runtime'} |
+        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $rootPath 'uninstall-result.json') -Encoding utf8NoBOM
+    throw
 } finally { $lock.Dispose(); Remove-Item -LiteralPath $lockPath }

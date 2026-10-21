@@ -129,6 +129,9 @@ def _check_engines(
         "engines": list(settings.engines),
         "categories": list(settings.categories),
         "llm_provider": settings.llm_provider,
+        "analysis_mode": settings.analysis_mode,
+        "verify_hypotheses": settings.analysis_verify,
+        "cloud_consent": settings.llm_chatgpt_allow_cloud,
         "allow_remote_endpoints": settings.allow_remote_endpoints,
         "sources": {
             key: sources.get(key, "по умолчанию")

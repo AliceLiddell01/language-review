@@ -70,6 +70,9 @@ def worker_lease_seconds(settings: CheckSettings) -> int:
 def process_one(
     store: Store, project: str | None, settings: CheckSettings, provider: Provider | None = None
 ) -> dict[str, Any] | None:
+    if settings.llm_provider == "chatgpt" or (provider is not None and provider.name == "chatgpt"):
+        # Согласие check не разрешает передачу фонового журнала и базы знаний.
+        raise MemoryFeatureError("memory_cloud_consolidation_not_supported")
     job = store.claim(project, lease_seconds=worker_lease_seconds(settings))
     if job is None:
         return None

@@ -27,5 +27,6 @@
   prompt/schema консолидации не назначает истину. Existing source/protected checks обязательны.
 - Test/holdout не обрабатываются и не индексируются. Evaluator capture маркирует split;
   synthetic knowledge выбирается явно, dev не обучает свои последующие повторы.
+- Cloud consent для check не разрешает фоновую консолидацию: worker отклоняет ChatGPT до claim. Передача ограниченного recall в облачный check требует отдельного allow_memory; snapshot сохраняется хешем.
 - Доказательство live БД/модели не заменяется JsonServer. Общие команды проверки принадлежат
   [verification.md](verification.md); отдельная приёмка — `scripts/verify-memory.ps1`.

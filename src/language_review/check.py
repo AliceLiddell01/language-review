@@ -27,7 +27,7 @@ from language_review.check_models import (
 from language_review.config import CheckSettings, LoadedConfig
 from language_review.coordinates import position_within
 from language_review.engine_languagetool import LanguageToolEngine
-from language_review.engine_llm import LlmEngine
+from language_review.engine_llm import PROMPT_VERSION, LlmEngine
 from language_review.engine_vale import ValeEngine
 from language_review.extract_models import ExtractDocument, ResolvedFragment
 from language_review.extract_report import fragment_id
@@ -429,10 +429,18 @@ def _same_defect(first: Candidate, second: Candidate) -> bool:
     if first.raw == second.raw:
         return True
     # Разные правила одного движка остаются самостоятельными диагнозами.
-    if first.raw.engine == second.raw.engine and first.raw.rule_id != second.raw.rule_id:
+    if first.raw.engine == second.raw.engine and _rule_key(first.raw) != _rule_key(second.raw):
         return False
     edits = {item.edit for item in first.suggestions if item.edit is not None}
     return bool(edits & {item.edit for item in second.suggestions if item.edit is not None})
+
+
+def _rule_key(raw: RawFinding) -> str | None:
+    # Проходы одной LLM сохраняют происхождение в rule_id, но не становятся разными движками.
+    prefix = f"{PROMPT_VERSION}:"
+    if raw.engine == "llm" and raw.rule_id and raw.rule_id.startswith(prefix):
+        return prefix + raw.category
+    return raw.rule_id
 
 
 def reconcile(document_index: int, candidates: list[Candidate]) -> list[Finding]:
@@ -471,7 +479,7 @@ def reconcile(document_index: int, candidates: list[Candidate]) -> list[Finding]
         seen.add(identity)
         edits = {item.edit for item in candidate.suggestions if item.edit is not None}
         possible: set[int] = set()
-        engine, rule = candidate.raw.engine, candidate.raw.rule_id
+        engine, rule = candidate.raw.engine, _rule_key(candidate.raw)
         for edit in edits:
             groups = by_edit.get((id(candidate.unit), edit), set())
             possible.update(groups.intersection(by_rule.get((engine, rule), ())))
@@ -644,8 +652,53 @@ def check_paths(
     runs: list[EngineRun] = []
     candidates: dict[int, list[Candidate]] = {}
     for name in engine_names:
+        if name == "llm":
+            for document_candidates in candidates.values():
+                for candidate in document_candidates:
+                    unit, raw = candidate.unit, candidate.raw
+                    quote = source_excerpt(unit, candidate.source_start, candidate.source_end)
+                    view = unit.views["llm"]
+                    view_range = view.view_range(candidate.source_start, candidate.source_end)
+                    if view_range is not None:
+                        quote = view.text[view_range[0] : view_range[1]]
+                    unit.hypotheses.append(
+                        {
+                            "engine": raw.engine,
+                            "rule_id": raw.rule_id,
+                            "category": raw.category,
+                            "excerpt": quote,
+                            "replacements": list(raw.replacements),
+                            "_view_range": view_range,
+                        }
+                    )
+                    if any(item.status == "rejected" for item in candidate.suggestions):
+                        unit.routing_reasons.append("risky_suggestion")
+            for document_index, document in enumerate(documents):
+                for finding in reconcile(document_index, candidates.get(document_index, [])):
+                    if (
+                        len(
+                            {
+                                item.edit
+                                for item in finding.suggestions
+                                if item.status == "candidate"
+                            }
+                        )
+                        > 1
+                    ):
+                        finding.candidates[0].unit.routing_reasons.append("conflicting_suggestions")
+                for rejected in document.rejected:
+                    next(
+                        unit for unit in document.units if unit.index == rejected.unit
+                    ).routing_reasons.append("rejected_evidence")
         engine = engine_factory(name, base_settings)
         run = EngineRun(name=name, details=engine.describe())
+        if name == "llm":
+            run.details["document_policy_sha256"] = {
+                document.extract.id: hashlib.sha256(
+                    json.dumps(asdict(policy), ensure_ascii=False, sort_keys=True).encode()
+                ).hexdigest()
+                for document, policy in zip(documents, settings, strict=True)
+            }
         runs.append(run)
         engine_units = [unit for unit in units if unit.checked_by(name)]
         run.units_total = len(engine_units)
@@ -713,6 +766,13 @@ def check_paths(
             "engines": list(base_settings.engines),
             "categories": list(base_settings.categories),
             "llm_provider": base_settings.llm_provider,
+            "report_schema_version": "1.1"
+            if (
+                base_settings.llm_provider == "chatgpt"
+                or base_settings.analysis_mode != "normal"
+                or base_settings.analysis_verify
+            )
+            else "1.0",
             "sources": {
                 key: public_source(base_sources.get(key, "по умолчанию"))
                 for key in ("engines", "categories", "llm.provider")

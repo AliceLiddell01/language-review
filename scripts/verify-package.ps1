@@ -19,12 +19,22 @@ if (-not $tempRoot.StartsWith($tempBase, [StringComparison]::OrdinalIgnoreCase))
     throw 'Временный путь smoke-проверки вышел за системный каталог временных файлов.'
 }
 $previousAppData = $env:APPDATA
+$previousLocalAppData = $env:LOCALAPPDATA
+$previousUvCacheDir = $env:UV_CACHE_DIR
 $previousPythonIOEncoding = $env:PYTHONIOENCODING
 $previousOutputEncoding = [Console]::OutputEncoding
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
-$env:APPDATA = Join-Path $tempRoot 'appdata'
-New-Item -ItemType Directory -Path $env:APPDATA | Out-Null
 try {
+    if ([string]::IsNullOrWhiteSpace($env:UV_CACHE_DIR)) {
+        $uvCacheDirectory = (& uv cache dir).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $uvCacheDirectory) {
+            throw 'Не удалось определить каталог кэша uv.'
+        }
+        $env:UV_CACHE_DIR = $uvCacheDirectory
+    }
+    $env:APPDATA = Join-Path $tempRoot 'appdata'
+    $env:LOCALAPPDATA = Join-Path $tempRoot 'localappdata'
+    New-Item -ItemType Directory -Path $env:APPDATA | Out-Null
     $env:PYTHONIOENCODING = 'utf-8'
     [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
     $distributionDirectory = Join-Path $tempRoot 'dist'
@@ -180,7 +190,7 @@ try {
         if ((Get-FileHash -LiteralPath $sampleFile -Algorithm SHA256).Hash -ne $sampleHash) {
             throw "Установленный пакет $kind review изменил исходный файл."
         }
-        # Оценщик импортирует сохранённую синтетическую выдачу offline: серверы не нужны.
+        # Оценщик импортирует сохранённую синтетическую выдачу автономно: серверы не нужны.
         $evalLauncher = Join-Path $environment 'Scripts/language-review-eval.exe'
         $evalFixture = Join-Path $projectRoot 'tests/fixtures/evaluation'
         $evalCorpus = Join-Path $tempRoot ("corpus-$kind.json")
@@ -245,6 +255,27 @@ try {
         }
         # Ожидаемый код 5 проверен выше; он не должен стать кодом завершения всего скрипта.
         $global:LASTEXITCODE = 0
+        $cloudJson = (& $launcher check $sample --engine llm --llm-provider chatgpt `
+            --analysis-mode deep --view review --format json) -join [Environment]::NewLine
+        if ($LASTEXITCODE -ne 5) { throw "$kind не отклонил облако без согласия." }
+        $cloudReport = $cloudJson | ConvertFrom-Json
+        if ($cloudReport.schema_version -ne '1.1' -or
+            $cloudReport.analysis.engines[0].diagnostics -notcontains 'cloud_consent_required') {
+            throw "$kind потерял контракт облачного отказа."
+        }
+        if ((Get-FileHash -LiteralPath $sampleFile -Algorithm SHA256).Hash -ne $sampleHash) {
+            throw "$kind облачная проверка изменила исходник."
+        }
+        & $environmentPython -I -c 'import importlib.util; assert importlib.util.find_spec("jwt") is None'
+        if ($LASTEXITCODE -ne 0) { throw "Базовый $kind неожиданно требует JWT extra." }
+        & uv pip install --python $environmentPython ($artifact.FullName + '[chatgpt]')
+        if ($LASTEXITCODE -ne 0) { throw "Не установлено chatgpt extra для $kind." }
+        & $environmentPython -I -c 'import jwt; from language_review.chatgpt_store import dpapi; assert dpapi(dpapi(b"synthetic-test"), decrypt=True) == b"synthetic-test"'
+        if ($LASTEXITCODE -ne 0) { throw "Не работают JWT/DPAPI в установленном $kind." }
+        $authStatus = (& $launcher chatgpt status) -join [Environment]::NewLine | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0 -or $authStatus.active -or $authStatus.accounts.Count -ne 0) {
+            throw "$kind не изолировал хранилище OAuth при проверке пакета."
+        }
         & uv pip install --python $environmentPython ($artifact.FullName + '[memory]')
         if ($LASTEXITCODE -ne 0) { throw "Не установлено memory extra для $kind." }
         & $environmentPython -I -c 'import psycopg; from language_review.memory.store import Store; from language_review.memory.settings import MemorySettings; assert Store(MemorySettings()).settings.enabled is False'
@@ -260,6 +291,8 @@ try {
 }
 finally {
     $env:APPDATA = $previousAppData
+    $env:LOCALAPPDATA = $previousLocalAppData
+    $env:UV_CACHE_DIR = $previousUvCacheDir
     $env:PYTHONIOENCODING = $previousPythonIOEncoding
     [Console]::OutputEncoding = $previousOutputEncoding
     $finalTemp = [IO.Path]::GetFullPath($tempRoot)

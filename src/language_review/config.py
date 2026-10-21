@@ -74,10 +74,35 @@ CHECK_CATEGORIES = (
     "typography",
     "other",
 )
-LLM_PROVIDERS = ("llama_cpp", "ollama")
+LLM_PROVIDERS = ("llama_cpp", "ollama", "chatgpt")
+ANALYSIS_MODES = ("normal", "adaptive", "deep")
+ANALYSIS_BUDGET_DEFAULTS = {
+    "analysis.max_requests": 100,
+    "analysis.max_text_chars": 200_000,
+    "analysis.timeout_seconds": 1800.0,
+}
+ANALYSIS_STRATEGIES = ("grammar", "spelling", "punctuation", "technical", "meaning", "english")
+CHATGPT_EFFORTS = {
+    "gpt-6-luna": ("none", "low", "medium", "high", "xhigh", "max"),
+    "gpt-6.1-sol": ("low", "medium", "high", "xhigh", "max"),
+}
 LANGUAGETOOL_LEVELS = ("default", "picky")
 # Ключи `[check]` в точечной записи TOML; атрибут CheckSettings получается заменой точек на `_`.
 CHECK_KEYS = {
+    "analysis.mode",
+    "analysis.strategies",
+    "analysis.verify",
+    "analysis.max_passes",
+    "analysis.max_requests",
+    "analysis.max_text_chars",
+    "analysis.max_context_chars",
+    "analysis.timeout_seconds",
+    "analysis.concurrency",
+    "analysis.retries",
+    "llm.chatgpt.model",
+    "llm.chatgpt.effort",
+    "llm.chatgpt.allow_cloud",
+    "llm.chatgpt.allow_memory",
     "engines",
     "categories",
     "terms",
@@ -103,7 +128,15 @@ CHECK_KEYS = {
     "vale.config",
     "vale.timeout_seconds",
 }
-CHECK_TABLES = {"llm", "llm.llama_cpp", "llm.ollama", "languagetool", "vale"}
+CHECK_TABLES = {
+    "analysis",
+    "llm",
+    "llm.chatgpt",
+    "llm.llama_cpp",
+    "llm.ollama",
+    "languagetool",
+    "vale",
+}
 CHECK_ENDPOINT_KEYS = ("llm.llama_cpp.endpoint", "llm.ollama.endpoint", "languagetool.endpoint")
 PROFILE_CHECK_KEYS = {"engines", "categories", "terms"}
 PROFILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -137,6 +170,20 @@ class ExtractSettings:
 
 @dataclass(frozen=True)
 class CheckSettings:
+    analysis_mode: str = "normal"
+    analysis_strategies: tuple[str, ...] = ANALYSIS_STRATEGIES
+    analysis_verify: bool = False
+    analysis_max_passes: int = 8
+    analysis_max_requests: int | None = None
+    analysis_max_text_chars: int | None = None
+    analysis_max_context_chars: int = 4000
+    analysis_timeout_seconds: float | None = None
+    analysis_concurrency: int = 1
+    analysis_retries: int = 0
+    llm_chatgpt_model: str = "gpt-6-luna"
+    llm_chatgpt_effort: str = "medium"
+    llm_chatgpt_allow_cloud: bool = False
+    llm_chatgpt_allow_memory: bool = False
     engines: tuple[str, ...] = CHECK_ENGINES
     categories: tuple[str, ...] = ()
     terms: dict[str, str] = field(default_factory=dict)
@@ -163,7 +210,15 @@ class CheckSettings:
     vale_timeout_seconds: float = 60.0
 
     def value(self, key: str) -> Any:
-        return getattr(self, key.replace(".", "_"))
+        value = getattr(self, key.replace(".", "_"))
+        # Отсутствие настройки сохраняется при смене режима или провайдера через CLI.
+        if (
+            value is None
+            and key in ANALYSIS_BUDGET_DEFAULTS
+            and (self.analysis_mode != "normal" or self.llm_provider == "chatgpt")
+        ):
+            return ANALYSIS_BUDGET_DEFAULTS[key]
+        return value
 
 
 @dataclass(frozen=True)
@@ -290,8 +345,12 @@ class LoadedConfig:
         for key, value in (cli_overrides or {}).items():
             if value is None:
                 continue
+            value = validate_check_value(
+                key, list(value) if isinstance(value, tuple) else value, "check"
+            )
             settings = replace(settings, **{key.replace(".", "_"): value})
             sources[key] = "аргумент командной строки"
+        validate_check_settings(settings)
         return settings, sources
 
     def as_mapping(self, profile_name: str | None = None) -> dict[str, Any]:
@@ -660,9 +719,26 @@ def validate_check_value(key: str, value: Any, label: str, base: Path | None = N
                 raise ConfigurationError(f"{name} должен сопоставлять непустые строки.")
             terms[term.strip()] = replacement.strip()
         return terms
-    if key in {"allow_remote_endpoints", "llm.thinking"}:
+    if key in {
+        "allow_remote_endpoints",
+        "llm.thinking",
+        "analysis.verify",
+        "llm.chatgpt.allow_cloud",
+        "llm.chatgpt.allow_memory",
+    }:
         if not isinstance(value, bool):
             raise ConfigurationError(f"{name} должен быть логическим значением.")
+        return value
+    choices = {
+        "analysis.mode": ANALYSIS_MODES,
+        "llm.chatgpt.model": tuple(CHATGPT_EFFORTS),
+        "llm.chatgpt.effort": ("none", "low", "medium", "high", "xhigh", "max"),
+    }
+    if key == "analysis.strategies":
+        return _choice_list(value, name, ANALYSIS_STRATEGIES)
+    if key in choices:
+        if not isinstance(value, str) or value not in choices[key]:
+            raise ConfigurationError(f"{name}: допустимы {', '.join(choices[key])}.")
         return value
     if key == "llm.provider":
         if value not in LLM_PROVIDERS:
@@ -677,6 +753,12 @@ def validate_check_value(key: str, value: Any, label: str, base: Path | None = N
             raise ConfigurationError(f"{name} должен быть числом секунд от 0 до 3600.")
         return float(value)
     limits = {
+        "analysis.max_passes": (1, 8),
+        "analysis.max_requests": (1, 100_000),
+        "analysis.max_text_chars": (1, 100_000_000),
+        "analysis.max_context_chars": (0, 10_000),
+        "analysis.concurrency": (1, 16),
+        "analysis.retries": (0, 3),
         "llm.batch_chars": (200, 50_000),
         "llm.batch_items": (1, 64),
         "llm.max_output_tokens": (64, 32_768),
@@ -707,6 +789,13 @@ def validate_check_value(key: str, value: Any, label: str, base: Path | None = N
                 candidate = base / candidate
             return str(candidate.resolve())
     return value
+
+
+def validate_check_settings(settings: CheckSettings) -> None:
+    if settings.llm_provider == "chatgpt":
+        efforts = CHATGPT_EFFORTS.get(settings.llm_chatgpt_model, ())
+        if settings.llm_chatgpt_effort not in efforts:
+            raise ConfigurationError("Несовместимые ChatGPT model/effort; выберите их явно.")
 
 
 def _validate_check(

@@ -531,7 +531,18 @@ def score(
                 key: value["configuration"] for key, value in bound.items()
             },
             "engine_metadata": [
-                {key: engine[key] for key in ("name", "status", "details", "diagnostics")}
+                {
+                    key: engine[key]
+                    for key in (
+                        "name",
+                        "status",
+                        "details",
+                        "diagnostics",
+                        "statistics",
+                        "elapsed_ms",
+                        "tokens",
+                    )
+                }
                 for engine in analysis["engines"]
             ],
             "capture": run_manifest,

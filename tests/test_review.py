@@ -81,6 +81,22 @@ def test_reconcile_shared_edit_and_transitive_alternatives(tmp_path: Path) -> No
     assert reconcile(0, list(reversed(candidates))) == findings
 
 
+def test_llm_rule_key_tracks_prompt_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import language_review.check as module
+
+    prompt_version = "ru-technical-review/next"
+    monkeypatch.setattr(module, "PROMPT_VERSION", prompt_version)
+    [candidate] = _candidates(
+        tmp_path,
+        "кот",
+        [("llm", 0, 3, ("кит",), f"{prompt_version}:deep:grammar", "grammar")],
+    )
+
+    assert module._rule_key(candidate.raw) == f"{prompt_version}:grammar"
+
+
 @pytest.mark.parametrize("common", [False, True], ids=["triangle", "global_intersection"])
 def test_reconcile_requires_one_edit_shared_by_entire_group(tmp_path: Path, common: bool) -> None:
     replacements = [("рот", "мот"), ("мот", "бот"), ("рот", "бот")]

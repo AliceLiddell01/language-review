@@ -117,9 +117,25 @@ def _parser() -> argparse.ArgumentParser:
         "--llm-provider",
         choices=LLM_PROVIDERS,
         default=None,
-        help="транспорт LLM: llama_cpp (по умолчанию) или ollama",
+        help="транспорт LLM: llama_cpp (по умолчанию), ollama или chatgpt с согласием на облако",
     )
     add_memory_commands(commands, check)
+    from language_review.chatgpt_cli import add_commands as add_chatgpt_commands
+    from language_review.config import ANALYSIS_MODES, ANALYSIS_STRATEGIES, CHATGPT_EFFORTS
+
+    check.add_argument("--analysis-mode", choices=ANALYSIS_MODES)
+    check.add_argument("--strategy", action="append", choices=ANALYSIS_STRATEGIES)
+    check.add_argument("--verify-hypotheses", action="store_true", default=None)
+    check.add_argument("--allow-cloud", action="store_true", default=None)
+    check.add_argument("--allow-cloud-memory", action="store_true", default=None)
+    check.add_argument("--model", choices=tuple(CHATGPT_EFFORTS), help="модель ChatGPT")
+    check.add_argument(
+        "--reasoning-effort", choices=("none", "low", "medium", "high", "xhigh", "max")
+    )
+    check.add_argument("--max-requests", type=int)
+    check.add_argument("--max-text-chars", type=int)
+    check.add_argument("--max-passes", type=int)
+    add_chatgpt_commands(commands)
 
     show_review = commands.add_parser("show-review", help="показать сохранённое ревью без анализа")
     show_review.add_argument("report", type=Path)
@@ -285,6 +301,10 @@ def _run(arguments: argparse.Namespace) -> int:
             )
         )
         return 0 if verified["status"] == "current" else 4
+    if arguments.command == "chatgpt":
+        from language_review.chatgpt_cli import run as run_chatgpt
+
+        return run_chatgpt(arguments)
     config: LoadedConfig = load_config(arguments.config)
     if arguments.command in {"memory", "decide-review"}:
         from language_review.memory.cli import run as run_memory
@@ -352,6 +372,16 @@ def _run(arguments: argparse.Namespace) -> int:
                     tuple(dict.fromkeys(arguments.category)) if arguments.category else None
                 ),
                 "llm.provider": arguments.llm_provider,
+                "analysis.mode": arguments.analysis_mode,
+                "analysis.strategies": arguments.strategy,
+                "analysis.verify": arguments.verify_hypotheses,
+                "analysis.max_requests": arguments.max_requests,
+                "analysis.max_text_chars": arguments.max_text_chars,
+                "analysis.max_passes": arguments.max_passes,
+                "llm.chatgpt.allow_cloud": arguments.allow_cloud,
+                "llm.chatgpt.allow_memory": arguments.allow_cloud_memory,
+                "llm.chatgpt.model": arguments.model,
+                "llm.chatgpt.effort": arguments.reasoning_effort,
             },
             memory_options={
                 "enabled": arguments.memory,

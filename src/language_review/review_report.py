@@ -239,7 +239,7 @@ def review_document(result: CheckResult) -> dict[str, Any]:
     status = "partial" if diagnostics and result.status in {"clean", "findings"} else result.status
     return {
         "schema": SCHEMA,
-        "schema_version": "1.0",
+        "schema_version": analysis["schema_version"],
         "status": status,
         "diagnostics": diagnostics,
         "suggestions_applied": False,

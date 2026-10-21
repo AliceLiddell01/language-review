@@ -35,3 +35,4 @@
 - Сравнение допускает только одинаковые corpus/annotation/split/metric/scorer/protocol.
   Регрессионные ожидания относятся к сохранённой выдаче, а не к устойчивости живой LLM.
   Ограничения check 1.0 не компенсируются выдуманными scan/raw-output диагностиками.
+- Reader также принимает check/review 1.1. Manifest сохраняет details проходов, statistics, elapsed_ms и tokens движков; неполный обязательный проход виден через failed/skipped и не даёт evaluation_ready. Synthetic comparison не доказывает улучшения на реальном языке.

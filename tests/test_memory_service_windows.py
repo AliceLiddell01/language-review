@@ -222,6 +222,7 @@ def test_supervisor_requests_docker_recovery_only_for_own_unavailable_database(
         encoding="utf-8",
     )
     state_file = runtime / "logs" / "service-state.json"
+    calls = runtime / "docker-calls.txt"
     process = subprocess.Popen(
         [
             pwsh,
@@ -244,7 +245,11 @@ def test_supervisor_requests_docker_recovery_only_for_own_unavailable_database(
             except OSError, ValueError:
                 state = {}
             if state.get("status") not in {None, "starting"}:
-                break
+                # waiting публикуется перед запуском docker up. Не убиваем supervisor,
+                # пока не наблюдаем сам ожидаемый вызов; состояние не доказывает эффект.
+                recorded = calls.read_text("utf-8").split() if calls.exists() else []
+                if recorded == expected_calls or len(recorded) > len(expected_calls):
+                    break
             time.sleep(0.2)
     finally:
         process.kill()
@@ -252,7 +257,6 @@ def test_supervisor_requests_docker_recovery_only_for_own_unavailable_database(
     assert {key: state.get(key) for key in expected_state} == expected_state, stderr.decode(
         errors="replace"
     )
-    calls = runtime / "docker-calls.txt"
     recorded = calls.read_text("utf-8").split() if calls.exists() else []
     assert recorded == expected_calls
     assert "test-only" not in json.dumps(state)

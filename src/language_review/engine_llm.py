@@ -1,14 +1,18 @@
-"""Языковая проверка LLM: общий промпт, схема и валидация; транспорт — llama.cpp или Ollama."""
+"""Языковая проверка LLM: общий контракт и валидация поверх выбранного транспорта."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import re
+import threading
+import time
 from collections.abc import Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import PurePosixPath, PureWindowsPath
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from language_review.check_models import (
     CheckUnit,
@@ -27,7 +31,10 @@ from language_review.engine_http import (
     safe_endpoint,
 )
 
-PROMPT_VERSION = "ru-technical-review/3"
+if TYPE_CHECKING:
+    from language_review.analysis import Budget
+
+PROMPT_VERSION = "ru-technical-review/4"
 LLM_CATEGORIES = (
     "spelling",
     "grammar",
@@ -210,6 +217,14 @@ def _probe_timeout(settings: CheckSettings) -> float:
     return min(settings.llm_timeout_seconds, 10.0)
 
 
+def provider_timeout(provider: Provider, settings: CheckSettings) -> float:
+    deadline = getattr(provider, "deadline", None)
+    remaining = settings.llm_timeout_seconds if deadline is None else deadline - time.monotonic()
+    if remaining <= 0:
+        raise EngineHttpError("analysis_time_budget", "analysis_time_budget")
+    return min(settings.llm_timeout_seconds, remaining)
+
+
 def public_model_name(model: str | None) -> str | None:
     """Обозначение модели для отчёта: от локального пути к файлу остаётся только имя файла.
 
@@ -237,6 +252,7 @@ class LlamaCppProvider:
 
     def __init__(self, settings: CheckSettings) -> None:
         self.settings = settings
+        self.deadline: float | None = None
         self.endpoint = settings.llm_llama_cpp_endpoint
         self.model: str | None = settings.llm_llama_cpp_model or None
 
@@ -326,7 +342,7 @@ class LlamaCppProvider:
         reply = request_json(
             join_url(self.endpoint, "/v1/chat/completions"),
             payload=payload,
-            timeout=self.settings.llm_timeout_seconds,
+            timeout=provider_timeout(self, self.settings),
         )
         body = reply.body
         choices = body.get("choices") if isinstance(body, dict) else None
@@ -352,6 +368,7 @@ class OllamaProvider:
 
     def __init__(self, settings: CheckSettings) -> None:
         self.settings = settings
+        self.deadline: float | None = None
         self.endpoint = settings.llm_ollama_endpoint
         self.model: str | None = settings.llm_ollama_model
 
@@ -411,7 +428,7 @@ class OllamaProvider:
         reply = request_json(
             join_url(self.endpoint, "/api/chat"),
             payload=payload,
-            timeout=self.settings.llm_timeout_seconds,
+            timeout=provider_timeout(self, self.settings),
         )
         body = reply.body
         message = body.get("message") if isinstance(body, dict) else None
@@ -427,6 +444,10 @@ class OllamaProvider:
 
 
 def create_provider(settings: CheckSettings) -> Provider:
+    if settings.llm_provider == "chatgpt":
+        from language_review.engine_chatgpt import ChatGptProvider
+
+        return ChatGptProvider(settings)
     if settings.llm_provider == "ollama":
         return OllamaProvider(settings)
     return LlamaCppProvider(settings)
@@ -530,6 +551,10 @@ class LlmEngine:
     def __init__(self, settings: CheckSettings, provider: Provider | None = None) -> None:
         self.settings = settings
         self.provider = provider or create_provider(settings)
+        self.pass_name = "primary"
+        self.pass_instruction = ""
+        self.budget: Budget | None = None
+        self.metrics_lock = threading.Lock()
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -544,6 +569,21 @@ class LlmEngine:
             "batch_chars": self.settings.llm_batch_chars,
             "batch_items": self.settings.llm_batch_items,
             "max_output_tokens": self.settings.llm_max_output_tokens,
+            "analysis_policy": {
+                "version": "multistage/1",
+                "mode": self.settings.analysis_mode,
+                "strategies": list(self.settings.analysis_strategies),
+                "verify": self.settings.analysis_verify,
+                "max_passes": self.settings.analysis_max_passes,
+                "max_requests": self.settings.value("analysis.max_requests"),
+                "max_text_chars": self.settings.value("analysis.max_text_chars"),
+                "max_context_chars": self.settings.analysis_max_context_chars,
+                "timeout_seconds": self.settings.value("analysis.timeout_seconds"),
+                "concurrency": self.settings.analysis_concurrency,
+                "retries": self.settings.analysis_retries,
+                "allow_cloud": self.settings.llm_chatgpt_allow_cloud,
+                "allow_cloud_memory": self.settings.llm_chatgpt_allow_memory,
+            },
         }
 
     def probe(self) -> ProbeResult:
@@ -583,11 +623,28 @@ class LlmEngine:
             yield batch
 
     def run(self, units: Sequence[CheckUnit], run: EngineRun) -> Iterator[UnitOutcome]:
+        from language_review.analysis import analyze
+
+        yield from analyze(self, units, run)
+
+    def context_within_budget(self, unit: CheckUnit) -> bool:
+        """Одинаковый предел терминов и подобранной памяти для поиска и верификации."""
+        chars = sum(
+            len(json.dumps(value, ensure_ascii=False))
+            for value in (unit.terms, unit.memory_context)
+            if value
+        )
+        return chars <= self.settings.analysis_max_context_chars
+
+    def run_once(self, units: Sequence[CheckUnit], run: EngineRun) -> Iterator[UnitOutcome]:
         outcomes: dict[int, UnitOutcome] = {}
         pending: dict[int, int] = {}
         sendable: list[CheckUnit] = []
         limit = MAX_CHUNK_FACTOR * self.settings.llm_batch_chars
         for unit in units:
+            if not self.context_within_budget(unit):
+                yield UnitOutcome(unit.index, "skipped", "analysis_context_budget")
+                continue
             chunk_limit = self.settings.llm_batch_chars * (
                 MAX_CHUNK_FACTOR if unit.memory_context else 1
             )
@@ -603,21 +660,34 @@ class LlmEngine:
             else:
                 yield outcomes[unit.index]
         failures = 0
-        for batch in self._batches(sendable):
-            if failures >= CONSECUTIVE_FAILURE_LIMIT:
-                reason: str | None = "engine_aborted"
-            else:
-                reason = self._run_batch(batch, outcomes, run)
-                failures = (
-                    failures + 1 if reason is not None and not reason.startswith("llm_") else 0
-                )
-            for item in batch:
-                outcome = outcomes[item.unit.index]
-                if reason is not None:
-                    outcome.status, outcome.reason = "failed", reason
-                pending[item.unit.index] -= 1
-                if pending[item.unit.index] == 0:
-                    yield outcome
+        batches = iter(self._batches(sendable))
+        with ThreadPoolExecutor(max_workers=self.settings.analysis_concurrency) as pool:
+            while group := list(islice(batches, self.settings.analysis_concurrency)):
+                with self.metrics_lock:
+                    stopped = self.budget.stopped if self.budget else None
+                if stopped:
+                    reasons: list[str | None] = [stopped] * len(group)
+                elif failures >= CONSECUTIVE_FAILURE_LIMIT:
+                    reasons = ["engine_aborted"] * len(group)
+                elif self.settings.analysis_concurrency == 1:
+                    reasons = [self._run_batch(group[0], outcomes, run)]
+                else:
+                    reasons = list(
+                        pool.map(lambda batch: self._run_batch(batch, outcomes, run), group)
+                    )
+                for batch, reason in zip(group, reasons, strict=True):
+                    failures = (
+                        failures + 1
+                        if reason and not reason.startswith(("llm_", "analysis_"))
+                        else 0
+                    )
+                    for item in batch:
+                        outcome = outcomes[item.unit.index]
+                        if reason is not None:
+                            outcome.status, outcome.reason = "failed", reason
+                        pending[item.unit.index] -= 1
+                        if pending[item.unit.index] == 0:
+                            yield outcome
 
     def _run_batch(
         self, batch: list[LlmItem], outcomes: dict[int, UnitOutcome], run: EngineRun
@@ -626,7 +696,12 @@ class LlmEngine:
         user = json.dumps(
             {
                 "items": [
-                    {"id": item.id, "kind": item.unit.kind, "text": item.text}
+                    {
+                        "id": item.id,
+                        "kind": item.unit.kind,
+                        "text": item.text,
+                        "context": item.unit.context,
+                    }
                     | ({"language": "en"} if item.english else {})
                     | (
                         {"memory_context": item.unit.memory_context}
@@ -640,15 +715,23 @@ class LlmEngine:
         )
         max_findings = min(64, 4 * len(batch))
         schema = response_schema(max_findings)
-        run.requests += 1
         try:
-            reply = self.provider.complete(system_prompt(terms), user, schema)
+            reply = self.request(system_prompt(terms) + self.pass_instruction, user, schema, run)
         except EngineHttpError as exc:
-            run.request_failures += 1
             return exc.code
         except LlmResponseError as exc:
-            run.request_failures += 1
             return f"llm_{exc.code}"
+        with self.metrics_lock:
+            return self._accept_reply(batch, outcomes, run, reply, max_findings)
+
+    def _accept_reply(
+        self,
+        batch: list[LlmItem],
+        outcomes: dict[int, UnitOutcome],
+        run: EngineRun,
+        reply: ProviderReply,
+        max_findings: int,
+    ) -> str | None:
         run.add_tokens("prompt", reply.prompt_tokens)
         run.add_tokens("completion", reply.completion_tokens)
         if reply.truncated:
@@ -675,6 +758,80 @@ class LlmEngine:
             self._locate(item, finding, outcomes[item.unit.index])
         return None
 
+    def request(
+        self, system: str, user: str, schema: dict[str, Any], run: EngineRun
+    ) -> ProviderReply:
+        attempts = self.settings.analysis_retries + 1 if self.budget else 1
+        for attempt in range(attempts):
+            with self.metrics_lock:
+                if self.budget:
+                    self.budget.reserve(len(user) + len(system), run)
+                run.requests += 1
+                trace: dict[str, Any] = {
+                    "request": run.requests,
+                    "pass": self.pass_name,
+                    "attempt": attempt + 1,
+                    "status": "started",
+                    "input_chars": len(user) + len(system),
+                }
+                run.details.setdefault("request_log", []).append(trace)
+            started = time.perf_counter()
+            try:
+                reply = self.provider.complete(system, user, schema)
+                trace.update(
+                    status="transport_completed",
+                    prompt_tokens=reply.prompt_tokens,
+                    completion_tokens=reply.completion_tokens,
+                )
+                return reply
+            except (EngineHttpError, LlmResponseError) as exc:
+                with self.metrics_lock:
+                    run.request_failures += 1
+                code = exc.code
+                http_status = exc.http_status if isinstance(exc, EngineHttpError) else None
+                trace.update(status="failed", reason=code)
+                if hasattr(exc, "metadata"):
+                    trace["error"] = exc.metadata()
+                if self.budget and (
+                    http_status in {401, 403}
+                    or code
+                    in {
+                        "subscription_sharing_usage_limit_exceeded",
+                        "oauth_sign_in_required",
+                        "oauth_plan_permission_missing",
+                        "http_401",
+                        "http_403",
+                        "subscription_sharing_invalid_user",
+                    }
+                ):
+                    with self.metrics_lock:
+                        if self.budget.stopped is None:
+                            self.budget.stopped = code
+                temporary = (
+                    http_status == 429
+                    or (http_status is not None and 500 <= http_status < 600)
+                    or code
+                    in {
+                        "timeout",
+                        "connection_failed",
+                        "http_429",
+                        "rate_limit_exceeded",
+                        "http_502",
+                        "http_503",
+                        "http_504",
+                        "subscription_sharing_usage_unavailable",
+                        "subscription_sharing_user_unavailable",
+                    }
+                )
+                if not temporary or attempt + 1 == attempts:
+                    raise
+                if self.budget:
+                    self.budget.retries += 1
+                time.sleep(0.25 * 2**attempt)
+            finally:
+                trace["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 1)
+        raise LlmResponseError("retry_exhausted")
+
     def _locate(self, item: LlmItem, finding: dict[str, Any], outcome: UnitOutcome) -> None:
         excerpt: str = finding["excerpt"]
         first = item.text.find(excerpt)
@@ -691,7 +848,7 @@ class LlmEngine:
                     self.name,
                     item.unit.index,
                     reason,
-                    rule_id=f"{PROMPT_VERSION}:{finding['category']}",
+                    rule_id=f"{PROMPT_VERSION}:{self.pass_name}:{finding['category']}",
                     message=finding["explanation"],
                     excerpt=excerpt,
                     details=dict(finding),
@@ -708,7 +865,7 @@ class LlmEngine:
                 start=start,
                 end=start + len(excerpt),
                 category=finding["category"],
-                rule_id=f"{PROMPT_VERSION}:{finding['category']}",
+                rule_id=f"{PROMPT_VERSION}:{self.pass_name}:{finding['category']}",
                 rule_category=finding["category"],
                 message=finding["explanation"].strip(),
                 replacements=() if replacement is None else (replacement,),

@@ -99,7 +99,7 @@ def _parse_yaml(text: str) -> dict[str, Any]:
         for event in parser.parse(text):
             nodes += 1
             if getattr(event, "anchor", None) or getattr(event, "tag", None):
-                raise ConfigurationError(f"{FILENAME}: теги, anchors и aliases запрещены.")
+                raise ConfigurationError(f"{FILENAME}: теги, якоря и ссылки на них запрещены.")
             kind = type(event).__name__
             if kind in {"MappingStartEvent", "SequenceStartEvent"}:
                 depth += 1
@@ -151,7 +151,7 @@ def _relative(value: Any, label: str, *, pattern: bool = False) -> str:
     if pattern and not (value.endswith("/**") or not any(c in value for c in "*?[]")):
         raise ConfigurationError(f"{label}: допустим точный путь либо префикс каталога с /**.")
     if pattern and any(c in value.removesuffix("/**") for c in "*?[]"):
-        raise ConfigurationError(f"{label}: wildcard допустим только в конечном /**.")
+        raise ConfigurationError(f"{label}: шаблон подстановки допустим только в конечном /**.")
     return value
 
 
@@ -247,7 +247,7 @@ def _prompts(
         else:
             assert parsed is not None
             text = parsed
-            source = f"{label}.{key}: inline"
+            source = f"{label}.{key}: текст в конфигурации"
         values[key], sources[key] = text, source
     return values, sources
 
@@ -306,6 +306,16 @@ def matched_rule(
         return None
     _, pattern, profile = max(matches)
     return pattern, profile
+
+
+def _rules_overlap(first: str, second: str) -> bool:
+    """Пересечение точных путей и поддеревьев, включая сам каталог префикса."""
+    first_base, second_base = first.removesuffix("/**"), second.removesuffix("/**")
+    return (
+        first_base == second_base
+        or (first.endswith("/**") and second_base.startswith(first_base + "/"))
+        or (second.endswith("/**") and first_base.startswith(second_base + "/"))
+    )
 
 
 def path_profile(
@@ -412,8 +422,15 @@ def _load_project(environment: LoadedConfig, target: str | Path) -> LoadedConfig
         )
         sources[name].update(
             {
+                f"extract.selectors.{extension}": f"{FILENAME}:{label}.extract"
+                for extension in profiles[name].extract_overrides.get("selectors", {})
+            }
+        )
+        sources[name].update(
+            {
                 f"extract.{key}": f"{FILENAME}:{label}.extract"
                 for key in profiles[name].extract_overrides
+                if key != "selectors"
             }
         )
     rules_raw = raw.get("path_rules", [])
@@ -429,15 +446,8 @@ def _load_project(environment: LoadedConfig, target: str | Path) -> LoadedConfig
             raise ConfigurationError(
                 f"{label}: неверная ссылка profile или целочисленный priority."
             )
-        prefix = pattern.removesuffix("**")
         for other, _, rank in rules:
-            other_prefix = other.removesuffix("**")
-            overlaps = (
-                pattern == other
-                or (pattern.endswith("/**") and other_prefix.startswith(prefix))
-                or (other.endswith("/**") and prefix.startswith(other_prefix))
-            )
-            if pattern == other or (priority == rank and overlaps):
+            if priority == rank and _rules_overlap(pattern, other):
                 raise ConfigurationError(
                     f"{label}: конфликт правил {pattern} и {other}; задайте разные priority."
                 )
@@ -467,7 +477,8 @@ def _load_project(environment: LoadedConfig, target: str | Path) -> LoadedConfig
             key: FILENAME if key in scan_values else "по умолчанию"
             for key in asdict(ScanSettings())
         },
-        extract_sources={key: FILENAME for key in extract_values},
+        extract_sources={key: FILENAME for key in extract_values if key != "selectors"}
+        | {f"selectors.{extension}": FILENAME for extension in extract_values.get("selectors", {})},
         check=base,
         check_sources={
             key: environment.check_sources.get(key, "по умолчанию")
@@ -504,10 +515,13 @@ def project_mapping(
 
     assert config.project_root is not None
     path = Path(target).resolve(strict=True)
-    profile = path_profile(config, path, forced)
+    directory = path.is_dir()
+    profile = path_profile(config, path, forced, directory=directory)
     settings, sources = config.check_settings_for_profile(profile)
+    scan, scan_sources = config.settings_for_profile(profile)
+    extract, extract_sources = config.extract_settings_for_profile(profile)
     relative = path.relative_to(config.project_root).as_posix()
-    rule = matched_rule(config, relative) if forced is None else None
+    rule = matched_rule(config, relative, directory=directory) if forced is None else None
     return {
         "schema_version": 1,
         "project": config.project_root.name,
@@ -519,6 +533,29 @@ def project_mapping(
             {"path": pattern, "profile": name, "priority": rank}
             for pattern, name, rank in config.path_rules
         ],
+        "scan": {
+            key: {"value": value, "source": public_source(scan_sources.get(key, "по умолчанию"))}
+            for key, value in asdict(scan).items()
+        },
+        "extract": {
+            key: {
+                "value": value,
+                "source": public_source(extract_sources.get(key, "по умолчанию")),
+            }
+            for key, value in asdict(extract).items()
+            if key != "selectors"
+        }
+        | {
+            "selectors": {
+                extension: {
+                    "value": list(patterns),
+                    "source": public_source(
+                        extract_sources.get(f"selectors.{extension}", "по умолчанию")
+                    ),
+                }
+                for extension, patterns in sorted(extract.selector_map().items())
+            }
+        },
         "check": {
             key: {
                 "value": len(settings.terms)

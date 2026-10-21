@@ -166,7 +166,7 @@ def _parser() -> argparse.ArgumentParser:
     show.add_argument(
         "--environment",
         action="store_true",
-        help="показать пользовательскую среду и legacy TOML без проектной политики",
+        help="показать пользовательскую среду и прежнюю конфигурацию TOML без проектной политики",
     )
     validate = config_commands.add_parser(
         "validate", help="проверить проектную политику без движков"

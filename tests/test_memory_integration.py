@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -18,10 +19,12 @@ import pytest
 from conftest import JsonServer
 from support.check_helpers import _languagetool_config, languagetool_responder
 from support.project_inputs import check_fixture_paths as check_paths
+from test_analysis import Provider, finding
+from test_project_config import project
 
 from language_review.check_models import ProbeResult
 from language_review.config import CheckSettings, load_config
-from language_review.engine_llm import ProviderReply
+from language_review.engine_llm import LlmEngine, ProviderReply
 from language_review.errors import InputError
 from language_review.memory.cli import submit_decision
 from language_review.memory.pipeline import import_review
@@ -132,6 +135,135 @@ def test_replay_new_runs_and_concurrent_delivery_never_duplicate_findings_or_job
     assert sum(row["count"] for row in status["findings"]) == 2
     assert sum(row["count"] for row in status["jobs"]) == 2
     assert sum(row["count"] for row in status["runs"]) == 2
+
+
+def test_llm_finding_identity_ignores_run_diagnostics_and_neighbours(
+    stored: dict, tmp_path: Path
+) -> None:
+    root = project(
+        tmp_path / "llm",
+        """schema_version: 1
+default_profile: local
+profiles:
+  local:
+    engines: [llm]
+    analysis: {mode: deep, strategies: [technical]}
+""",
+    )
+    (root / ".git").mkdir()
+    (root / "z.md").write_text("Тут ошыбка.", encoding="utf-8")
+    provider = Provider(
+        lambda _system, payload: {
+            "findings": [
+                finding(item["id"]) for item in payload["items"] if "ошыбка" in item["text"]
+            ]
+        }
+    )
+    config = replace(load_config(), memory=stored["store"].settings)
+    store = stored["store"]
+
+    def run() -> Any:
+        return check_paths(
+            [str(root)],
+            config,
+            engine_factory=lambda _name, settings: LlmEngine(settings, provider),
+        )
+
+    first = run()
+    (root / "a.md").write_text("Верный соседний документ.", encoding="utf-8")
+    second = run()
+    reports = [review_document(value) for value in (first, second)]
+    assert all(len(report["items"]) == 1 for report in reports)
+    assert (
+        reports[0]["analysis"]["engines"][0]["details"]["analysis"]
+        != reports[1]["analysis"]["engines"][0]["details"]["analysis"]
+    )
+    assert len(reports[0]["analysis"]["engines"][0]["details"]["document_ids"]) == 1
+    assert len(reports[1]["analysis"]["engines"][0]["details"]["document_ids"]) == 2
+
+    def finding_ids(run_id: str) -> list[str]:
+        with store.connect() as db:
+            return [
+                row["finding_id"]
+                for row in db.execute(
+                    "SELECT finding_id FROM lr_occurrences WHERE run_id=%s", (run_id,)
+                ).fetchall()
+            ]
+
+    assert finding_ids(first.memory["run_id"]) == finding_ids(second.memory["run_id"])
+    report = deepcopy(reports[1])
+    details = report["analysis"]["engines"][0]["details"]
+    details["analysis"] = {"passes": [{"elapsed_ms": 9876, "units": [999]}], "requests": 99}
+    details["future_diagnostic"] = {"request_id": str(uuid4())}
+    details["available_models"] = ["unrelated-model"]
+    run_id = str(uuid4())
+    with store.connect() as db:
+        original_run = db.execute(
+            "SELECT * FROM lr_runs WHERE id=%s", (first.memory["run_id"],)
+        ).fetchone()
+    store.begin(run_id, original_run["bindings"], original_run["dataset"], "live")
+    diagnostics = deepcopy(original_run["diagnostics"])
+    assert store.ingest(run_id, report, diagnostics)["duplicate"] is False
+    assert store.ingest(run_id, report, diagnostics)["duplicate"] is True
+    assert finding_ids(first.memory["run_id"]) == finding_ids(run_id)
+    with store.connect() as db:
+        saved = db.execute("SELECT report FROM lr_runs WHERE id=%s", (run_id,)).fetchone()["report"]
+        count = db.execute(
+            "SELECT count(*) AS n FROM lr_findings WHERE project_id=%s",
+            (next(iter(original_run["bindings"].values())),),
+        ).fetchone()["n"]
+    assert (
+        saved["analysis"]["engines"][0]["details"]["future_diagnostic"]
+        == details["future_diagnostic"]
+    )
+    assert count == 1
+    policy_path = root / ".language-review.yaml"
+    policy_path.write_text(
+        policy_path.read_text(encoding="utf-8")
+        + "prompts:\n  primary: {text: 'Изменённая существенная инструкция.'}\n",
+        encoding="utf-8",
+    )
+    changed_policy = run()
+    assert finding_ids(changed_policy.memory["run_id"]) != finding_ids(first.memory["run_id"])
+
+
+@pytest.mark.parametrize("change", ["project", "source", "evidence", "policy", "engine"])
+def test_finding_identity_preserves_evidence_and_policy_boundaries(
+    stored: dict, change: str
+) -> None:
+    store = stored["store"]
+    report = deepcopy(stored["report"])
+    bindings = {"root-0001": str(uuid4()) if change == "project" else stored["project"]}
+    if change == "source":
+        for document in report["analysis"]["documents"]:
+            document["source_sha256"] = "0" * 64
+    elif change == "evidence":
+        for item in report["items"]:
+            item["evidence"][0]["rule_id"] += ":different-rule"
+    elif change == "engine":
+        report["analysis"]["engines"][0]["details"]["version"] = "different-version"
+    with store.connect() as db:
+        diagnostics = deepcopy(
+            db.execute("SELECT diagnostics FROM lr_runs WHERE id=%s", (stored["run"],)).fetchone()[
+                "diagnostics"
+            ]
+        )
+    if change == "policy":
+        diagnostics["policy_sha256"] = {
+            doc["id"]: "1" * 64 for doc in report["analysis"]["documents"]
+        }
+    run_id = str(uuid4())
+    store.begin(run_id, bindings, "operational", "live")
+    store.ingest(run_id, report, diagnostics)
+    with store.connect() as db:
+        first = db.execute(
+            "SELECT finding_id FROM lr_occurrences WHERE run_id=%s", (stored["run"],)
+        ).fetchall()
+        second = db.execute(
+            "SELECT finding_id FROM lr_occurrences WHERE run_id=%s", (run_id,)
+        ).fetchall()
+    assert len(first) == len(second) == 2
+    assert {row["finding_id"] for row in first}.isdisjoint(row["finding_id"] for row in second)
 
 
 def test_explicit_decisions_are_idempotent_revisioned_and_negative_cases_remain_searchable(

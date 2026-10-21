@@ -484,7 +484,29 @@ def _scan_file(
     profile_name: str | None,
     result: ScanResult,
     seen_files: set[str],
+    policy_file_ids: set[tuple[int, int]],
 ) -> None:
+    try:
+        metadata = path.stat()
+    except OSError as exc:
+        _append_error(
+            result, root_path, relative, f"Не удалось прочитать файл: {exc}", profile=profile_name
+        )
+        return
+    # Идентичность файла закрывает ссылки на файл, каталог и жёсткие псевдонимы.
+    # Проверка находится перед единственной точкой чтения исходного содержимого.
+    if (metadata.st_dev, metadata.st_ino) in policy_file_ids:
+        result.protected_paths.add(_path_key(path))
+        result.files.append(
+            FileRecord(
+                root=root_path,
+                path=relative,
+                status="skipped",
+                reason="project_configuration",
+                profile=profile_name,
+            )
+        )
+        return
     real_path = path.resolve(strict=False)
     key = _path_key(real_path)
     result.protected_paths.add(key)
@@ -577,6 +599,7 @@ def _scan_directory(
     result: ScanResult,
     seen_files: set[str],
     seen_directories: set[str],
+    policy_file_ids: set[tuple[int, int]],
 ) -> None:
     root_key = _path_key(scan_root)
     policy_files = {_path_key(path) for path in config.project_files}
@@ -770,7 +793,16 @@ def _scan_directory(
                         )
                     )
                     continue
-                _scan_file(path, root_path, relative, settings, profile_name, result, seen_files)
+                _scan_file(
+                    path,
+                    root_path,
+                    relative,
+                    settings,
+                    profile_name,
+                    result,
+                    seen_files,
+                    policy_file_ids,
+                )
             else:
                 result.files.append(
                     FileRecord(
@@ -796,6 +828,11 @@ def scan_paths(
     environment = config
     # Все политики валидируются до чтения исходников и до любого вызова движка.
     policies = {raw: load_project(environment, raw) for raw in paths if Path(raw).exists()}
+    policy_file_ids: set[tuple[int, int]] = set()
+    for policy in policies.values():
+        for path in policy.project_files:
+            metadata = path.stat()
+            policy_file_ids.add((metadata.st_dev, metadata.st_ino))
     seen_arguments: set[str] = set()
     seen_files: set[str] = set()
     seen_directories: set[str] = set()
@@ -951,6 +988,7 @@ def scan_paths(
                     result,
                     seen_files,
                     seen_directories,
+                    policy_file_ids,
                 )
         else:
             relative = resolved.name
@@ -1006,6 +1044,7 @@ def scan_paths(
                     profile_name,
                     result,
                     seen_files,
+                    policy_file_ids,
                 )
 
         root_records = result.files[start_record:]

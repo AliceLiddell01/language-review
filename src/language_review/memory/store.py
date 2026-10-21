@@ -19,6 +19,48 @@ from language_review.memory.settings import MemorySettings, project_uuid
 MIGRATION_FILES = ("migrations/001.sql", "migrations/002.sql")
 
 
+def _engine_identity(engine: dict[str, Any]) -> dict[str, Any]:
+    """Устойчивая проекция движка; диагностические поля сюда не наследуются."""
+    fields = {
+        "languagetool": ("version", "language", "level", "disabled_rules"),
+        "vale": ("version", "configuration", "style"),
+        "llm": (
+            "provider",
+            "model",
+            "prompt_version",
+            "prompt_template_sha256",
+            "effective_prompts",
+            "thinking",
+            "seed",
+            "max_output_tokens",
+            "reasoning_effort",
+            "server_version",
+            "server_build",
+            "quantization",
+        ),
+    }
+    details = engine["details"]
+    identity = {key: details[key] for key in fields.get(engine["name"], ()) if key in details}
+    if engine["name"] == "llm" and "analysis_policy" in details:
+        identity["analysis_policy"] = {
+            key: details["analysis_policy"][key]
+            for key in (
+                "version",
+                "mode",
+                "strategies",
+                "verify",
+                "max_passes",
+                "max_requests",
+                "max_text_chars",
+                "max_context_chars",
+                "timeout_seconds",
+                "retries",
+            )
+            if key in details["analysis_policy"]
+        }
+    return {"name": engine["name"], "details": identity}
+
+
 def _migration_scripts() -> list[tuple[int, str, str]]:
     package = files("language_review.memory")
     return [
@@ -220,16 +262,18 @@ class Store:
                     "policy_sha256": diagnostics.get("policy_sha256", {}).get(doc["id"]),
                     # Привязки подпрогона нужны в отчёте, но соседние документы/корни
                     # не должны менять идентичность того же свидетельства.
-                    "engines": [
-                        {
-                            key: value
-                            for key, value in engine["details"].items()
-                            if key not in {"root_id", "document_ids", "document_policy_sha256"}
-                        }
-                        for engine in canonical["analysis"]["engines"]
-                        if "document_ids" not in engine["details"]
-                        or doc["id"] in engine["details"]["document_ids"]
-                    ],
+                    "engines": sorted(
+                        [
+                            _engine_identity(engine)
+                            for engine in canonical["analysis"]["engines"]
+                            if engine["name"] in {e["engine"] for e in original["evidence"]}
+                            and (
+                                "document_ids" not in engine["details"]
+                                or doc["id"] in engine["details"]["document_ids"]
+                            )
+                        ],
+                        key=digest,
+                    ),
                     "dataset": run["dataset"],
                 }
                 finding = digest(identity)

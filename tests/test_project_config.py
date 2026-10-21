@@ -194,7 +194,7 @@ def test_missing_policy_never_uses_parent_or_global_profile(
         (TEMPLATE + "path_rules: [{path: '**/*.md', profile: everyday}]\n", "допустим"),
         (TEMPLATE + "project_id: bad\n", "UUID"),
         ("!!python/object/apply:os.system ['echo no']", "теги"),
-        (TEMPLATE + "extra: &alias [1, 2]\n", "anchors"),
+        (TEMPLATE + "extra: &alias [1, 2]\n", "якоря"),
         (TEMPLATE + "extra: " + "[" * 20 + "0" + "]" * 20, "сложности"),
     ],
 )

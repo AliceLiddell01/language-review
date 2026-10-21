@@ -83,7 +83,7 @@ try {
         if ($LASTEXITCODE -ne 2 -or (Get-FileHash -LiteralPath $policyPath).Hash -ne $policyHash) {
             throw "$kind перезаписал существующую политику."
         }
-        # Внешний промпт читается установленным пакетом, без исходного checkout.
+        # Внешний промпт читается установленным пакетом, без рабочей копии исходников.
         $promptPath = Join-Path $sample 'policy-prompt.md'
         Set-Content -LiteralPath $promptPath -Value 'Проверяй только доказуемые языковые ошибки.' -Encoding utf8NoBOM
         $policyText = [IO.File]::ReadAllText($policyPath)

@@ -597,6 +597,7 @@ def install(
         release = root / "releases" / identifier
         release.mkdir(parents=True)
         added = False
+        committed = False
         try:
             shutil.copytree(bundle, release / "bundle")
             (release / "tools").mkdir()
@@ -675,19 +676,22 @@ def install(
             writes[root / "installation.json"] = json_bytes(current)
             with launch_locked(root):
                 transaction(root, writes)
+                committed = True
+        except BaseException:
+            if not committed:
+                if added:
+                    change_path(root / "bin", add=False)
+                # Только созданный этой операцией каталог; пользовательские данные вне него.
+                if release.is_relative_to(root / "releases") and not release.is_symlink():
+                    shutil.rmtree(release)
+            raise
+        with contextlib.suppress(OSError, ReleaseError):
             prune_stale_releases(
                 root,
                 active=identifier,
                 previous=old.get("active"),
             )
-            return current
-        except BaseException:
-            if added:
-                change_path(root / "bin", add=False)
-            # Только созданный этой операцией каталог; пользовательские данные вне него.
-            if release.is_relative_to(root / "releases") and not release.is_symlink():
-                shutil.rmtree(release)
-            raise
+        return current
 
 
 def managed_root() -> Path:

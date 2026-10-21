@@ -807,6 +807,33 @@ def test_install_compiles_bytecode_before_recording_inventory(
     assert "--no-deps" in installs[1]
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-установки")
+@pytest.mark.parametrize("failure", [OSError, KeyboardInterrupt])
+def test_prune_failure_does_not_remove_committed_runtime(
+    bundle: Path, tmp_path: Path, monkeypatch: Any, failure: type[BaseException]
+) -> None:
+    root = tmp_path / "application"
+    fake_uv = tmp_path / "uv.exe"
+    fake_uv.write_bytes(b"synthetic")
+    monkeypatch.setattr(deploy, "execute", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(deploy, "probe", lambda *_args: None)
+    monkeypatch.setattr(deploy, "path_conflict", lambda *_args: None)
+
+    def fail(*_args: Any, **_kwargs: Any) -> list[str]:
+        raise failure("synthetic cleanup failure")
+
+    monkeypatch.setattr(deploy, "prune_stale_releases", fail)
+    if failure is OSError:
+        current = deploy.install(bundle, root, uv=str(fake_uv), add_path=False)
+    else:
+        with pytest.raises(KeyboardInterrupt, match="synthetic cleanup failure"):
+            deploy.install(bundle, root, uv=str(fake_uv), add_path=False)
+        current = deploy.state(root)
+
+    assert deploy.state(root)["active"] == current["active"]
+    assert (root / "releases" / current["active"]).is_dir()
+
+
 def release_module() -> Any:
     spec = importlib.util.spec_from_file_location("release_script", "scripts/release.py")
     assert spec and spec.loader

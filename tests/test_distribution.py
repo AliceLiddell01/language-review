@@ -6,10 +6,12 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tarfile
 import time
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -476,12 +478,92 @@ def test_idempotent_install_applies_new_path_request(
     assert deploy.state(root)["path_added"] is True
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-установки")
+def test_install_compiles_bytecode_before_recording_inventory(
+    bundle: Path, tmp_path: Path, monkeypatch: Any
+) -> None:
+    root = tmp_path / "application"
+    fake_uv = tmp_path / "uv.exe"
+    fake_uv.write_bytes(b"synthetic")
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        deploy,
+        "execute",
+        lambda args, **_kwargs: commands.append(args) or "",
+    )
+    monkeypatch.setattr(deploy, "probe", lambda *_args: None)
+    monkeypatch.setattr(deploy, "path_conflict", lambda *_args: None)
+
+    deploy.install(bundle, root, uv=str(fake_uv), home=tmp_path / "home", add_path=False)
+
+    installs = [args for args in commands if args[1:3] == ["pip", "install"]]
+    assert len(installs) == 2
+    assert all("--compile-bytecode" in args for args in installs)
+    assert "--require-hashes" in installs[0]
+    assert "--no-deps" in installs[1]
+
+
 def release_module() -> Any:
     spec = importlib.util.spec_from_file_location("release_script", "scripts/release.py")
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_verify_distribution_conditions_remain_active_under_optimization() -> None:
+    script = Path("scripts/verify-distribution.py").resolve()
+    code = "\n".join(
+        (
+            "import ast",
+            "import runpy",
+            "import sys",
+            "path = sys.argv[1]",
+            "tree = ast.parse(open(path, encoding='utf-8').read())",
+            "if any(isinstance(node, ast.Assert) for node in ast.walk(tree)):",
+            "    raise SystemExit('assert statement remains')",
+            "runpy.run_path(path, run_name='verify_distribution_test')"
+            "['require'](False, 'synthetic optimization check')",
+        )
+    )
+    env = {**os.environ, "PYTHONPATH": str(Path("src").resolve())}
+    result = subprocess.run(
+        [sys.executable, "-O", "-c", code, str(script)],
+        capture_output=True,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        timeout=10,
+    )
+
+    assert result.returncode != 0
+    assert "FAIL: synthetic optimization check" in result.stderr
+    assert "assert statement remains" not in result.stderr
+
+
+def test_bootstrap_checks_release_channel_consistency() -> None:
+    script = Path("scripts/install.ps1").read_text(encoding="utf-8")
+
+    assert "[bool]$release.prerelease -ne ($manifest.channel -eq 'prerelease')" in script
+
+
+def test_release_command_error_includes_bounded_stderr(monkeypatch: Any) -> None:
+    module = release_module()
+    stderr = "EARLY_DIAGNOSTIC " + ("x" * 2500) + " FINAL_DIAGNOSTIC"
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout="", stderr=stderr),
+    )
+
+    with pytest.raises(ReleaseError) as failure:
+        module.run("gh", "release", "create")
+
+    message = str(failure.value)
+    assert "Не выполнена команда: gh release create" in message
+    assert "FINAL_DIAGNOSTIC" in message
+    assert "EARLY_DIAGNOSTIC" not in message
 
 
 def test_publication_requires_external_authorization(bundle: Path, monkeypatch: Any) -> None:
@@ -729,6 +811,40 @@ def test_default_application_root_preserves_existing_oauth_directory(
     with deploy.locked(root):
         assert deploy.status(root) == {"status": "not_installed"}
     assert oauth.read_bytes() == b"existing encrypted user data"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Контракт PowerShell Windows")
+def test_memory_installer_resolves_relative_release_from_powershell_location(
+    tmp_path: Path,
+) -> None:
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 не найден.")
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "release.json").write_text('{"schema":"invalid"}', encoding="utf-8")
+
+    def quote_ps(value: str | Path) -> str:
+        return "'" + str(value).replace("'", "''") + "'"
+
+    runner = tmp_path / "invoke-installer.ps1"
+    runner.write_text(
+        f"Set-Location -LiteralPath {quote_ps(tmp_path)}\n"
+        f"& {quote_ps(Path('scripts/install-memory-service.ps1').resolve())} "
+        f"-ReleaseDirectory 'candidate' -RuntimeDirectory {quote_ps(tmp_path / 'runtime')} "
+        "-Project 'lr-relative-path-test'\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-File", str(runner)],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode != 0
+    assert "Некорректный релизный комплект memory-worker." in result.stdout + result.stderr
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Пользовательский реестр Windows")

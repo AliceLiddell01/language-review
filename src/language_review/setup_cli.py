@@ -56,9 +56,6 @@ def add_commands(commands: Any) -> None:
     operations.add_parser(
         "uninstall", help="удалить launcher/skills; оставить данные и runtime до внешней очистки"
     )
-    operations.add_parser(
-        "cleanup", help="удалить неизменённые файлы после uninstall из внешнего процесса"
-    )
 
 
 def configure_endpoints(values: dict[str, str]) -> None:
@@ -142,6 +139,27 @@ def setup(arguments: argparse.Namespace) -> int:
             "Память: setup --memory-service с явно выбранными моделями. "
             "Docker/модели автоматически не устанавливаются."
         )
+        if current["extras"] in {"chatgpt", "all"} and not arguments.chatgpt_login:
+            arguments.chatgpt_login = input(
+                "Начать ChatGPT OAuth без выдачи cloud consent? [д/Н] "
+            ).strip().casefold() in {"д", "да", "y", "yes"}
+        if current["extras"] in {"memory", "all"} and not arguments.memory_service:
+            arguments.memory_service = input(
+                "Настроить memory-worker с уже установленными Docker/Ollama/моделями? [д/Н] "
+            ).strip().casefold() in {"д", "да", "y", "yes"}
+        if arguments.memory_service:
+            for name, prompt in (
+                ("memory_llm_model", "Имя установленной локальной LLM: "),
+                ("memory_embedding_model", "Имя embedding-модели: "),
+                ("memory_embedding_revision", "Точный SHA-256 embedding-модели: "),
+            ):
+                if getattr(arguments, name) is None:
+                    setattr(arguments, name, input(prompt).strip())
+            if arguments.memory_embedding_dimensions is None:
+                try:
+                    arguments.memory_embedding_dimensions = int(input("Размерность embedding: "))
+                except ValueError as exc:
+                    raise ReleaseError("Размерность должна быть целым числом.") from exc
     selected = set(current["skills"])
     for agent in ("codex", "claude"):
         value = getattr(arguments, agent)
@@ -259,8 +277,6 @@ def run(arguments: argparse.Namespace) -> int:
                 "data": "OAuth, TOML, memory runtime/БД и backups сохранены; результаты очистки: "
                 + str(root),
             }
-        elif operation == "cleanup":
-            result = {"preserved": deployment.cleanup(root)}
         else:
             current = deployment.state(root)
             with tempfile.TemporaryDirectory(prefix="language-review-update-") as directory:

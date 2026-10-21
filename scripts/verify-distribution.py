@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import functools
 import http.server
 import json
@@ -13,6 +14,7 @@ import subprocess
 import tempfile
 import threading
 import urllib.request
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -43,12 +45,40 @@ def snapshot(root: Path) -> dict[str, str]:
     return {str(p.relative_to(root)): digest(p) for p in root.rglob("*") if p.is_file()}
 
 
+@contextlib.contextmanager
+def personal_skill_probe(home: Path) -> Iterator[Path]:
+    # dirs::home_dir в Codex Windows использует Known Folder, а не тестовый USERPROFILE.
+    # Проверяем настоящий USER scope, временно размещая только свой отсутствующий skill.
+    # Ни существующий skill, ни пользовательский CODEX_HOME не перезаписываются.
+    expected = Path.home() / ".agents/skills/language-review/SKILL.md"
+    if expected.exists():
+        raise RuntimeError(
+            "Live Codex acceptance требует свободное имя личного skill language-review."
+        )
+    created_directory = not expected.parent.exists()
+    expected.parent.mkdir(parents=True, exist_ok=True)
+    content = (home / ".agents/skills/language-review/SKILL.md").read_bytes()
+    with expected.open("xb") as stream:
+        stream.write(content)
+    try:
+        yield expected
+    finally:
+        if expected.read_bytes() != content:
+            raise RuntimeError("Тестовый личный skill изменён извне; файл сохранён.")
+        expected.unlink()
+        if created_directory:
+            expected.parent.rmdir()
+
+
 def codex_discovery(executable: Path, home: Path, cwd: Path, env: dict[str, str]) -> None:
     """Только skills/list app-server: ни thread/start, ни turn/start, ни вызова модели."""
     isolated = {**env, "CODEX_HOME": str(home / ".codex")}
     (home / ".codex").mkdir(exist_ok=True)
     messages: queue.Queue[dict[str, Any]] = queue.Queue()
-    with (home / "codex-server.stderr").open("w", encoding="utf-8") as errors:
+    with (
+        personal_skill_probe(home) as expected,
+        (home / "codex-server.stderr").open("w", encoding="utf-8") as errors,
+    ):
         process = subprocess.Popen(
             [str(executable), "app-server", "--stdio"],
             cwd=cwd,
@@ -98,12 +128,22 @@ def codex_discovery(executable: Path, home: Path, cwd: Path, env: dict[str, str]
             process.stdin.flush()
             result = request(2, "skills/list", {"cwds": [str(cwd)], "forceReload": True})
             skills = [skill for entry in result["data"] for skill in entry["skills"]]
-            expected = home / ".agents/skills/language-review/SKILL.md"
             assert any(
                 skill["name"] == "language-review"
                 and Path(skill["path"]).resolve() == expected.resolve()
                 for skill in skills
-            ), "Codex не обнаружил глобальный skill из постороннего репозитория."
+            ), "Codex skills/list: " + json.dumps(
+                {
+                    "expected": str(expected),
+                    "matches": [s for s in skills if s["name"] == "language-review"],
+                    "errors": [entry.get("errors", []) for entry in result["data"]],
+                    "discovered": [
+                        {"name": s["name"], "path": s["path"], "scope": s.get("scope")}
+                        for s in skills
+                    ],
+                },
+                ensure_ascii=False,
+            )
         finally:
             process.stdin.close()
             try:
@@ -114,7 +154,9 @@ def codex_discovery(executable: Path, home: Path, cwd: Path, env: dict[str, str]
             reader.join(timeout=5)
 
 
-def verify(candidate: Path, codex_executable: Path | None = None) -> dict[str, Any]:
+def verify(
+    candidate: Path, codex_executable: Path | None = None, upgrade_candidate: Path | None = None
+) -> dict[str, Any]:
     if os.name != "nt":
         raise RuntimeError("Приёмка требует Windows/PowerShell 7.")
     manifest = validate_bundle(candidate)
@@ -171,10 +213,12 @@ def verify(candidate: Path, codex_executable: Path | None = None) -> dict[str, A
         env.pop("VIRTUAL_ENV", None)
         # uv run добавляет dev venv в PATH; чистая приёмка исключает этот checkout.
         checkout_scripts = (Path.cwd() / ".venv/Scripts").resolve()
+        existing_uv = shutil.which("uv")
+        uv_scripts = Path(existing_uv).resolve().parent if existing_uv else None
         env["PATH"] = os.pathsep.join(
             part
             for part in env["PATH"].split(os.pathsep)
-            if part and Path(part).resolve() != checkout_scripts
+            if part and Path(part).resolve() not in {checkout_scripts, uv_scripts}
         )
         inputs = root / "foreign"
         for name in ("repo-a", "repo-b"):
@@ -196,10 +240,9 @@ def verify(candidate: Path, codex_executable: Path | None = None) -> dict[str, A
             "-Root",
             str(install_root),
             "-Extras",
-            "all",
+            "core",
             "-NonInteractive",
             "-Codex",
-            "-Claude",
             "-NoPath",
         ]
         command(bootstrap, env, inputs / "repo-a")
@@ -214,12 +257,68 @@ def verify(candidate: Path, codex_executable: Path | None = None) -> dict[str, A
             command([*cli, "doctor", "--format", "json"], env, inputs / "repo-b", {0, 3})
         )
         assert report["package"]["version"] == manifest["package_version"]
+        assert not (home / ".claude/skills/language-review").exists()
+        checks["claude_not_selected_absent"] = "PASS"
         command(
             [*cli, "config", "show", "--environment", "--format", "json"], env, inputs / "repo-b"
         )
-        command([*cli, "setup", "--non-interactive", "--codex", "--claude"], env, inputs / "repo-b")
+        command([*cli, "setup", "--non-interactive", "--codex"], env, inputs / "repo-b")
         assert snapshot(inputs) == before
         checks["core_foreign_cwd_readonly"] = "PASS"
+        # Extras включаются явно отдельным проверяемым upgrade той же поставки.
+        bootstrap[bootstrap.index("core")] = "all"
+        bootstrap.append("-Claude")
+        command(bootstrap, env, inputs / "repo-b")
+        updated = json.loads((install_root / "installation.json").read_text("utf-8"))
+        assert updated["active"] != current["active"] and updated["previous"] == current["active"]
+        current = updated
+        python = install_root / "releases" / current["active"] / "venv/Scripts/python.exe"
+        cli = [str(python), "-I", "-m", "language_review"]
+        checks["controlled_extras_upgrade"] = "PASS"
+        # Sdist того же релизного SHA устанавливается отдельно и сверяет тот же CLI.
+        uv = current["uv"]
+        sdist_env = root / "sdist-env"
+        command([uv, "venv", "--no-config", "--python", "3.15", str(sdist_env)], env, root)
+        sdist_python = str(sdist_env / "Scripts/python.exe")
+        command(
+            [
+                uv,
+                "pip",
+                "install",
+                "--no-config",
+                "--python",
+                sdist_python,
+                "--no-index",
+                "--find-links",
+                str(install_root / "releases" / current["active"] / "wheelhouse"),
+                "--require-hashes",
+                "-r",
+                str(received / "requirements-core.txt"),
+            ],
+            env,
+            root,
+        )
+        command(
+            [
+                uv,
+                "pip",
+                "install",
+                "--no-config",
+                "--python",
+                sdist_python,
+                "--no-deps",
+                str(next(received.glob("*.tar.gz"))),
+            ],
+            env,
+            root,
+        )
+        assert (
+            command(
+                [sdist_python, "-I", "-m", "language_review", "--version"], env, inputs / "repo-b"
+            )
+            == "language-review " + manifest["package_version"]
+        )
+        checks["release_sdist_independent_install"] = "PASS"
         # Проверяем реальную пользовательскую регистрацию PATH и новый pwsh; затем
         # удаляем только добавленную приёмкой запись, не восстанавливаем чужой PATH целиком.
         from language_review.distribution import change_path
@@ -255,7 +354,12 @@ def verify(candidate: Path, codex_executable: Path | None = None) -> dict[str, A
         )
         checks["idempotent_install_setup"] = "PASS"
         if codex_executable:
-            codex_discovery(codex_executable, home, inputs / "repo-b", env)
+            codex_discovery(
+                codex_executable,
+                home,
+                inputs / "repo-b",
+                {**env, "PATH": str(install_root / "bin") + os.pathsep + env["PATH"]},
+            )
             checks["codex_live_discovery"] = "PASS (app-server skills/list, модель не запускалась)"
         for agent, directory in (("codex", ".agents"), ("claude", ".claude")):
             skill = home / directory / "skills/language-review/SKILL.md"
@@ -304,6 +408,115 @@ def verify(candidate: Path, codex_executable: Path | None = None) -> dict[str, A
         review = json.loads((root / "review.json").read_text("utf-8"))
         assert review["schema"] == "language-review.review"
         checks["explicit_init_check"] = "PASS (статус движков: " + review["status"] + ")"
+        if shutil.which("vale", path=env["PATH"]):
+            policy.write_text(
+                "schema_version: 1\ndefault_profile: docs\n"
+                "profiles:\n  docs:\n    engines: [vale]\n",
+                encoding="utf-8",
+            )
+            source = inputs / "repo-a/notes.md"
+            original = source.read_bytes()
+            source.write_text("Слово слово повторяется.\n", encoding="utf-8")
+            command(
+                [
+                    *cli,
+                    "check",
+                    str(source),
+                    "--view",
+                    "review",
+                    "--format",
+                    "json",
+                    "--output",
+                    str(root / "positive.json"),
+                ],
+                env,
+                root,
+                {1},
+            )
+            positive = json.loads((root / "positive.json").read_text("utf-8"))
+            assert positive["status"] == "findings" and positive["items"]
+            command(
+                [
+                    *cli,
+                    "verify-review",
+                    str(root / "positive.json"),
+                    "--root",
+                    "root-0001=" + str(inputs / "repo-a"),
+                    "--format",
+                    "json",
+                ],
+                env,
+                root,
+            )
+            source.write_bytes(original)
+            command(
+                [
+                    *cli,
+                    "verify-review",
+                    str(root / "positive.json"),
+                    "--root",
+                    "root-0001=" + str(inputs / "repo-a"),
+                    "--format",
+                    "json",
+                ],
+                env,
+                root,
+                {4},
+            )
+            clean = json.loads(
+                command(
+                    [*cli, "check", str(source), "--view", "review", "--format", "json"], env, root
+                )
+            )
+            assert clean["status"] == "clean"
+            checks["real_vale_findings_clean_stale_hash"] = "PASS"
+        if upgrade_candidate:
+            upgrade = validate_bundle(upgrade_candidate)
+            damaged = root / "failing-candidate"
+            shutil.copytree(upgrade_candidate, damaged)
+            wheel_path = next(damaged.glob("*.whl"))
+            import zipfile
+
+            with zipfile.ZipFile(wheel_path) as archive:
+                entries = {entry.filename: archive.read(entry) for entry in archive.infolist()}
+            entries["language_review/__main__.py"] = (
+                b'raise RuntimeError("synthetic candidate failure")\n'
+            )
+            with zipfile.ZipFile(wheel_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for name, content in entries.items():
+                    archive.writestr(name, content)
+            damaged_manifest = json.loads((damaged / "release.json").read_text("utf-8"))
+            damaged_manifest["assets"][wheel_path.name] = {
+                "size": wheel_path.stat().st_size,
+                "sha256": digest(wheel_path),
+            }
+            (damaged / "release.json").write_text(json.dumps(damaged_manifest), encoding="utf-8")
+            failure = bootstrap.copy()
+            failure[failure.index(str(received))] = str(damaged)
+            failure[failure.index(digest(candidate / "release.json"))] = digest(
+                damaged / "release.json"
+            )
+            state_before = (install_root / "installation.json").read_bytes()
+            command(failure, env, root, {1})
+            assert (install_root / "installation.json").read_bytes() == state_before
+            checks["real_failing_candidate_preserves_previous"] = "PASS"
+            success = bootstrap.copy()
+            success[success.index(str(received))] = str(upgrade_candidate)
+            success[success.index(digest(candidate / "release.json"))] = digest(
+                upgrade_candidate / "release.json"
+            )
+            command(success, env, root)
+            assert (
+                json.loads((install_root / "installation.json").read_text("utf-8"))["version"]
+                == upgrade["version"]
+            )
+            command([*cli, "installation", "rollback"], env, root)
+            current = json.loads((install_root / "installation.json").read_text("utf-8"))
+            assert current["version"] == manifest["version"]
+            python = install_root / "releases" / current["active"] / "venv/Scripts/python.exe"
+            cli = [str(python), "-I", "-m", "language_review"]
+            assert command([*cli, "--version"], env, root).endswith(manifest["package_version"])
+            checks["controlled_version_upgrade_rollback"] = "PASS"
         altered = root / "altered"
         shutil.copytree(received, altered)
         with next(altered.glob("*.whl")).open("ab") as stream:
@@ -349,7 +562,7 @@ def verify(candidate: Path, codex_executable: Path | None = None) -> dict[str, A
         "checks": checks,
         "not_run": [
             "публичный GitHub Release/tag",
-            "обнаружение skill живыми Codex/Claude",
+            "вызов skill моделью Claude; выполнение агентских turn не запускалось",
             "memory-worker/DB readiness и migration rollback",
             "OAuth в пользовательском аккаунте",
         ],
@@ -361,8 +574,9 @@ def main() -> None:
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--codex-executable", type=Path)
+    parser.add_argument("--upgrade-candidate", type=Path)
     args = parser.parse_args()
-    result = verify(args.candidate.absolute(), args.codex_executable)
+    result = verify(args.candidate.absolute(), args.codex_executable, args.upgrade_candidate)
     args.output.write_text(
         json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )

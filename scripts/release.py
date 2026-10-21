@@ -106,6 +106,12 @@ def prepare(args: argparse.Namespace) -> None:
         tree.mkdir()
         with tarfile.open(archive) as stream:
             stream.extractall(tree, filter="data")
+        locked_inputs = {
+            name: (tree / name).read_bytes()
+            for name in ("pyproject.toml", "uv.lock", ".python-version")
+        }
+        run("uv", "sync", "--locked", "--no-install-project", cwd=tree)
+        builder_python = tree / ".venv/Scripts/python.exe"
         manifest = tomllib.loads((tree / "pyproject.toml").read_text("utf-8"))
         pep = package_version(args.version)
         identity = {
@@ -130,9 +136,7 @@ def prepare(args: argparse.Namespace) -> None:
         export_tree = root / "export"
         export_tree.mkdir()
         for name in ("pyproject.toml", "uv.lock", ".python-version"):
-            (export_tree / name).write_text(
-                run("git", "show", args.commit + ":" + name, cwd=source) + "\n", encoding="utf-8"
-            )
+            (export_tree / name).write_bytes(locked_inputs[name])
         output = root / "candidate"
         output.mkdir()
         for name, extras in {
@@ -159,7 +163,7 @@ def prepare(args: argparse.Namespace) -> None:
         wheelhouse = root / "wheelhouse"
         wheelhouse.mkdir()
         run(
-            sys.executable,
+            str(builder_python),
             "-m",
             "pip",
             "wheel",
@@ -195,6 +199,20 @@ def prepare(args: argparse.Namespace) -> None:
         # uv создаёт служебный .gitignore в out-dir; это не release asset.
         (output / ".gitignore").unlink(missing_ok=True)
         shutil.copyfile(tree / "scripts/install.ps1", output / "install.ps1")
+        (output / "INSTALL.md").write_text(
+            "# Language Review " + args.version + "\n\n"
+            "Windows x64, PowerShell 7. Не требуется checkout или системный Python.\n"
+            "Запустите проверенный install.ps1 -Tag " + identity["tag"] + ".\n"
+            "После установки: language-review setup; language-review doctor.\n"
+            "Проект настраивается отдельно явным language-review init.\n"
+            "Доверие: официальный GitHub API/TLS; SHA-256 — integrity, не независимая подпись.\n"
+            "Подробности: https://github.com/"
+            + REPOSITORY
+            + "/blob/"
+            + args.commit
+            + "/docs/installation.md\n",
+            encoding="utf-8",
+        )
         for name in RUNTIME_ASSETS:
             shutil.copyfile(
                 tree / (name if name == "compose.memory.yml" else "scripts/" + name), output / name
@@ -264,12 +282,32 @@ def publish(args: argparse.Namespace) -> None:
         data["commit"],
         data["previous_stable"],
     )
+    # Создание ref атомарно отказывает при гонке с уже существующим тегом.
+    tag_ref = json.loads(
+        run(
+            "gh",
+            "api",
+            "repos/" + REPOSITORY + "/git/refs",
+            "--method",
+            "POST",
+            "-f",
+            "ref=refs/tags/" + data["tag"],
+            "-f",
+            "sha=" + data["commit"],
+        )
+    )
+    if (
+        tag_ref.get("ref") != "refs/tags/" + data["tag"]
+        or tag_ref.get("object", {}).get("sha") != data["commit"]
+    ):
+        raise ReleaseError("Созданный ref не соответствует разрешённому target.")
     # Сначала draft с полным комплектом; immutable publication происходит последней.
     run(
         "gh",
         "release",
         "create",
         data["tag"],
+        "--verify-tag",
         "--repo",
         REPOSITORY,
         "--target",

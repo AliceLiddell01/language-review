@@ -12,7 +12,9 @@ from typing import Any
 
 from language_review.release_contract import (
     REPOSITORY,
+    SHA,
     ReleaseError,
+    read_json,
     validate_manifest,
     version_key,
 )
@@ -90,6 +92,8 @@ def api(path: str) -> Any:
 
 def published(tag: str | None = None, *, prerelease: bool = False) -> dict[str, Any]:
     if tag:
+        if not tag.startswith("v"):
+            raise ReleaseError("Укажите полный tag вида vX.Y.Z.")
         version_key(tag.removeprefix("v"))
         release = api("releases/tags/" + tag)
     elif prerelease:
@@ -109,6 +113,20 @@ def published(tag: str | None = None, *, prerelease: bool = False) -> dict[str, 
     return dict(release)
 
 
+def tag_commit(tag: str) -> str:
+    version_key(tag.removeprefix("v"))
+    obj = api("git/ref/tags/" + tag)["object"]
+    for _ in range(6):
+        if not SHA.fullmatch(str(obj.get("sha", ""))):
+            raise ReleaseError("Некорректный объект тега GitHub.")
+        if obj.get("type") == "commit":
+            return str(obj["sha"])
+        if obj.get("type") != "tag":
+            break
+        obj = api("git/tags/" + obj["sha"])["object"]
+    raise ReleaseError("Тег не разрешается в точный commit.")
+
+
 def fetch_bundle(
     directory: Path, tag: str | None = None, *, prerelease: bool = False
 ) -> dict[str, Any]:
@@ -126,9 +144,9 @@ def fetch_bundle(
     download(
         item["browser_download_url"], directory / "release.json", checksum[7:], limit=1_000_000
     )
-    data = json.loads((directory / "release.json").read_text("utf-8"))
+    data = read_json(directory / "release.json")
     validate_manifest(data)
-    commit = api("commits/" + data["tag"])["sha"]
+    commit = tag_commit(data["tag"])
     if (
         data["tag"] != release["tag_name"]
         or data["commit"] != commit

@@ -68,6 +68,21 @@ $temporary = Join-Path ([IO.Path]::GetTempPath()) ('language-review-bootstrap-' 
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
     $uv = Get-Command uv -CommandType Application -ErrorAction SilentlyContinue
+    if (-not $uv -and (Test-Path -LiteralPath (Join-Path $Root 'installation.json'))) {
+        $installed = Get-Content -Raw -LiteralPath (Join-Path $Root 'installation.json') | ConvertFrom-Json
+        if ($installed.owner -eq 'language-review.installer/1' -and $installed.active -match '^[a-f0-9]{32}$') {
+            $runtime = Join-Path $Root ('releases/' + $installed.active)
+            $privateUv = Join-Path $runtime 'tools/uv.exe'
+            $indexPath = Join-Path $runtime 'owned-files.json'
+            if ((Test-Path -LiteralPath $privateUv) -and (Test-Path -LiteralPath $indexPath)) {
+                $index = Get-Content -Raw -LiteralPath $indexPath | ConvertFrom-Json
+                if ($index.owner -eq 'language-review.installer/1' -and
+                    (Get-FileHash -LiteralPath $privateUv).Hash.ToLowerInvariant() -eq $index.files.'tools\uv.exe') {
+                    $uv = [pscustomobject]@{Source = $privateUv}
+                }
+            }
+        }
+    }
     if ($uv) {
         $uvPath = $uv.Source
         $uvVersion = (& $uvPath --version).Split(' ')[1]
@@ -114,8 +129,15 @@ try {
         $manifest = Get-Content -Raw -LiteralPath (Join-Path $bundle 'release.json') | ConvertFrom-Json
         if ($manifest.repository -ne $repository -or $manifest.tag -ne $release.tag_name -or $manifest.commit -notmatch '^[a-f0-9]{40}$') { throw 'Manifest не соответствует GitHub release.' }
         $commitPath = Join-Path $temporary 'commit.json'
-        Get-VerifiedDownload "https://api.github.com/repos/$repository/commits/$($manifest.tag)" $commitPath '' 8000000
-        if ((Get-Content -Raw -LiteralPath $commitPath | ConvertFrom-Json).sha -ne $manifest.commit) { throw 'SHA тега не совпадает с manifest.' }
+        Get-VerifiedDownload "https://api.github.com/repos/$repository/git/ref/tags/$($manifest.tag)" $commitPath '' 1000000
+        $tagObject = (Get-Content -Raw -LiteralPath $commitPath | ConvertFrom-Json).object
+        for ($depth = 0; $depth -lt 6 -and $tagObject.type -eq 'tag'; $depth++) {
+            if ($tagObject.sha -notmatch '^[a-f0-9]{40}$') { throw 'Некорректный annotated tag.' }
+            $annotated = Join-Path $temporary ('tag-' + $depth + '.json')
+            Get-VerifiedDownload "https://api.github.com/repos/$repository/git/tags/$($tagObject.sha)" $annotated '' 1000000
+            $tagObject = (Get-Content -Raw -LiteralPath $annotated | ConvertFrom-Json).object
+        }
+        if ($tagObject.type -ne 'commit' -or $tagObject.sha -ne $manifest.commit) { throw 'SHA тега не совпадает с manifest.' }
         foreach ($entry in $manifest.assets.PSObject.Properties) {
             $name = $entry.Name
             if ($name -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,180}$' -or $name.Contains('..')) { throw 'Недопустимое имя asset.' }

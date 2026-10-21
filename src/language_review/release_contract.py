@@ -16,6 +16,14 @@ SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(alpha|beta|rc
 SHA = re.compile(r"[a-f0-9]{40}\Z")
 HASH = re.compile(r"[a-f0-9]{64}\Z")
 ASSET = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,180}\Z")
+RESERVED = {
+    "con",
+    "prn",
+    "aux",
+    "nul",
+    *(f"com{n}" for n in range(1, 10)),
+    *(f"lpt{n}" for n in range(1, 10)),
+}
 RUNTIME_ASSETS = (
     "install-memory-service.ps1",
     "connect-memory.ps1",
@@ -88,11 +96,19 @@ def validate_manifest(data: dict[str, Any]) -> None:
         raise ReleaseError("Нужен полный commit SHA.")
     if data.get("python") != "3.15" or data.get("skill_contract") != 1:
         raise ReleaseError("Несовместимый Python или контракт skill.")
+    if not HASH.fullmatch(str(data.get("lock_sha256", ""))):
+        raise ReleaseError("Отсутствует SHA-256 исходного lock.")
     assets = data.get("assets")
     if not isinstance(assets, dict) or not assets:
         raise ReleaseError("Нет проверяемых assets.")
     for name, entry in assets.items():
-        if not ASSET.fullmatch(name) or ".." in name or not isinstance(entry, dict):
+        if (
+            not ASSET.fullmatch(name)
+            or ".." in name
+            or name.endswith(".")
+            or name.split(".", 1)[0].casefold() in RESERVED
+            or not isinstance(entry, dict)
+        ):
             raise ReleaseError("Недопустимое имя asset.")
         if (
             not HASH.fullmatch(str(entry.get("sha256", "")))
@@ -100,7 +116,10 @@ def validate_manifest(data: dict[str, Any]) -> None:
             or not 0 < entry["size"] <= 100_000_000
         ):
             raise ReleaseError("Недопустимый hash или размер asset.")
+    if len({name.casefold() for name in assets}) != len(assets):
+        raise ReleaseError("Неоднозначные имена assets Windows.")
     required = {
+        "INSTALL.md",
         "wheelhouse.zip",
         "install.ps1",
         "release-notes.md",
@@ -119,6 +138,15 @@ def validate_manifest(data: dict[str, Any]) -> None:
 
 
 def validate_bundle(directory: Path) -> dict[str, Any]:
+    try:
+        return _validate_bundle(directory)
+    except (zipfile.BadZipFile, tarfile.TarError, KeyError, json.JSONDecodeError) as exc:
+        raise ReleaseError(
+            "Архив поставки повреждён или не содержит обязательных ресурсов."
+        ) from exc
+
+
+def _validate_bundle(directory: Path) -> dict[str, Any]:
     data = read_json(directory / "release.json")
     validate_manifest(data)
     for name, entry in data["assets"].items():
@@ -165,6 +193,16 @@ def validate_bundle(directory: Path) -> dict[str, Any]:
             or BytesParser().parsebytes(stream.read())["Version"] != data["package_version"]
         ):
             raise ReleaseError("Версия sdist не совпадает с релизом.")
+        identities = [
+            m
+            for m in archive.getmembers()
+            if m.name.endswith("/src/language_review/release_identity.json")
+        ]
+        if len(identities) != 1:
+            raise ReleaseError("В sdist отсутствует релизная идентичность.")
+        identity_stream = archive.extractfile(identities[0])
+        if identity_stream is None or json.loads(identity_stream.read()) != identity:
+            raise ReleaseError("SHA/версия sdist не совпадает с wheel.")
     expected_files = {*data["assets"], "release.json", "SHA256SUMS"}
     if any(path.name not in expected_files or not path.is_file() for path in directory.iterdir()):
         raise ReleaseError("Комплект содержит посторонние файлы.")

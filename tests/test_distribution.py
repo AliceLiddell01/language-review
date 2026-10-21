@@ -53,7 +53,12 @@ def bundle(tmp_path: Path) -> Path:
         entry = tarfile.TarInfo(f"language_review-{pep}/PKG-INFO")
         entry.size = len(content)
         sdist.addfile(entry, io.BytesIO(content))
+        payload = json.dumps(identity).encode()
+        entry = tarfile.TarInfo(f"language_review-{pep}/src/language_review/release_identity.json")
+        entry.size = len(payload)
+        sdist.addfile(entry, io.BytesIO(payload))
     for name in (
+        "INSTALL.md",
         "install.ps1",
         "release-notes.md",
         "requirements-core.txt",
@@ -123,7 +128,18 @@ def test_manifest_rejects_identity_mismatch(bundle: Path, key: str, value: Any) 
 
 
 @pytest.mark.parametrize(
-    "name", ["../evil.ps1", "x/evil.ps1", "x\\evil.ps1", "C:evil.ps1", "a..b", "evil.ps1:stream"]
+    "name",
+    [
+        "../evil.ps1",
+        "x/evil.ps1",
+        "x\\evil.ps1",
+        "C:evil.ps1",
+        "a..b",
+        "evil.ps1:stream",
+        "CON.txt",
+        "nul",
+        "installer.",
+    ],
 )
 def test_manifest_blocks_path_traversal(bundle: Path, name: str) -> None:
     data = json.loads((bundle / "release.json").read_text("utf-8"))
@@ -286,6 +302,153 @@ def test_release_history_guards_previous_stable_and_repeated_versions() -> None:
     ):
         with pytest.raises(ReleaseError):
             module.check_target(version, commit, previous, history)
+
+
+@pytest.mark.parametrize("blocker", ["tag", "ci", "evidence", "notes"])
+def test_publication_preconditions_never_reach_write(
+    bundle: Path, monkeypatch: Any, blocker: str
+) -> None:
+    import argparse
+
+    module = release_module()
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+    monkeypatch.setenv("LR_RELEASE_AUTHORIZATION", "publish v0.0.0-rc.1 " + "a" * 40)
+    monkeypatch.setenv("LR_NOTES_SHA256", digest(bundle / "release-notes.md"))
+    monkeypatch.setattr(module, "release_history", lambda: [])
+    calls = []
+
+    def run(*args: str, **kwargs: Any) -> str:
+        calls.append(args)
+        if args[:2] == ("git", "ls-remote"):
+            return "existing" if blocker == "tag" else ""
+        raise AssertionError("Write-команда не должна достигаться")
+
+    monkeypatch.setattr(module, "run", run)
+    checks = (
+        []
+        if blocker == "ci"
+        else [
+            {
+                "id": 1,
+                "path": ".github/workflows/" + name,
+                "head_sha": "a" * 40,
+                "conclusion": "success",
+            }
+            for name in ("ci.yml", "codeql.yml")
+        ]
+    )
+    monkeypatch.setattr(module, "github", lambda path: {"workflow_runs": checks})
+    evidence = bundle.parent / "acceptance.json"
+    evidence.write_text(
+        json.dumps(
+            {
+                "status": "PASS",
+                "commit": "b" * 40 if blocker == "evidence" else "a" * 40,
+                "manifest_sha256": digest(bundle / "release.json"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ReleaseError):
+        module.publish(argparse.Namespace(candidate=bundle, evidence=evidence))
+    assert not any(args[:2] == ("gh", "release") for args in calls)
+
+
+def test_asset_download_hash_failure_and_partial_cleanup(tmp_path: Path, monkeypatch: Any) -> None:
+
+    from language_review import release_transport as transport
+
+    class Response(io.BytesIO):
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            self.close()
+
+    class Opener:
+        def open(self, *args: Any, **kwargs: Any) -> Any:
+            return Response(b"independently received invalid content")
+
+    monkeypatch.setattr(transport.urllib.request, "build_opener", lambda *args: Opener())
+    target = tmp_path / "asset"
+    with pytest.raises(ReleaseError, match="SHA-256"):
+        transport.download("https://github.com/file", target, "a" * 64)
+    assert not target.exists() and not target.with_name("asset.partial").exists()
+    with pytest.raises(ReleaseError, match="размер"):
+        transport.download("https://github.com/file", target, limit=1)
+    assert not target.exists() and not target.with_name("asset.partial").exists()
+
+
+@pytest.mark.parametrize(
+    "blocker", ["commit", "asset_url", "asset_hash", "manifest_digest", "duplicate"]
+)
+def test_fetch_bundle_rejects_untrusted_metadata(
+    bundle: Path, tmp_path: Path, monkeypatch: Any, blocker: str
+) -> None:
+    from language_review import release_transport as transport
+
+    data = json.loads((bundle / "release.json").read_text("utf-8"))
+    prefix = f"https://github.com/{REPOSITORY}/releases/download/{data['tag']}/"
+    assets = [
+        {
+            "name": name,
+            "browser_download_url": prefix + name,
+            "digest": "sha256:" + values["sha256"],
+            "size": values["size"],
+        }
+        for name, values in data["assets"].items()
+    ]
+    assets.append(
+        {
+            "name": "release.json",
+            "browser_download_url": prefix + "release.json",
+            "digest": "sha256:" + digest(bundle / "release.json"),
+        }
+    )
+    release = {"tag_name": data["tag"], "prerelease": True, "assets": assets}
+    if blocker == "asset_url":
+        assets[0]["browser_download_url"] = "https://evil.test/asset"
+    elif blocker == "asset_hash":
+        assets[0]["digest"] = "sha256:" + "0" * 64
+    elif blocker == "manifest_digest":
+        assets[-1]["digest"] = ""
+    elif blocker == "duplicate":
+        assets.append(dict(assets[-1]))
+    monkeypatch.setattr(transport, "published", lambda *a, **k: release)
+    monkeypatch.setattr(
+        transport, "tag_commit", lambda tag: "b" * 40 if blocker == "commit" else data["commit"]
+    )
+    calls = []
+
+    def download(url: str, target: Path, *args: Any, **kwargs: Any) -> None:
+        calls.append(target.name)
+        assert target.name == "release.json", "Нельзя скачивать assets после отказа metadata"
+        target.write_bytes((bundle / "release.json").read_bytes())
+
+    monkeypatch.setattr(transport, "download", download)
+    received = tmp_path / "received"
+    received.mkdir()
+    with pytest.raises(ReleaseError):
+        transport.fetch_bundle(received, data["tag"])
+    assert calls in ([], ["release.json"])
+
+
+def test_annotated_tag_exact_ref_and_commit(monkeypatch: Any) -> None:
+    from language_review import release_transport as transport
+
+    calls = []
+
+    def api(path: str) -> dict[str, Any]:
+        calls.append(path)
+        return (
+            {"object": {"type": "tag", "sha": "b" * 40}}
+            if path.startswith("git/ref/")
+            else {"object": {"type": "commit", "sha": "a" * 40}}
+        )
+
+    monkeypatch.setattr(transport, "api", api)
+    assert transport.tag_commit("v0.0.0-rc.1") == "a" * 40
+    assert calls == ["git/ref/tags/v0.0.0-rc.1", "git/tags/" + "b" * 40]
 
 
 def test_normal_ci_cannot_publish() -> None:

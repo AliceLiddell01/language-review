@@ -314,6 +314,12 @@ def install(
             old = {}
         if add_path is None:
             add_path = old.get("path_requested", True)
+        if old.get("version") == data["version"] and old.get("manifest_sha256") != digest(
+            bundle / "release.json"
+        ):
+            raise ReleaseError(
+                "Содержимое уже установленной версии изменилось; требуется новый tag/version."
+            )
         path_conflict(root)
         if (
             old
@@ -538,33 +544,6 @@ def schedule_cleanup(root: Path) -> None:
         stderr=subprocess.DEVNULL,
         close_fds=True,
     )
-
-
-def cleanup(root: Path) -> list[str]:
-    """Внешний bootstrap после завершения CLI удаляет только неизменённые own files."""
-    if not state(root).get("uninstalled"):
-        raise ReleaseError("Сначала требуется явный uninstall.")
-    preserved: list[str] = []
-    for release in (root / "releases").iterdir():
-        safe_path(release)
-        index = release / "owned-files.json"
-        if not index.is_file() or read_json(index).get("owner") != OWNER:
-            preserved.append(release.name)
-            continue
-        for name, checksum in read_json(index)["files"].items():
-            path = release / name
-            if not path.absolute().is_relative_to(release.absolute()) or ".." in Path(name).parts:
-                raise ReleaseError("Недопустимый путь ownership inventory.")
-            safe_path(path)
-            if path.is_file() and digest(path) == checksum:
-                try:
-                    path.unlink()
-                except PermissionError:
-                    preserved.append(name)
-            elif path.exists():
-                preserved.append(name)
-        # Неизвестные файлы никогда не удаляются; индекс сохраняет ownership остатка.
-    return preserved
 
 
 def main() -> int:

@@ -574,6 +574,8 @@ def schedule_cleanup(root: Path) -> None:
             str(root),
             "-WaitForPid",
             str(os.getpid()),
+            "-WaitForParentPid",
+            str(os.getppid()),
         ],
         creationflags=subprocess.CREATE_NO_WINDOW,
         stdin=subprocess.DEVNULL,

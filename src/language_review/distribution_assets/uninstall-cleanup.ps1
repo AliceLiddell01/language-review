@@ -1,6 +1,7 @@
-param([Parameter(Mandatory)][string]$Root, [int]$WaitForPid)
+param([Parameter(Mandatory)][string]$Root, [int]$WaitForPid, [int]$WaitForParentPid)
 $ErrorActionPreference = 'Stop'
-if ($WaitForPid) { Wait-Process -Id $WaitForPid -ErrorAction SilentlyContinue }
+$waitForPids = @($WaitForPid, $WaitForParentPid) | Where-Object { $_ -gt 0 } | Select-Object -Unique
+if ($waitForPids.Count) { Wait-Process -Id $waitForPids -Timeout 60 -ErrorAction SilentlyContinue }
 $rootPath = [IO.Path]::GetFullPath($Root)
 $lockPath = Join-Path $rootPath '.install-lock'
 try { $lock = [IO.File]::Open($lockPath, 'CreateNew', 'Write', 'None') }
@@ -45,9 +46,18 @@ foreach ($release in Get-ChildItem -LiteralPath $releasesPath -Directory) {
         if (-not $path.StartsWith($release.FullName + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Путь inventory выходит за release.' }
         Assert-NoLink $path
         if (Test-Path -LiteralPath $path -PathType Leaf) {
-            if ((Get-FileHash -LiteralPath $path).Hash.ToLowerInvariant() -eq $entry.Value) {
-                try { Remove-Item -LiteralPath $path } catch { $preserved.Add($entry.Name) }
-            } else { $preserved.Add($entry.Name) }
+            $removed = $false
+            for ($attempt = 0; $attempt -lt 5; $attempt++) {
+                if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { $removed = $true; break }
+                Assert-NoLink $path
+                try {
+                    if ((Get-FileHash -LiteralPath $path).Hash.ToLowerInvariant() -ne $entry.Value) { break }
+                    Remove-Item -LiteralPath $path -ErrorAction Stop
+                } catch { }
+                if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { $removed = $true; break }
+                if ($attempt -lt 4) { Start-Sleep -Milliseconds 200 }
+            }
+            if (-not $removed) { $preserved.Add($entry.Name) }
         }
     }
     # Удаляются только пустые каталоги. Неизвестные файлы и изменённые байты остаются.

@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import tarfile
+import time
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -335,6 +336,101 @@ def test_uninstall_cleanup_reports_deferred_when_lock_is_busy(tmp_path: Path) ->
     assert outcome["status"] == "cleanup_deferred"
     assert outcome["reason"] == "install_lock_busy"
     assert lock.is_file()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Контракт PowerShell Windows")
+def test_uninstall_cleanup_retries_removing_locked_owned_file(tmp_path: Path) -> None:
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 не найден.")
+    root = tmp_path / "application"
+    release = root / "releases" / ("a" * 32)
+    runtime = release / "venv" / "Scripts" / "python.exe"
+    runtime.parent.mkdir(parents=True)
+    runtime.write_bytes(b"synthetic venv redirector")
+    (root / "installation.json").write_text(
+        json.dumps(
+            {
+                "owner": deploy.OWNER,
+                "root": str(root),
+                "uninstalled": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (release / "owned-files.json").write_text(
+        json.dumps(
+            {
+                "owner": deploy.OWNER,
+                "files": {"venv/Scripts/python.exe": digest(runtime)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    marker = tmp_path / "lock-ready"
+    holder = tmp_path / "hold-file.ps1"
+    holder.write_text(
+        "$handle = [IO.File]::Open($args[0], 'Open', 'Read', 'Read')\n"
+        "[IO.File]::WriteAllText($args[1], 'ready')\n"
+        "Start-Sleep -Milliseconds 700\n"
+        "$handle.Dispose()\n",
+        encoding="utf-8",
+    )
+    lock_process = subprocess.Popen(
+        [pwsh, "-NoProfile", "-File", str(holder), str(runtime), str(marker)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not marker.exists():
+            if lock_process.poll() is not None or time.monotonic() > deadline:
+                pytest.fail("Не удалось захватить синтетический файл runtime.")
+            time.sleep(0.02)
+
+        script = tmp_path / "uninstall-cleanup.ps1"
+        script.write_bytes(
+            Path("src/language_review/distribution_assets/uninstall-cleanup.ps1")
+            .resolve()
+            .read_bytes()
+        )
+        result = subprocess.run(
+            [pwsh, "-NoProfile", "-File", str(script), "-Root", str(root)],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0, result.stderr
+        outcome = json.loads((root / "uninstall-result.json").read_text(encoding="utf-8"))
+        assert outcome["status"] == "uninstalled"
+        assert "venv/Scripts/python.exe" not in outcome["preserved"]
+        assert not runtime.exists()
+    finally:
+        if lock_process.poll() is None:
+            lock_process.terminate()
+        lock_process.wait(timeout=5)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-планировщика")
+def test_schedule_cleanup_waits_for_venv_parent_process(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setattr(deploy.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(deploy.os, "getpid", lambda: 1234)
+    monkeypatch.setattr(deploy.os, "getppid", lambda: 5678)
+    captured: dict[str, Any] = {}
+
+    def fake_popen(args: list[str], **kwargs: Any) -> None:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(deploy.subprocess, "Popen", fake_popen)
+
+    deploy.schedule_cleanup(tmp_path / "application")
+
+    args = captured["args"]
+    assert args[args.index("-WaitForPid") + 1] == "1234"
+    assert args[args.index("-WaitForParentPid") + 1] == "5678"
+    assert captured["kwargs"]["creationflags"] == subprocess.CREATE_NO_WINDOW
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-установки")

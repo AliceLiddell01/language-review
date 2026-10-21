@@ -23,7 +23,8 @@ OWNER = "language-review.installer/1"
 
 def default_root() -> Path:
     return (
-        Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData/Local"))) / "LanguageReview"
+        Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData/Local")))
+        / "LanguageReview/application"
     )
 
 

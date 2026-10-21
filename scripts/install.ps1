@@ -1,7 +1,7 @@
 <# Bootstrap: доверие GitHub HTTPS/API издателя; SHA-256 подтверждает integrity, не отдельную подпись. #>
 param(
     [string]$Tag,
-    [string]$Root = (Join-Path $env:LOCALAPPDATA 'LanguageReview'),
+    [string]$Root = (Join-Path $env:LOCALAPPDATA 'LanguageReview/application'),
     [ValidateSet('core', 'chatgpt', 'memory', 'all')][string]$Extras = 'core',
     [switch]$Codex,
     [switch]$Claude,

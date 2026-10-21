@@ -86,7 +86,6 @@ def notes_valid(text: str, version: str, commit: str, previous: str) -> None:
 def prepare(args: argparse.Namespace) -> None:
     if os.name != "nt" or sys.version_info[:2] != (3, 15):
         raise ReleaseError("Кандидат Windows требует нативный Windows builder с Python 3.15.")
-    source = Path.cwd()
     history = release_history()
     check_target(args.version, args.commit, args.previous, history)
     if run("git", "rev-parse", args.commit + "^{commit}") != args.commit:

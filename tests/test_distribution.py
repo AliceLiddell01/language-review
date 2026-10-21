@@ -483,6 +483,20 @@ def test_installation_from_checkout_is_explained(capsys: Any) -> None:
     assert "управляемую установку" in capsys.readouterr().err
 
 
+def test_default_application_root_preserves_existing_oauth_directory(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    oauth = tmp_path / "LanguageReview/chatgpt/accounts.dpapi"
+    oauth.parent.mkdir(parents=True)
+    oauth.write_bytes(b"existing encrypted user data")
+    root = deploy.default_root()
+    assert root == tmp_path / "LanguageReview/application"
+    with deploy.locked(root):
+        assert deploy.status(root) == {"status": "not_installed"}
+    assert oauth.read_bytes() == b"existing encrypted user data"
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-установки")
 def test_install_failure_preserves_pointer_and_skills(
     bundle: Path, tmp_path: Path, monkeypatch: Any

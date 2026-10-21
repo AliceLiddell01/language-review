@@ -211,6 +211,16 @@ def verify(
         env.pop("PYTHONPATH", None)
         env.pop("LANGUAGE_REVIEW_MEMORY_DSN", None)
         env.pop("VIRTUAL_ENV", None)
+        from language_review.chatgpt_store import dpapi
+
+        account_file = Path(env["LOCALAPPDATA"]) / "LanguageReview/chatgpt/accounts.dpapi"
+        account_file.parent.mkdir(parents=True)
+        protected_session = dpapi(b"synthetic encrypted session; no real OAuth")
+        account_file.write_bytes(protected_session)
+        user_config = Path(env["APPDATA"]) / "language-review/config.toml"
+        user_config.parent.mkdir(parents=True)
+        user_environment = b'[check.llm.ollama]\nendpoint = "http://127.0.0.1:11434"\n'
+        user_config.write_bytes(user_environment)
         # uv run добавляет dev venv в PATH; чистая приёмка исключает этот checkout.
         checkout_scripts = (Path.cwd() / ".venv/Scripts").resolve()
         existing_uv = shutil.which("uv")
@@ -227,7 +237,7 @@ def verify(
             command(["git", "init", "--quiet", str(repo)], env, root)
             (repo / "notes.md").write_text("Русский текст документации.\n", encoding="utf-8")
         before = snapshot(inputs)
-        install_root = root / "installed"
+        install_root = Path(env["LOCALAPPDATA"]) / "LanguageReview/application"
         bootstrap = [
             "pwsh",
             "-NoProfile",
@@ -237,8 +247,6 @@ def verify(
             str(received),
             "-TrustedManifestSha256",
             digest(candidate / "release.json"),
-            "-Root",
-            str(install_root),
             "-Extras",
             "core",
             "-NonInteractive",
@@ -441,7 +449,7 @@ def verify(
                     "verify-review",
                     str(root / "positive.json"),
                     "--root",
-                    "root-0001=" + str(inputs / "repo-a"),
+                    "root-0001=" + str(source),
                     "--format",
                     "json",
                 ],
@@ -455,7 +463,7 @@ def verify(
                     "verify-review",
                     str(root / "positive.json"),
                     "--root",
-                    "root-0001=" + str(inputs / "repo-a"),
+                    "root-0001=" + str(source),
                     "--format",
                     "json",
                 ],
@@ -551,6 +559,15 @@ def verify(
         codex.rename(codex.with_name("SKILL.saved.md"))
         command(bootstrap, env, root)
         checks["safe_reinstall"] = "PASS"
+        assert account_file.read_bytes() == protected_session
+        assert (
+            dpapi(account_file.read_bytes(), decrypt=True)
+            == b"synthetic encrypted session; no real OAuth"
+        )
+        assert user_config.read_bytes() == user_environment
+        checks["dpapi_environment_preserved"] = (
+            "PASS (синтетический DPAPI payload, без OAuth login)"
+        )
         for name, value in before.items():
             assert digest(inputs / name) == value
         assert not (inputs / "repo-b/.language-review.yaml").exists()
@@ -565,7 +582,9 @@ def verify(
             "вызов skill моделью Claude; выполнение агентских turn не запускалось",
             "memory-worker/DB readiness и migration rollback",
             "OAuth в пользовательском аккаунте",
-        ],
+        ]
+        + ([] if codex_executable else ["обнаружение пользовательского skill Codex app-server"])
+        + ([] if upgrade_candidate else ["смена версии и rollback (нужен --upgrade-candidate)"]),
     }
 
 

@@ -44,6 +44,9 @@ GitHub hosts, не выполняет команды из metadata и не из�
 не устанавливает Docker, серверы, Vale или LLM-модели. `-Codex` и `-Claude` явно
 выбирают глобальные skills. `-NonInteractive` исключает вопросы; без него в конце
 предлагается интерактивный setup. `-NoPath` отключает регистрацию PATH.
+Файлы приложения находятся в `%LOCALAPPDATA%/LanguageReview/application`,
+OAuth DPAPI остаётся в соседнем `LanguageReview/chatgpt`; существующая сессия
+не мешает установке и не входит в область удаления приложения.
 
 После установки откройте **новый терминал** из любого каталога:
 
@@ -126,7 +129,7 @@ check и skill ничего не обновляют. Установщик сох
 Uninstall удаляет только собственные неизменённые launcher/skills и свою запись PATH.
 После завершения CLI отдельная скрытая PowerShell удаляет только файлы runtime с
 совпавшим ownership hash; изменённые и неизвестные файлы сохраняются. Результат —
-`%LOCALAPPDATA%/LanguageReview/uninstall-result.json`. Пользовательский TOML, OAuth,
+`%LOCALAPPDATA%/LanguageReview/application/uninstall-result.json`. Пользовательский TOML, OAuth,
 проекты, память, backups, Docker и системные инструменты сохраняются. Служебный
 receipt остаётся для безопасной переустановки; он не содержит credentials.
 Сохранённый изменённый skill перед переустановкой переместите сами.
@@ -161,3 +164,15 @@ runtime. Скрипт проверяет новый PowerShell/PATH, skills, с�
 обнаружение skill живой моделью. Реальные release/tag/OAuth и live worker отмечаются
 отдельно; локальный HTTP используется только приёмочным harness, production policy
 HTTPS не ослабляется.
+
+Для полного прогона смены версии передайте второй **синтетический** комплект через
+`--upgrade-candidate`, подготовленный из того же target SHA с другой явно заданной
+тестовой версией. Harness проверит реальный отказ испорченного кандидата, успешное
+обновление, rollback, release sdist, findings/clean/stale hash с установленным Vale
+и сохранность синтетического DPAPI payload/пользовательского TOML. Без второго
+комплекта смена версии честно отмечается NOT_RUN.
+Опциональный `--codex-executable $CodexExecutable` проверяет настоящий `skills/list`
+Codex app-server без thread/turn и без модели. В Windows Codex использует Known Folder
+для USER scope, поэтому эта проверка временно создаёт отсутствующий личный skill
+и удаляет только свои байты в finally; при существующем skill отказывается его менять.
+Облачные/агентские turn и live Claude при этом не запускались.

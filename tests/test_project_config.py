@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from support import project_inputs
 
 from language_review.cli import main
 from language_review.config import CheckSettings, load_config
@@ -53,6 +54,25 @@ def test_discovery_git_worktree_subdirectory_and_foreign_cwd(
         load_project(load_config(), worktree).project_id
         != load_project(load_config(), root).project_id
     )
+
+
+def test_fixture_preparation_refuses_roots_outside_temporary_directory(
+    tmp_path: Path, isolated_appdata: Path, monkeypatch: Any
+) -> None:
+    root = project(tmp_path / "repo")
+    (root / ".git").mkdir()
+    source = root / "notes.md"
+    source.write_text("Текст.", encoding="utf-8")
+    policy = root / FILENAME
+    original = policy.read_bytes()
+    monkeypatch.setattr(
+        project_inputs.tempfile, "gettempdir", lambda: str(tmp_path / "allowed-temp")
+    )
+
+    with pytest.raises(AssertionError, match="системный временный каталог"):
+        project_inputs.prepare([str(source)], load_config())
+
+    assert policy.read_bytes() == original
 
 
 def test_missing_policy_never_uses_parent_or_global_profile(

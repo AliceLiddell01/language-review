@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import os
+import tempfile
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -44,12 +45,15 @@ def prepare(paths: list[str], config: LoadedConfig) -> None:
     from language_review.scanner import _choose_profile
 
     checkout = Path(__file__).resolve().parents[2]
+    temporary = Path(tempfile.gettempdir()).resolve()
     for raw in paths:
         if not Path(raw).exists():
             continue
         root = repository_root(raw)
         if root == checkout:
             continue
+        if not root.is_relative_to(temporary):
+            raise AssertionError("Подготовка фикстуры вышла за системный временный каталог.")
         profile = _choose_profile(config, root, None) or "fixture"
         definitions = {}
         rules = []

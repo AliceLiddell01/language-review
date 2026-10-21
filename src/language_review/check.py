@@ -753,8 +753,10 @@ def check_paths(
     for (name, root_id, _), (engine_settings, engine_units) in groups.items():
         if name == "llm":
             current_units = {unit.index for unit in engine_units}
-            for document_candidates in candidates.values():
-                for candidate in document_candidates:
+            current_documents = {unit.document_index for unit in engine_units}
+            for document_index in sorted(current_documents):
+                document = documents[document_index]
+                for candidate in candidates.get(document_index, []):
                     unit, raw = candidate.unit, candidate.raw
                     if unit.index not in current_units or raw.engine == "llm":
                         continue
@@ -775,7 +777,6 @@ def check_paths(
                     )
                     if any(item.status == "rejected" for item in candidate.suggestions):
                         unit.routing_reasons.append("risky_suggestion")
-            for document_index, document in enumerate(documents):
                 for finding in reconcile(document_index, candidates.get(document_index, [])):
                     if (
                         len(

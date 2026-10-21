@@ -232,7 +232,14 @@ def _verify(
             ensure_ascii=False,
         )
         try:
-            reply = engine.request(VERIFY_PROMPT, user, schema, run)
+            from language_review.engine_llm import IMMUTABLE_INSTRUCTIONS
+
+            reply = engine.request(
+                (engine.settings.prompt_verifier or VERIFY_PROMPT) + "\n" + IMMUTABLE_INSTRUCTIONS,
+                user,
+                schema,
+                run,
+            )
             run.add_tokens("prompt", reply.prompt_tokens)
             run.add_tokens("completion", reply.completion_tokens)
             try:
@@ -270,7 +277,7 @@ def analyze(engine: LlmEngine, units: Sequence[CheckUnit], run: EngineRun) -> It
     run.details["analysis"] = {
         "version": "multistage/1",
         "passes": ledger,
-        "policy_sha256": fingerprint([STRATEGIES, VERIFY_PROMPT]),
+        "policy_sha256": fingerprint(engine.describe()["effective_prompts"]),
         "memory_snapshot_sha256": fingerprint([unit.memory_context for unit in units]),
         "memory_withheld": 0,
     }
@@ -294,7 +301,8 @@ def analyze(engine: LlmEngine, units: Sequence[CheckUnit], run: EngineRun) -> It
         engine.pass_instruction = (
             ""
             if strategy == "primary"
-            else "\nДополнительный поисковый проход. " + STRATEGIES[strategy]
+            else "\nДополнительный поисковый проход. "
+            + settings.prompt_strategies.get(strategy, STRATEGIES[strategy])
         )
         selected = [
             unit

@@ -75,7 +75,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config",
         metavar="ПУТЬ",
-        help="явный TOML-конфиг (объединяется поверх пользовательского)",
+        help="явный TOML среды и полномочий (политика — .language-review.yaml)",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -162,6 +162,20 @@ def _parser() -> argparse.ArgumentParser:
     show = config_commands.add_parser("show", help="показать значения и источники")
     show.add_argument("--format", choices=("human", "json"), default="human")
     show.add_argument("--profile", metavar="ИМЯ")
+    show.add_argument("target", nargs="?", default=".", metavar="ПУТЬ")
+    show.add_argument(
+        "--environment",
+        action="store_true",
+        help="показать пользовательскую среду и прежнюю конфигурацию TOML без проектной политики",
+    )
+    validate = config_commands.add_parser(
+        "validate", help="проверить проектную политику без движков"
+    )
+    validate.add_argument("target", nargs="?", default=".", metavar="ПУТЬ")
+    validate.add_argument("--profile", metavar="ИМЯ")
+    validate.add_argument("--format", choices=("human", "json"), default="human")
+    init = commands.add_parser("init", help="явно создать локальный шаблон проектной политики")
+    init.add_argument("target", nargs="?", default=".", metavar="ПУТЬ")
     return parser
 
 
@@ -279,6 +293,11 @@ def _verify_review_human(report: dict[str, Any]) -> str:
 
 
 def _run(arguments: argparse.Namespace) -> int:
+    if arguments.command == "init":
+        from language_review.project_config import init_project
+
+        print(f"Создана конфигурация: {init_project(arguments.target)}")
+        return 0
     if arguments.command == "show-review":
         try:
             print(render_review(load_review(arguments.report), show_all=arguments.all))
@@ -430,6 +449,18 @@ def _run(arguments: argparse.Namespace) -> int:
         print(_emit(lambda: doctor_result, lambda: doctor_human(doctor_result), arguments.format))
         return doctor_exit_code(doctor_result)
 
+    if arguments.command == "config" and not getattr(arguments, "environment", False):
+        from language_review.project_config import load_project, project_mapping
+
+        project = load_project(config, arguments.target)
+        mapping = project_mapping(project, arguments.target, arguments.profile)
+        print(
+            json.dumps(mapping, ensure_ascii=False, indent=2)
+            if arguments.format == "json"
+            else "Проектная политика проверена.\n"
+            + json.dumps(mapping, ensure_ascii=False, indent=2)
+        )
+        return 0
     if arguments.command == "config" and arguments.config_command == "show":
         config_mapping = config.as_mapping(arguments.profile)
         print(

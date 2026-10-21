@@ -634,3 +634,9 @@ Windows wheel/sdist smoke выполняет validate/score/regress/compare и �
   и ручное решение; reference-less judge и его перенос на русский не реализованы.
 
 Новые NLP/evaluation-зависимости и удалённые сервисы оценщику не потребовались.
+
+Проектная политика live capture: `run --config .language-review.yaml` переносит
+строго проверенную политику и её файлы промптов во временные репозитории; без YAML
+оценщик явно создаёт локальные шаблоны. TOML остаётся конфигурацией среды.
+Manifest сохраняет `parameters.document_policies` и fingerprints; подробности —
+[проектная конфигурация](project-configuration.md).

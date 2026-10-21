@@ -62,6 +62,7 @@ language-review --help
 ### Инвентаризация
 
 ~~~powershell
+language-review init .
 language-review scan .\src
 language-review scan .\Cargo.toml .\README.md
 language-review scan .\repo --format json
@@ -96,25 +97,27 @@ language-review extract .\settings.json --extension .json --format json
 | reStructuredText, AsciiDoc | Заголовки и проза с базовой обработкой директив, ссылок и literal/code blocks | Поддерживается консервативное подмножество разметки |
 | JSON, YAML, TOML, XML | Только строковые значения по настроенным селекторам | Расширение нужно включить явно; YAML tags/aliases не интерпретируются, повторяющиеся JSON/YAML-ключи пропускаются, TOML-массивы таблиц (`[[table]]`) помечаются `partial` |
 
-В TOML селекторы задаются по расширению файла. Поддерживается безопасное подмножество путей: свойства через `.name`, ключи через `['name']` или `["name"]`, индексы обычного массива `[0]` и wildcard `*`. YAML flow mappings поддерживаются; повторяющиеся JSON/YAML-ключи в одном объекте/отображении пропускаются с диагностикой, потому что разные потребители могут выбрать разные значения. TOML-массивы таблиц пока пропускаются с диагностикой.
+В проектном `.language-review.yaml` селекторы `extract.selectors` задаются по расширению файла. Поддерживается безопасное подмножество путей: свойства через `.name`, ключи через `['name']` или `["name"]`, индексы обычного массива `[0]` и wildcard `*`. YAML flow mappings поддерживаются; повторяющиеся JSON/YAML-ключи в одном объекте/отображении пропускаются с диагностикой, потому что разные потребители могут выбрать разные значения. TOML-массивы таблиц пока пропускаются с диагностикой.
 
-~~~toml
-[scan]
-extensions = [".rs", ".cs", ".md", ".json", ".yaml"]
-
-[extract]
-header_language = "auto" # auto, c или cpp для неоднозначных .h
-message_calls = ["MyLogger.ShowMessage", "logger->Notify"]
-
-[extract.selectors]
-".json" = ["$.ui.message", "$.errors[*].description"]
-".yaml" = ["$.ui.message"]
-
-[profiles.docs]
-priority = 5
-match_paths = ["docs/**"]
-[profiles.docs.extract.selectors]
-".json" = ["$.ui.message"]
+~~~yaml
+schema_version: 1
+default_profile: everyday
+scan:
+  extensions: [.rs, .cs, .md, .json, .yaml]
+extract:
+  header_language: auto # auto, c или cpp для неоднозначных .h
+  message_calls: [MyLogger.ShowMessage, logger->Notify]
+  selectors:
+    .json: ['$.ui.message', '$.errors[*].description']
+    .yaml: ['$.ui.message']
+profiles:
+  everyday: {}
+  docs:
+    extract:
+      selectors:
+        .json: ['$.ui.message']
+path_rules:
+  - {path: 'docs/**', profile: docs, priority: 5}
 ~~~
 
 В отчёте извлечения схема называется `language-review.extract` и имеет собственную версию `1.0`; она не меняет JSON-схему `scan` версии `1.0`. Документ содержит относительный путь, root ID, выбранный профиль, формат, кодировку, BOM, SHA-256, статус и диагностические коды. Каждый фрагмент включает `text`/`source_text`, вид, контекст, стабильный ID, исходный диапазон и защищённые диапазоны.
@@ -153,29 +156,32 @@ language-review check .\repo --format json --output .\check-report.json
 Отчёт имеет схему `language-review.check` версии `1.0`: [JSON Schema](docs/check-report.schema.json) и [реальный пример](docs/check-report.example.json), построенный командой `check` с LanguageTool 6.6 и Vale 3.24.0 на фикстурах `tests/fixtures/check`. Схемы `scan` и `extract` не меняются.
 
 ~~~toml
-[check]
-engines = ["languagetool", "vale", "llm"]
-categories = []                       # пусто — все категории
-terms = { "фреймворк" = "каркас" }    # терминология проекта для Vale и LLM
-
 [check.languagetool]
 endpoint = "http://127.0.0.1:8081"
 
-[check.llm]
-provider = "llama_cpp"                # или "ollama"
-
 [check.llm.llama_cpp]
 endpoint = "http://127.0.0.1:8080"
-
-[profiles.docs.check]
-engines = ["languagetool", "vale"]
 ~~~
 
-Профиль может переопределять `engines`, `categories` и `terms`; адреса и параметры движков задаются в основном разделе `[check]`. Нелокальные адреса допускаются только при явном `check.allow_remote_endpoints = true`.
+~~~yaml
+schema_version: 1
+default_profile: everyday
+profiles:
+  everyday:
+    engines: [languagetool, vale, llm]
+    terms: {"фреймворк": "каркас"}
+    llm: {provider: llama_cpp}
+  docs:
+    engines: [languagetool, vale]
+path_rules:
+  - {path: 'docs/**', profile: docs}
+~~~
+
+TOML хранит среду: адреса локальных сервисов, `vale.program`, `vale.config` и отдельные согласия. Политика проекта — `engines`, категории, термины, модели и `path_rules` — задаётся в корневом `.language-review.yaml`. Нелокальные адреса допускаются только при явном `check.allow_remote_endpoints = true`.
 
 Каталоги зависимостей и сборки, в том числе `.git`, `.venv`, `node_modules`, `target`, `bin`, `obj`, `build` и `dist`, исключаются по умолчанию. Для пользовательских исключений используй `--exclude 'docs/generated/**'`. Также поддерживаются `.gitignore` и отрицательные правила Git; обход ссылок выключен по умолчанию. `--follow-symlinks` включает ссылки только в пределах явно указанного корня и защищает от циклов.
 
-Для стандартной конфигурации выбирай проектный профиль по маркерам, заданным в пользовательском конфиге; `--profile NAME` выбирает профиль явно. Профили с `match_paths` могут задавать настройки для относительных путей внутри корня сканирования.
+Профили и `path_rules` задаются в обязательном корневом `.language-review.yaml`; `--profile NAME` принудительно выбирает объявленный профиль. Модель, уровень рассуждения, режим, бюджеты и языковые промпты применяются к фактическим запросам каждого профиля.
 
 ### Диагностика
 
@@ -189,33 +195,25 @@ language-review doctor --format json
 
 ### Конфигурация
 
+Для каждого целевого репозитория сначала явно создайте политику:
+
 ~~~powershell
-language-review config show
-language-review config show --format json
-language-review --config .\language-review.toml scan .\repo
+language-review init .\repo
+language-review config validate .\repo
+language-review config show .\repo\docs\guide.md --format json
+language-review --config .\environment.toml check .\repo
+language-review config show --environment --format json
 ~~~
 
-Пользовательский конфиг хранится в `%APPDATA%\language-review\config.toml` на Windows и в `$XDG_CONFIG_HOME/language-review/config.toml` (или `~/.config/language-review/config.toml`) на Unix. Явно переданный `--config` объединяется поверх пользовательского файла; параметры CLI имеют наивысший приоритет. Значения `config show` сопровождаются источником. Поля, похожие на секреты, и параметры URL скрываются.
+Обязательный `.language-review.yaml` владеет профилями, моделями, режимами,
+правилами путей и языковыми промптами. Пользовательский TOML и `--config TOML`
+задают среду: адреса сервисов, OAuth, секреты памяти и отдельные согласия на облако.
+Прежняя языковая политика TOML больше не наследуется при анализе репозитория.
+`init` не перезаписывает файл; команды анализа не создают его автоматически.
 
-Пример TOML:
-
-~~~toml
-[scan]
-respect_gitignore = true
-max_file_size = 5000000
-exclude_patterns = ["docs/generated/**"]
-
-[doctor]
-programs = ["vale"]
-http_services = { ollama = "http://127.0.0.1:11434/api/tags" }
-
-[profiles.rust]
-priority = 20
-project_markers = ["Cargo.toml"]
-match_paths = ["crates/**"]
-[profiles.rust.scan]
-extensions = [".rs", ".md", ".txt"]
-~~~
+Обнаружение корня Git/worktree и поведение вне Git, строгий контракт версии 1,
+приоритеты, все поля и миграция описаны в [руководстве по проектной конфигурации](docs/project-configuration.md).
+Рабочий локальный пример — [.language-review.yaml](.language-review.yaml).
 
 ## Коды завершения
 

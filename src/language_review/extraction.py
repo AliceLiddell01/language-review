@@ -227,7 +227,7 @@ def extract_paths(
         extension = PurePosixPath(record.path).suffix.lower()
         try:
             language, file_format, fragments, diagnostics, partial, unsupported = _adapt(
-                source, extension, config, record.profile
+                source, extension, scan.project_configs.get(record.root, config), record.profile
             )
         except Exception:
             document.status = "error"

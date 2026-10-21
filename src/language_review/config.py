@@ -208,6 +208,10 @@ class CheckSettings:
     vale_program: str = "vale"
     vale_config: str = ""
     vale_timeout_seconds: float = 60.0
+    prompt_primary: str | None = None
+    prompt_strategies: dict[str, str] = field(default_factory=dict)
+    prompt_verifier: str | None = None
+    prompt_sources: dict[str, str] = field(default_factory=dict)
 
     def value(self, key: str) -> Any:
         value = getattr(self, key.replace(".", "_"))
@@ -263,6 +267,10 @@ class LoadedConfig:
     loaded_config_paths: tuple[Path, ...]
     memory: MemorySettings = field(default_factory=MemorySettings)
     memory_sources: dict[str, str] = field(default_factory=dict)
+    project_root: Path | None = None
+    path_rules: tuple[tuple[str, str, int], ...] = ()
+    project_id: str | None = None
+    project_files: tuple[Path, ...] = ()
 
     def settings_for_profile(self, profile_name: str | None) -> tuple[ScanSettings, dict[str, str]]:
         settings = self.scan
@@ -335,7 +343,10 @@ class LoadedConfig:
                 overrides["terms"] = {**settings.terms, **overrides["terms"]}
             settings = replace(settings, **overrides)
             profile_sources = self.profile_sources.get(profile_name, {})
-            for key in profile.check_overrides:
+            for attribute in profile.check_overrides:
+                key = next(
+                    (key for key in CHECK_KEYS if key.replace(".", "_") == attribute), attribute
+                )
                 profile_source = profile_sources.get(f"check.{key}", f"профиль: {profile_name}")
                 sources[key] = (
                     _combine_sources(sources.get(key) if self.check.terms else None, profile_source)
@@ -354,6 +365,10 @@ class LoadedConfig:
         return settings, sources
 
     def as_mapping(self, profile_name: str | None = None) -> dict[str, Any]:
+        if self.project_root is not None:
+            from language_review.project_config import project_mapping
+
+            return project_mapping(self, self.project_root, profile_name)
         settings, sources = self.settings_for_profile(profile_name)
         scan_values = asdict(settings)
         scan = {key: {"value": value, "source": sources[key]} for key, value in scan_values.items()}

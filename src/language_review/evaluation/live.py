@@ -17,6 +17,12 @@ from language_review.evaluation.contracts import digest, save_new
 from language_review.evaluation.corpus import safe_path, source_map
 from language_review.evaluation.reports import load_product_report
 from language_review.evaluation.scoring import score
+from language_review.project_config import (
+    FILENAME,
+    init_project,
+    load_project,
+    read_project_policy_files,
+)
 
 
 def materialize(corpus: dict[str, Any], split: str, destination: Path) -> dict[str, str]:
@@ -52,13 +58,38 @@ def capture(
         bindings = materialize(corpus, split, inputs)
         if not bindings:
             raise InputError("В выбранном split нет документов.")
+        # Это явная подготовка временных синтетических репозиториев оценщика.
+        # TOML задаёт только среду; YAML — выбранную пользователем проектную политику.
+        project_yaml = config if config and config.suffix.lower() in {".yaml", ".yml"} else None
+        policy_files = read_project_policy_files(project_yaml) if project_yaml else None
+        policy_bytes = None
+        for repository in bindings.values():
+            root = inputs / repository
+            (root / ".git").mkdir()
+            if project_yaml is None:
+                init_project(root)
+            else:
+                from language_review.config import load_config
+
+                if project_yaml.name != FILENAME:
+                    raise InputError(f"Политика оценщика должна называться {FILENAME}.")
+                assert policy_files is not None
+                policy_bytes, prompt_files = policy_files
+                for relative, content in prompt_files.items():
+                    target = root / relative
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with target.open("xb") as stream:
+                        stream.write(content)
+                with (root / FILENAME).open("xb") as stream:
+                    stream.write(policy_bytes)
+                load_project(load_config(), root)
         initial = {
             path: hashlib.sha256(path.read_bytes()).hexdigest()
             for path in inputs.rglob("*")
             if path.is_file()
         }
         command = [sys.executable, "-m", "language_review"]
-        if config:
+        if config and project_yaml is None:
             command += ["--config", str(config.resolve(strict=True))]
         command += [
             "check",
@@ -70,8 +101,9 @@ def capture(
         ]
         for engine in engines:
             command += ["--engine", engine]
-        # Split передаётся продукту независимо от конфигурации. Test/holdout никогда
-        # не ставятся в консолидацию/индекс; повторы не обучаются на предыдущем test.
+        # Раздел корпуса передаётся продукту независимо от конфигурации. Тестовая
+        # и отложенная выборки не консолидируются и не индексируются;
+        # повторы не обучаются на предыдущем тестовом прогоне.
         command += ["--memory-dataset", "test" if split in {"test", "validation"} else "dev"]
         environment = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
         for repetition in range(1, repetitions + 1):
@@ -127,13 +159,22 @@ def capture(
                     "report_sha256": digest(report),
                     "root_bindings": bindings,
                     "product_commit": product_commit,
-                    "configuration_sha256": hashlib.sha256(config.read_bytes()).hexdigest()
+                    "configuration_sha256": hashlib.sha256(
+                        policy_bytes if policy_bytes is not None else config.read_bytes()
+                    ).hexdigest()
                     if config
                     else None,
                     "wall_clock_ms": elapsed,
                     "exit_code": completed.returncode,
                     "capture": "live_public_cli",
-                    "parameters": {"engines": engines, "view": "review"},
+                    "parameters": {
+                        "engines": engines,
+                        "view": "review",
+                        "document_policies": {
+                            document["id"]: document["configuration"].get("policy")
+                            for document in report["analysis"]["documents"]
+                        },
+                    },
                     "repetition": repetition,
                 }
                 result = score(corpus, report, bindings, split, manifest)

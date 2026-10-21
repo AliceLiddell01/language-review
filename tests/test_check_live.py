@@ -34,6 +34,9 @@ CLEAN = "Функция не изменяет входные данные и н�
 
 
 def _run(args: list[str], appdata: Path) -> subprocess.CompletedProcess[str]:
+    from support.project_inputs import prepare_cli
+
+    prepare_cli(args, appdata)
     environment = os.environ.copy()
     environment["APPDATA"] = str(appdata)
     environment["XDG_CONFIG_HOME"] = str(appdata)

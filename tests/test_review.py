@@ -21,11 +21,12 @@ from support.check_helpers import (
     languagetool_responder,
     llama_responder,
 )
+from support.project_inputs import check_fixture_paths as check_paths
+from support.project_inputs import extract_fixture_paths as extract_paths
 
-from language_review.check import build_units, check_paths, map_finding, reconcile
+from language_review.check import build_units, map_finding, reconcile
 from language_review.check_models import Candidate, RawFinding
 from language_review.config import CheckSettings, load_config
-from language_review.extraction import extract_paths
 from language_review.review_report import review_document, review_human
 from language_review.review_verify import verify_review
 

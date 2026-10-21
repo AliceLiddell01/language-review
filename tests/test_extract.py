@@ -12,6 +12,8 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from support.project_inputs import extract_fixture_paths as extract_paths
+from support.project_inputs import scan_fixture_paths as scan_paths
 
 from language_review.config import ExtractSettings, load_config
 from language_review.coordinates import SourceMap
@@ -21,8 +23,6 @@ from language_review.extract_docs import extract_markdown, extract_markup_text, 
 from language_review.extract_models import FragmentDraft
 from language_review.extract_report import extract_document, extract_human, extract_json
 from language_review.extract_structured import extract_structured
-from language_review.extraction import extract_paths
-from language_review.scanner import scan_paths
 
 FIXTURES = Path(__file__).parent / "fixtures" / "extract"
 
@@ -934,6 +934,9 @@ def test_extract_cli_json_output_errors_and_report_protection(
     source = root / "message.md"
     original = "# Заголовок\n\nТочный текст.\n".encode()
     source.write_bytes(original)
+    from support.project_inputs import prepare
+
+    prepare([str(source)], load_config())
     environment = os.environ.copy()
     environment["APPDATA"] = str(isolated_appdata)
     environment["PYTHONUTF8"] = "1"
@@ -1068,6 +1071,9 @@ def test_cli_builds_only_the_requested_extract_format(
 
     monkeypatch.setattr(cli, unused_builder, unexpected)
 
+    from support.project_inputs import prepare
+
+    prepare([str(source)], load_config())
     assert cli.main(["extract", str(source), "--format", output_format]) == 0
     output = capsys.readouterr().out
     if output_format == "json":

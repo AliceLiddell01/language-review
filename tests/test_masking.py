@@ -3,11 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from support.project_inputs import extract_fixture_paths as extract_paths
 
 from language_review.check import build_units, source_position
 from language_review.config import CheckSettings, load_config
 from language_review.coordinates import SourceMap, position_within
-from language_review.extraction import extract_paths
 from language_review.masking import AMBIGUOUS, ViewFragment, build_view, decode_literal
 
 

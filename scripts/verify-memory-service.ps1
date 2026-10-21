@@ -69,11 +69,11 @@ function Wait-Processed([string]$ProjectId) {
             return $status
         }
         if (@($status.jobs | Where-Object state -EQ 'failed').Count) {
-            throw 'Worker исчерпал попытки; см. сохранённые ошибки заданий.'
+            throw 'Фоновый обработчик исчерпал попытки; см. сохранённые ошибки заданий.'
         }
         Start-Sleep -Seconds 2
     } while ([DateTime]::UtcNow -lt $deadline)
-    throw 'Истекло время автоматической обработки worker.'
+    throw 'Истекло время автоматической обработки фоновым обработчиком.'
 }
 try {
     foreach ($name in @('LANGUAGE_REVIEW_MEMORY_DSN', 'LANGUAGE_REVIEW_DB_PASSWORD', 'LANGUAGE_REVIEW_DB_PORT')) {
@@ -107,6 +107,10 @@ try {
         $container.HostConfig.PortBindings.'5432/tcp'[0].HostPort -eq [string]$port)
     $sample = Join-Path $scratch 'собственные данные.md'
     Set-Content -LiteralPath $sample -Encoding utf8NoBOM -Value 'Нужно праверить параметр конфигурации. Этот параметр возврощает результат проверки.'
+    # Политика проверки исходников отделена от TOML фонового обработчика.
+    $localPolicy = @{schema_version=1; default_profile='acceptance'; profiles=@{acceptance=@{engines=@('llm'); llm=@{provider='ollama'; model=$LlmModel}}}} | ConvertTo-Json -Depth 5
+    # JSON — строгое подмножество YAML 1.2, без интерполяции имени модели.
+    Set-Content -LiteralPath (Join-Path $scratch '.language-review.yaml') -Encoding utf8NoBOM -Value $localPolicy
     $sourceHash = (Get-FileHash -LiteralPath $sample).Hash
     $projectId = [guid]::NewGuid().ToString()
     $report = Invoke-Cli @('check', $sample, '--memory-project', $projectId, '--memory-dataset', 'synthetic', '--view', 'review', '--format', 'json') @(0, 1, 4)
@@ -164,7 +168,7 @@ try {
         $releases += $deployment.release
     }
 
-    # Ошибка конфигурации worker не является недоступностью БД: Docker recovery не вызывается.
+    # Ошибка конфигурации фонового обработчика не является недоступностью БД: восстановление через Docker не вызывается.
     $configBackup = Join-Path $scratch 'worker.toml.backup'
     Copy-Item -LiteralPath $deployment.config -Destination $configBackup
     $broken = [DateTime]::UtcNow
@@ -225,7 +229,7 @@ try {
         $canRemoveRuntime = $false
     }
 
-    # Сбой первой установки удаляет compose-файл runtime; volume проекта удаляется по файлу checkout.
+    # Сбой первой установки удаляет compose-файл установленной среды; том проекта удаляется по файлу рабочей копии.
     $cleanupCompose = if (Test-Path -LiteralPath (Join-Path $runtime 'compose.memory.yml')) { $compose } else {
         @('compose', '-f', (Join-Path (Split-Path -Parent $PSScriptRoot) 'compose.memory.yml'), '-p', $project)
     }

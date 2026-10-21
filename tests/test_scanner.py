@@ -4,10 +4,11 @@ import hashlib
 from pathlib import Path
 
 import pytest
+from support.project_inputs import scan_fixture_paths as scan_paths
 
 from language_review.config import load_config
+from language_review.project_config import FILENAME
 from language_review.report import scan_json
-from language_review.scanner import scan_paths
 
 
 def _hash(path: Path) -> str:
@@ -235,3 +236,42 @@ extensions = [".md"]
     assert records["crates/lib.rs"].profile == "rust"
     assert records["docs/guide.md"].status == "selected"
     assert records["docs/guide.md"].profile == "docs"
+
+
+def test_project_path_rules_apply_to_directory_entries_and_scan_roots(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    repository = tmp_path / "repo"
+    docs = repository / "docs"
+    (repository / ".git").mkdir(parents=True)
+    docs.mkdir()
+    (docs / "guide.md").write_text("Текст.", encoding="utf-8")
+    (repository / FILENAME).write_text(
+        """schema_version: 1
+default_profile: source
+profiles:
+  source:
+    scan: {extensions: [.txt], exclude_dirs: [docs]}
+  docs:
+    scan: {extensions: [.md], exclude_dirs: []}
+path_rules:
+  - {path: 'docs/**', profile: docs}
+""",
+        encoding="utf-8",
+    )
+
+    whole_repository = scan_paths([str(repository)], load_config())
+    docs_root = scan_paths([str(docs)], load_config())
+
+    assert not any(
+        record.path == "docs" and record.reason == "excluded_directory"
+        for record in whole_repository.files
+    )
+    assert (
+        next(record for record in whole_repository.files if record.path == "docs/guide.md").profile
+        == "docs"
+    )
+    assert docs_root.roots[0]["profile"] == "docs"
+    assert any(
+        record.path == "guide.md" and record.status == "selected" for record in docs_root.files
+    )

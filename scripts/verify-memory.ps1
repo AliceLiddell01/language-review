@@ -67,6 +67,7 @@ try {
     Invoke-Checked docker ($compose + @('stop','postgres'))
     $source = Join-Path $scratch 'input.md'
     [IO.File]::WriteAllText($source, 'Корректный русский текст.')
+    Invoke-Checked uv @('run','--locked','language-review','init',$scratch)
     $unavailable = & uv run --locked --extra memory language-review check $source --engine vale `
         --memory --memory-project ([guid]::NewGuid()) --format json 2> (Join-Path $scratch 'db-failure.stderr.log')
     if ($LASTEXITCODE -ne 6 -or $unavailable) { throw 'Отказ БД не привёл к безопасному завершению.' }

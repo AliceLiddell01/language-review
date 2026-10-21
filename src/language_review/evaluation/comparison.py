@@ -37,6 +37,12 @@ def _differences(first: Any, second: Any, prefix: str = "") -> dict[str, Any]:
 def compare(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
     compatible(first, second)
 
+    def elapsed_by_engine(result: dict[str, Any]) -> dict[str, float]:
+        elapsed: dict[str, float] = {}
+        for run in result["cost"]["engines"]:
+            elapsed[run["name"]] = elapsed.get(run["name"], 0.0) + run["elapsed_ms"]
+        return elapsed
+
     def indices(result: dict[str, Any]) -> tuple[set[str], set[str], dict[str, list[str]]]:
         fp: set[str] = set()
         fn: set[str] = set()
@@ -90,15 +96,11 @@ def compare(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
         "time": _differences(
             {
                 "wall_clock_ms": first["cost"]["wall_clock_ms"],
-                "engine_elapsed_ms": {
-                    item["name"]: item["elapsed_ms"] for item in first["cost"]["engines"]
-                },
+                "engine_elapsed_ms": elapsed_by_engine(first),
             },
             {
                 "wall_clock_ms": second["cost"]["wall_clock_ms"],
-                "engine_elapsed_ms": {
-                    item["name"]: item["elapsed_ms"] for item in second["cost"]["engines"]
-                },
+                "engine_elapsed_ms": elapsed_by_engine(second),
             },
         ),
     }

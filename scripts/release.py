@@ -148,6 +148,8 @@ def prepare(args: argparse.Namespace) -> None:
             )
         # Build backend закреплён pyproject; разрешение runtime не изменяется.
         run("uv", "build", "--no-sources", "--out-dir", str(output), cwd=tree)
+        # uv создаёт служебный .gitignore в out-dir; это не release asset.
+        (output / ".gitignore").unlink(missing_ok=True)
         shutil.copyfile(tree / "scripts/install.ps1", output / "install.ps1")
         for name in RUNTIME_ASSETS:
             shutil.copyfile(

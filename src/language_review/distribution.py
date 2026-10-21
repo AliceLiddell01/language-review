@@ -181,8 +181,14 @@ def execute(args: list[str], *, expected: set[int] | None = None) -> str:
         cwd=tempfile.gettempdir(),
     )
     if result.returncode not in (expected or {0}):
+        import re
+
+        detail = re.sub(r"(?:https?|file)://\S+", "<адрес>", result.stderr[-2000:])
         raise ReleaseError(
-            "Проверка/установка кандидата завершилась ошибкой: " + Path(args[0]).name
+            "Проверка/установка кандидата завершилась ошибкой: "
+            + Path(args[0]).name
+            + f" (exit {result.returncode}): "
+            + detail
         )
     return result.stdout.strip()
 

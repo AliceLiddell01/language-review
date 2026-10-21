@@ -90,12 +90,20 @@ def verify(candidate: Path) -> dict[str, Any]:
                 "LOCALAPPDATA": str(home / "AppData/Local"),
                 "UV_PYTHON_INSTALL_DIR": str(root / "python"),
                 "UV_NO_PROGRESS": "1",
+                "UV_PYTHON_PREFERENCE": "only-managed",
             }
         )
         # Кэш Python можно использовать; product package/venv отсутствуют.
         env.pop("PYTHONPATH", None)
         env.pop("LANGUAGE_REVIEW_MEMORY_DSN", None)
         env.pop("VIRTUAL_ENV", None)
+        # uv run добавляет dev venv в PATH; чистая приёмка исключает этот checkout.
+        checkout_scripts = (Path.cwd() / ".venv/Scripts").resolve()
+        env["PATH"] = os.pathsep.join(
+            part
+            for part in env["PATH"].split(os.pathsep)
+            if part and Path(part).resolve() != checkout_scripts
+        )
         inputs = root / "foreign"
         for name in ("repo-a", "repo-b"):
             repo = inputs / name

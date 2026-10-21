@@ -14,7 +14,9 @@ $ErrorActionPreference = 'Stop'
 if (-not $IsWindows -or $PSVersionTable.PSVersion.Major -lt 7) {
     throw 'Требуются Windows и PowerShell 7.'
 }
-$source = if ($ReleaseDirectory) { [IO.Path]::GetFullPath($ReleaseDirectory) } else { Split-Path -Parent $PSScriptRoot }
+$source = if ($ReleaseDirectory) {
+    $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ReleaseDirectory)
+} else { Split-Path -Parent $PSScriptRoot }
 $releaseManifest = $null
 if ($ReleaseDirectory) {
     $releaseManifest = Get-Content -Raw -LiteralPath (Join-Path $source 'release.json') | ConvertFrom-Json

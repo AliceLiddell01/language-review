@@ -404,6 +404,7 @@ def install(
                     str(release / "wheelhouse"),
                     "--only-binary",
                     ":all:",
+                    "--compile-bytecode",
                     "-r",
                     str(release / "bundle" / f"requirements-{extras}.txt"),
                 ]
@@ -418,6 +419,7 @@ def install(
                     "--python",
                     python,
                     "--no-deps",
+                    "--compile-bytecode",
                     str(wheel_path),
                 ]
             )

@@ -46,8 +46,11 @@ uv run --locked python .github/scripts/check_pr_body.py --body-file путь\к\
 зависимости от checkout и PATH. `--codex-executable ПУТЬ` добавляет read-only
 `skills/list` через Codex app-server без вызова модели; `--upgrade-candidate КАТАЛОГ`
 проверяет смену версии и rollback. Без соответствующего аргумента каждая из этих
-дополнительных проверок имеет статус `NOT_RUN`. Это не public Release, вызов skill
-моделью или worker/DB acceptance.
+дополнительных проверок имеет статус `NOT_RUN`. Релизный `scripts/release.py accept`
+получает настоящий `previous_stable` через официальный транспорт и проверяет его
+установку → обновление до кандидата → откат. Схемой обязательных результатов и
+разрешёнными причинами `NOT_RUN` владеет `release_acceptance.py`; неполный отчёт
+не проходит publish. Это не публичный Release, вызов skill моделью или приёмка worker/БД.
 
 SIWC и расширенные проходы: `tests/test_chatgpt.py`/`test_analysis.py` проверяют протоколы,
 JWT, настоящий loopback callback, DPAPI и межпроцессный refresh в Windows, SSE,

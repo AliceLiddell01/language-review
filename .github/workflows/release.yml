@@ -71,8 +71,10 @@ jobs:
           uv run --locked python scripts/release.py prepare --version $env:LR_VERSION --channel $env:LR_CHANNEL --commit $env:LR_COMMIT --previous $env:LR_PREVIOUS --notes $notesPath --output candidate
           if ($LASTEXITCODE -ne 0) { throw 'Подготовка не завершена' }
       - name: Проверить установку из кандидата в Windows
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          uv run --locked python scripts/verify-distribution.py --candidate candidate --output acceptance.json
+          uv run --locked python scripts/release.py accept --candidate candidate --output acceptance.json
           if ($LASTEXITCODE -ne 0) { throw 'Приёмка не пройдена' }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -127,6 +129,7 @@ jobs:
           LR_COMMIT: ${{ inputs.commit }}
           LR_CHANNEL: ${{ inputs.channel }}
           LR_PREVIOUS: ${{ inputs.previous }}
+          LR_CANDIDATE_RUN: ${{ inputs.candidate_run }}
         run: |
           $manifest = Get-Content -Raw prepared/candidate/release.json | ConvertFrom-Json
           if ($manifest.version -ne $env:LR_VERSION -or $manifest.commit -ne $env:LR_COMMIT -or $manifest.channel -ne $env:LR_CHANNEL -or $manifest.previous_stable -ne $env:LR_PREVIOUS) { throw 'Параметры публикации отличаются от кандидата' }

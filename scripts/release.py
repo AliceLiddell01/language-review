@@ -16,6 +16,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from language_review.release_acceptance import validate_report
 from language_review.release_contract import (
     REPOSITORY,
     RUNTIME_ASSETS,
@@ -81,13 +82,13 @@ def notes_valid(text: str, version: str, commit: str, previous: str) -> None:
         or re.search(r"\b(TODO|TBD)\b", text)
     ):
         raise ReleaseError(
-            "Release notes должны содержать версию/SHA/предыдущий stable и заполненные разделы."
+            "В описании выпуска нужны версия, SHA, предыдущий выпуск и заполненные разделы."
         )
 
 
 def prepare(args: argparse.Namespace) -> None:
     if os.name != "nt" or sys.version_info[:2] != (3, 15):
-        raise ReleaseError("Кандидат Windows требует нативный Windows builder с Python 3.15.")
+        raise ReleaseError("Кандидат Windows требует нативный сборщик в Windows с Python 3.15.")
     history = release_history()
     check_target(args.version, args.commit, args.previous, history)
     if run("git", "rev-parse", args.commit + "^{commit}") != args.commit:
@@ -245,6 +246,33 @@ def prepare(args: argparse.Namespace) -> None:
     print("Кандидат подготовлен; публичный тег и GitHub Release не созданы.")
 
 
+def accept(args: argparse.Namespace) -> None:
+    """Проверяет кандидат и настоящий предыдущий выпуск без записи на GitHub."""
+    from language_review.release_transport import fetch_bundle
+
+    data = validate_bundle(args.candidate)
+    with tempfile.TemporaryDirectory(prefix="language-review-predecessor-") as temporary:
+        previous = Path(temporary)
+        options = []
+        if data["previous_stable"] != "none":
+            fetch_bundle(previous, data["previous_stable"])
+            old = validate_bundle(previous)
+            if old["tag"] != data["previous_stable"] or old["channel"] != "stable":
+                raise ReleaseError(
+                    "Не удалось получить согласованный предыдущий стабильный выпуск."
+                )
+            options = ["--previous-candidate", str(previous)]
+        run(
+            sys.executable,
+            str(Path(__file__).with_name("verify-distribution.py")),
+            "--candidate",
+            str(args.candidate.absolute()),
+            "--output",
+            str(args.output.absolute()),
+            *options,
+        )
+
+
 def publish(args: argparse.Namespace) -> None:
     data = validate_bundle(args.candidate)
     # Это внешняя предпосылка CI, а не параметр самого candidate manifest.
@@ -271,18 +299,37 @@ def publish(args: argparse.Namespace) -> None:
         if not matching or max(matching, key=lambda r: r["id"])["conclusion"] != "success":
             raise ReleaseError("Обязательный CI не завершён успешно для target SHA: " + filename)
     evidence = read_json(args.evidence)
-    if (
-        evidence.get("commit") != data["commit"]
-        or evidence.get("manifest_sha256") != digest(args.candidate / "release.json")
-        or evidence.get("status") != "PASS"
-    ):
-        raise ReleaseError("Нет приёмки Windows именно этого комплекта.")
     notes_valid(
         (args.candidate / "release-notes.md").read_text("utf-8"),
         data["version"],
         data["commit"],
         data["previous_stable"],
     )
+    validate_report(evidence, data, digest(args.candidate / "release.json"))
+    source = evidence["source"]
+    origin = github("actions/runs/" + source["run_id"])
+    if (
+        origin.get("id") != int(source["run_id"])
+        or origin.get("path") != source["workflow"]
+        or origin.get("head_sha") != source["commit"]
+        or origin.get("head_branch") != "main"
+        or origin.get("event") != "workflow_dispatch"
+        or origin.get("conclusion") != "success"
+        or origin.get("head_repository", {}).get("full_name") != REPOSITORY
+    ):
+        raise ReleaseError("Отчёт не соответствует успешному prepare в официальном репозитории.")
+    if data["previous_stable"] != "none":
+        previous = github("releases/tags/" + data["previous_stable"])
+        manifests = [a for a in previous.get("assets", []) if a.get("name") == "release.json"]
+        if (
+            previous.get("tag_name") != data["previous_stable"]
+            or previous.get("draft")
+            or previous.get("prerelease")
+            or not previous.get("published_at")
+            or len(manifests) != 1
+            or manifests[0].get("digest") != "sha256:" + evidence["predecessor"]["manifest_sha256"]
+        ):
+            raise ReleaseError("Приёмка использовала другой предыдущий стабильный комплект.")
     # Создание ref атомарно отказывает при гонке с уже существующим тегом.
     tag_ref = json.loads(
         run(
@@ -302,7 +349,7 @@ def publish(args: argparse.Namespace) -> None:
         or tag_ref.get("object", {}).get("sha") != data["commit"]
     ):
         raise ReleaseError("Созданный ref не соответствует разрешённому target.")
-    # Сначала draft с полным комплектом; immutable publication происходит последней.
+    # Сначала draft с полным комплектом; неизменяемый релиз публикуется последним.
     run(
         "gh",
         "release",
@@ -353,9 +400,14 @@ def main() -> None:
     candidate.add_argument("--version", required=True)
     candidate.add_argument("--channel", choices=("stable", "prerelease"), required=True)
     candidate.add_argument("--commit", required=True)
-    candidate.add_argument("--previous", required=True, help="Последний stable tag или none")
+    candidate.add_argument(
+        "--previous", required=True, help="Тег последнего стабильного выпуска или none"
+    )
     candidate.add_argument("--notes", type=Path, required=True)
     candidate.add_argument("--output", type=Path, required=True)
+    acceptance = sub.add_parser("accept")
+    acceptance.add_argument("--candidate", type=Path, required=True)
+    acceptance.add_argument("--output", type=Path, required=True)
     publication = sub.add_parser("publish")
     publication.add_argument("--candidate", type=Path, required=True)
     publication.add_argument("--evidence", type=Path, required=True)
@@ -363,6 +415,8 @@ def main() -> None:
     try:
         if args.command == "prepare":
             prepare(args)
+        elif args.command == "accept":
+            accept(args)
         else:
             publish(args)
     except ReleaseError as exc:

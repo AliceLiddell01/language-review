@@ -86,7 +86,8 @@ def locked(root: Path) -> Iterator[None]:
         with stream:
             stream.write(str(os.getpid()))
             stream.flush()
-            recover(root)
+            with launch_locked(root):
+                recover(root)
             yield
     finally:
         lock.unlink(missing_ok=True)
@@ -95,24 +96,36 @@ def locked(root: Path) -> Iterator[None]:
 @contextlib.contextmanager
 def launch_locked(root: Path) -> Iterator[None]:
     """Сериализует выбор active runtime с переключением и очисткой поколений."""
+    from importlib import import_module
+
+    msvcrt = cast(Any, import_module("msvcrt"))
     lock = root / ".launch-lock"
     safe_path(lock)
     deadline = time.monotonic() + 30
-    while True:
-        try:
-            stream = lock.open("x")
-            break
-        except FileExistsError as exc:
-            if time.monotonic() >= deadline:
-                raise ReleaseError("Не удалось дождаться завершения запуска CLI.") from exc
-            time.sleep(0.05)
+    # Блокировкой владеет дескриптор, а не pathname. Windows освобождает диапазон
+    # после гибели процесса. Оставшийся файл не мешает следующему захвату.
     try:
-        with stream:
-            stream.write(str(os.getpid()))
-            stream.flush()
-            yield
+        with lock.open("a+b") as stream:
+            stream.seek(0)
+            while True:
+                try:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if time.monotonic() >= deadline:
+                        raise ReleaseError("Не удалось дождаться завершения запуска CLI.") from exc
+                    time.sleep(0.05)
+            try:
+                yield
+            finally:
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
     finally:
-        lock.unlink(missing_ok=True)
+        # Оба клиента запрещают FILE_SHARE_DELETE: Windows не даст удалить файл
+        # с открытым чужим дескриптором. Очистка имени также совместима со старыми
+        # launcher, ожидающими CreateNew; занятый файл оставляется следующему владельцу.
+        with contextlib.suppress(OSError):
+            lock.unlink(missing_ok=True)
 
 
 def _has_live_runtime_lease(release: Path) -> bool:
@@ -312,10 +325,10 @@ def transaction(root: Path, writes: dict[Path, bytes | None]) -> None:
                 path.unlink(missing_ok=True)
             else:
                 atomic(path, content)
+        (root / ".transaction.json").unlink()
     except BaseException:
         recover(root)
         raise
-    (root / ".transaction.json").unlink()
 
 
 def skill_path(agent: str, home: Path) -> Path:
@@ -395,7 +408,7 @@ def probe(release: Path, version: str) -> None:
         ]
     )
     execute([python, "-I", "-m", "language_review.evaluation", "--help"])
-    # Недоступные optional движки — допустимый диагностический результат ядра.
+    # Недоступные необязательные движки — допустимый диагностический результат ядра.
     report = json.loads(
         execute(
             [python, "-I", "-m", "language_review", "doctor", "--format", "json"], expected={0, 3}
@@ -468,9 +481,13 @@ $module = switch ($args[0]) {
 $forward = @($args | Select-Object -Skip 1)
 for ($attempt = 0; $attempt -lt 300; $attempt++) {
     try {
-        $gate = [IO.File]::Open($gatePath, 'CreateNew', 'Write', 'None')
+        $gate = [IO.File]::Open($gatePath, 'OpenOrCreate', 'ReadWrite', 'ReadWrite')
+        $gate.Lock(0, 1)
         break
-    } catch [IO.IOException] { Start-Sleep -Milliseconds 100 }
+    } catch [IO.IOException] {
+        if ($gate) { $gate.Dispose(); $gate = $null }
+        Start-Sleep -Milliseconds 100
+    }
 }
 if (-not $gate) { throw 'Не удалось дождаться переключения active runtime.' }
 try {
@@ -495,7 +512,7 @@ try {
     throw
 } finally {
     $gate.Dispose()
-    Remove-Item -LiteralPath $gatePath -Force
+    Remove-Item -LiteralPath $gatePath -Force -ErrorAction SilentlyContinue
 }
 $python = Join-Path $release 'venv/Scripts/python.exe'
 $exitCode = 1
@@ -566,7 +583,7 @@ def install(
             and not allow_downgrade
         ):
             raise ReleaseError("Понижение версии требует --allow-downgrade; БД не откатывается.")
-        selected = list(old.get("skills", {})) if agents is None else agents
+        selected = sorted(set(old.get("skills", {})) | set(agents or []))
         with zipfile.ZipFile(
             bundle / next(n for n in data["assets"] if n.endswith(".whl"))
         ) as wheel:
@@ -678,19 +695,19 @@ def install(
                 transaction(root, writes)
                 committed = True
         except BaseException:
-            if not committed:
+            # Неизвестный результат восстановления не разрешает удалять поколение:
+            # pointer или журнал всё ещё могут ссылаться на него.
+            if not committed and not (root / ".transaction.json").exists():
+                if state(root).get("active") == identifier:
+                    raise
                 if added:
                     change_path(root / "bin", add=False)
                 # Только созданный этой операцией каталог; пользовательские данные вне него.
                 if release.is_relative_to(root / "releases") and not release.is_symlink():
                     shutil.rmtree(release)
             raise
-        with contextlib.suppress(OSError, ReleaseError):
-            prune_stale_releases(
-                root,
-                active=identifier,
-                previous=old.get("active"),
-            )
+        with launch_locked(root), contextlib.suppress(OSError, ReleaseError):
+            prune_stale_releases(root, active=identifier, previous=old.get("active"))
         return current
 
 
@@ -723,11 +740,11 @@ def rollback(root: Path) -> dict[str, Any]:
     if not previous or not isinstance(previous, str) or not re_identifier(previous):
         raise ReleaseError("Сохранённая предыдущая версия отсутствует.")
     bundle = root / "releases" / previous / "bundle"
-    # install делает отдельный проверенный кандидат; optional worker/DB остаются у владельца.
+    # install делает отдельный проверенный кандидат; необязательные worker/БД остаются у владельца.
     return install(
         bundle,
         root,
-        uv=old["uv"],
+        uv=private_uv(root, old),
         extras=old["extras"],
         home=Path(old["home"]),
         allow_downgrade=True,
@@ -748,12 +765,34 @@ def status(root: Path) -> dict[str, Any]:
     for agent, checksum in old["skills"].items():
         path = skill_path(agent, Path(old["home"]))
         skills[agent] = "current" if path.is_file() and digest(path) == checksum else "drift"
+    launchers = {}
+    for path in launcher_files(root):
+        safe_path(path)
+        try:
+            launchers[path.name] = (
+                "missing"
+                if not path.is_file()
+                else "current"
+                if digest(path) == old.get("launchers", {}).get(path.name)
+                else "changed"
+            )
+        except OSError:
+            launchers[path.name] = "unreadable"
+    runtime = "current" if python_at(root / "releases" / old["active"]).is_file() else "missing"
     return {
-        "status": "issues" if "drift" in skills.values() else "installed",
+        "status": "issues"
+        if (
+            "drift" in skills.values()
+            or runtime != "current"
+            or any(value != "current" for value in launchers.values())
+        )
+        else "installed",
         "version": old["version"],
         "package_version": old["package_version"],
         "commit": old["commit"],
         "skills": skills,
+        "launchers": launchers,
+        "runtime": runtime,
         "extras": old["extras"],
         "previous_available": bool(old.get("previous")),
     }

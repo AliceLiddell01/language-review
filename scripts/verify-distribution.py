@@ -18,6 +18,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from language_review import release_acceptance as acceptance
 from language_review.release_contract import digest, validate_bundle, version_key
 
 
@@ -33,7 +34,7 @@ def command(args: list[str], env: dict[str, str], cwd: Path, codes: set[int] | N
         timeout=300,
     )
     if process.returncode not in (codes or {0}):
-        # Только синтетические входы; штатный вывод не содержит credentials.
+        # Только синтетические входы; штатный вывод не содержит учётных данных.
         raise RuntimeError(
             f"{Path(args[0]).name} {args[1:3]}: exit {process.returncode}\n"
             f"{process.stdout[-2500:]}\n{process.stderr[-2500:]}"
@@ -195,19 +196,250 @@ def codex_discovery(executable: Path, home: Path, cwd: Path, env: dict[str, str]
             reader.join(timeout=5)
 
 
+def user_path_contains(bin_path: Path) -> bool:
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            value = winreg.QueryValueEx(key, "Path")[0]
+    except FileNotFoundError:
+        return False
+    return any(
+        os.path.normcase(os.path.expandvars(part)) == os.path.normcase(str(bin_path))
+        for part in value.split(";")
+    )
+
+
+def verify_registered_path(
+    install_root: Path, env: dict[str, str], cwd: Path, version: str
+) -> None:
+    require(
+        user_path_contains(install_root / "bin"),
+        "Установщик не зарегистрировал пользовательский PATH.",
+    )
+    pwsh = shutil.which("pwsh")
+    require(pwsh is not None, "PowerShell 7 не найден.")
+    # Новый процесс получает PATH только из постоянных областей Windows.
+    # Тестируемый каталог не добавляется ни здесь, ни в окружении родителя.
+    script = """$ErrorActionPreference = 'Stop'
+$machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+$user = [Environment]::GetEnvironmentVariable('Path', 'User')
+$env:Path = $machine + ';' + $user
+$review = (Get-Command language-review -CommandType Application -ErrorAction Stop).Source
+$evaluator = (Get-Command language-review-eval -CommandType Application -ErrorAction Stop).Source
+$version = & $review --version
+if ($LASTEXITCODE -ne 0) { throw 'CLI из PATH завершился с ошибкой.' }
+$help = & $evaluator --help
+if ($LASTEXITCODE -ne 0) { throw 'Evaluator из PATH завершился с ошибкой.' }
+@{review=$review; evaluator=$evaluator; version=$version; help=($help -join "`n")} |
+    ConvertTo-Json -Compress
+"""
+    result = json.loads(command([str(pwsh), "-NoProfile", "-Command", script], env, cwd))
+    require(
+        Path(result["review"]).resolve() == (install_root / "bin/language-review.cmd").resolve(),
+        "PATH выбрал посторонний CLI.",
+    )
+    require(
+        Path(result["evaluator"]).resolve()
+        == (install_root / "bin/language-review-eval.cmd").resolve(),
+        "PATH выбрал посторонний evaluator.",
+    )
+    require(
+        result["version"] == "language-review " + version,
+        "Команда из PATH запустила неверную версию.",
+    )
+    require("language-review-eval" in result["help"], "Evaluator из PATH не вернул справку.")
+
+
+def verify_vale(
+    cli: list[str],
+    env: dict[str, str],
+    root: Path,
+    inputs: Path,
+    checks: dict[str, dict[str, str]],
+) -> None:
+    """Проверяет настоящий Vale; отсутствие программы не считается успехом."""
+    if shutil.which("vale", path=env["PATH"]):
+        policy = inputs / "repo-a/.language-review.yaml"
+        policy.write_text(
+            "schema_version: 1\ndefault_profile: docs\nprofiles:\n  docs:\n    engines: [vale]\n",
+            encoding="utf-8",
+        )
+        source = inputs / "repo-a/notes.md"
+        original = source.read_bytes()
+        source.write_text("Слово слово повторяется.\n", encoding="utf-8")
+        command(
+            [
+                *cli,
+                "check",
+                str(source),
+                "--view",
+                "review",
+                "--format",
+                "json",
+                "--output",
+                str(root / "positive.json"),
+            ],
+            env,
+            root,
+            {1},
+        )
+        positive = json.loads((root / "positive.json").read_text("utf-8"))
+        require(
+            positive["status"] == "findings" and positive["items"],
+            "Vale не обнаружил синтетическую языковую ошибку.",
+        )
+        command(
+            [
+                *cli,
+                "verify-review",
+                str(root / "positive.json"),
+                "--root",
+                "root-0001=" + str(source),
+                "--format",
+                "json",
+            ],
+            env,
+            root,
+        )
+        source.write_bytes(original)
+        command(
+            [
+                *cli,
+                "verify-review",
+                str(root / "positive.json"),
+                "--root",
+                "root-0001=" + str(source),
+                "--format",
+                "json",
+            ],
+            env,
+            root,
+            {4},
+        )
+        clean = json.loads(
+            command([*cli, "check", str(source), "--view", "review", "--format", "json"], env, root)
+        )
+        require(clean["status"] == "clean", "Vale оставил finding после восстановления входа.")
+        checks["real_vale_findings_clean_stale_hash"] = {"status": "PASS"}
+    else:
+        checks["real_vale_findings_clean_stale_hash"] = {
+            "status": "NOT_RUN",
+            "reason": "vale_unavailable",
+        }
+
+
+def verify_version_cycle(
+    initial: Path,
+    upgrade_candidate: Path,
+    bootstrap: list[str],
+    install_root: Path,
+    env: dict[str, str],
+    root: Path,
+) -> dict[str, dict[str, str]]:
+    manifest = validate_bundle(initial)
+    checks: dict[str, dict[str, str]] = {}
+    upgrade = validate_bundle(upgrade_candidate)
+    require_upgrade_version(manifest, upgrade)
+    damaged = root / "failing-candidate"
+    shutil.copytree(upgrade_candidate, damaged)
+    wheel_path = next(damaged.glob("*.whl"))
+    import zipfile
+
+    with zipfile.ZipFile(wheel_path) as archive:
+        entries = {entry.filename: archive.read(entry) for entry in archive.infolist()}
+    entries["language_review/__main__.py"] = b'raise RuntimeError("synthetic candidate failure")\n'
+    with zipfile.ZipFile(wheel_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, content in entries.items():
+            archive.writestr(name, content)
+    damaged_manifest = json.loads((damaged / "release.json").read_text("utf-8"))
+    damaged_manifest["assets"][wheel_path.name] = {
+        "size": wheel_path.stat().st_size,
+        "sha256": digest(wheel_path),
+    }
+    (damaged / "release.json").write_text(json.dumps(damaged_manifest), encoding="utf-8")
+    failure = bootstrap.copy()
+    failure[failure.index(str(initial))] = str(damaged)
+    failure[failure.index(digest(initial / "release.json"))] = digest(damaged / "release.json")
+    state_before = (install_root / "installation.json").read_bytes()
+    failure_output = subprocess.run(
+        failure,
+        env=env,
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=300,
+    )
+    failure_details = failure_output.stdout + failure_output.stderr
+    require(
+        failure_output.returncode == 1,
+        "Bootstrap должен отклонить кандидата с ошибкой readiness.",
+    )
+    require(
+        "synthetic candidate failure" in failure_details,
+        "Кандидат должен запуститься и завершиться синтетической ошибкой readiness.",
+    )
+    require(
+        (install_root / "installation.json").read_bytes() == state_before,
+        "Неудачный кандидат изменил текущий installation pointer.",
+    )
+    checks["real_failing_candidate_preserves_previous"] = {"status": "PASS"}
+    success = bootstrap.copy()
+    success[success.index(str(initial))] = str(upgrade_candidate)
+    success[success.index(digest(initial / "release.json"))] = digest(
+        upgrade_candidate / "release.json"
+    )
+    command(success, env, root)
+    require(
+        json.loads((install_root / "installation.json").read_text("utf-8"))["version"]
+        == upgrade["version"],
+        "Upgrade не установил ожидаемую версию.",
+    )
+    upgraded_state = json.loads((install_root / "installation.json").read_text("utf-8"))
+    upgraded_python = (
+        install_root / "releases" / upgraded_state["active"] / "venv/Scripts/python.exe"
+    )
+    command(
+        [str(upgraded_python), "-I", "-m", "language_review", "installation", "rollback"], env, root
+    )
+    current = json.loads((install_root / "installation.json").read_text("utf-8"))
+    require(current["version"] == manifest["version"], "Rollback не восстановил прежнюю версию.")
+    python = install_root / "releases" / current["active"] / "venv/Scripts/python.exe"
+    cli = [str(python), "-I", "-m", "language_review"]
+    require(
+        command([*cli, "--version"], env, root).endswith(manifest["package_version"]),
+        "CLI после rollback сообщил неверную версию.",
+    )
+    checks["controlled_version_upgrade_rollback"] = {"status": "PASS"}
+    return checks
+
+
 def verify(
-    candidate: Path, codex_executable: Path | None = None, upgrade_candidate: Path | None = None
+    candidate: Path,
+    codex_executable: Path | None = None,
+    upgrade_candidate: Path | None = None,
+    previous_candidate: Path | None = None,
 ) -> dict[str, Any]:
     if os.name != "nt":
         raise RuntimeError("Приёмка требует Windows/PowerShell 7.")
     manifest = validate_bundle(candidate)
-    checks: dict[str, str] = {}
-    with tempfile.TemporaryDirectory(prefix="language-review-distribution-") as temporary:
+    checks: dict[str, dict[str, str]] = {}
+    predecessor = None
+    require(
+        not (upgrade_candidate and previous_candidate),
+        "Выберите один вариант проверки смены версии.",
+    )
+    with (
+        tempfile.TemporaryDirectory(prefix="language-review-distribution-") as temporary,
+        contextlib.ExitStack() as cleanup,
+    ):
         root = Path(temporary)
         received = root / "received"
         received.mkdir()
 
-        # Никакого изменения доверенной production download policy: отдельный локальный
+        # Никакого изменения политики доверенной загрузки продукта: отдельный локальный
         # HTTP transport только синтетической приёмки, manifest digest передаётся извне.
         class Quiet(http.server.SimpleHTTPRequestHandler):
             def log_message(self, format: str, *args: Any) -> None:
@@ -234,9 +466,10 @@ def verify(
             server.shutdown()
             server.server_close()
             thread.join()
-        checks["independent_download_integrity"] = (
-            "PASS (loopback release-like assets, не публичный Release)"
-        )
+        checks["independent_download_integrity"] = {
+            "status": "PASS",
+            "detail": "Загрузка через loopback; публичный Release не проверялся.",
+        }
         env = dict(os.environ)
         home = root / "profile"
         home.mkdir()
@@ -295,9 +528,32 @@ def verify(
             "core",
             "-NonInteractive",
             "-Codex",
-            "-NoPath",
         ]
+        from language_review.distribution import change_path
+
+        require(
+            not user_path_contains(install_root / "bin"),
+            "Тестовый каталог уже зарегистрирован в PATH.",
+        )
+        cleanup.callback(change_path, install_root / "bin", add=False)
         command(bootstrap, env, inputs / "repo-a")
+        verify_registered_path(install_root, env, inputs / "repo-b", manifest["package_version"])
+        require(
+            change_path(install_root / "bin", add=False), "Не удалось снять тестовую запись PATH."
+        )
+        try:
+            verify_registered_path(
+                install_root, env, inputs / "repo-b", manifest["package_version"]
+            )
+        except RuntimeError as exc:
+            require(
+                "не зарегистрировал" in str(exc),
+                "Отказ PATH должен объяснять отсутствие регистрации.",
+            )
+        else:
+            raise RuntimeError("Отсутствующая регистрация PATH дала ложный успех.")
+        command(bootstrap, env, inputs / "repo-a")
+        verify_registered_path(install_root, env, inputs / "repo-b", manifest["package_version"])
         current = json.loads((install_root / "installation.json").read_text("utf-8"))
         python = install_root / "releases" / current["active"] / "venv/Scripts/python.exe"
         cli = [str(python), "-I", "-m", "language_review"]
@@ -317,13 +573,13 @@ def verify(
             not (home / ".claude/skills/language-review").exists(),
             "Claude skill появился без явного выбора.",
         )
-        checks["claude_not_selected_absent"] = "PASS"
+        checks["claude_not_selected_absent"] = {"status": "PASS"}
         command(
             [*cli, "config", "show", "--environment", "--format", "json"], env, inputs / "repo-b"
         )
         command([*cli, "setup", "--non-interactive", "--codex"], env, inputs / "repo-b")
         require(snapshot(inputs) == before, "Команды чтения изменили входные репозитории.")
-        checks["core_foreign_cwd_readonly"] = "PASS"
+        checks["core_foreign_cwd_readonly"] = {"status": "PASS"}
         # Extras включаются явно отдельным проверяемым upgrade той же поставки.
         bootstrap[bootstrap.index("core")] = "all"
         bootstrap.append("-Claude")
@@ -336,7 +592,14 @@ def verify(
         current = updated
         python = install_root / "releases" / current["active"] / "venv/Scripts/python.exe"
         cli = [str(python), "-I", "-m", "language_review"]
-        checks["controlled_extras_upgrade"] = "PASS"
+        checks["controlled_extras_upgrade"] = {"status": "PASS"}
+        codex_only = [arg for arg in bootstrap if arg != "-Claude"]
+        command(codex_only, env, inputs / "repo-b")
+        require(
+            json.loads((install_root / "installation.json").read_text("utf-8"))["skills"]
+            == current["skills"],
+            "Повторный выбор Codex снял ранее выбранный Claude skill.",
+        )
         # Sdist того же релизного SHA устанавливается отдельно и сверяет тот же CLI.
         uv = current["uv"]
         sdist_env = root / "sdist-env"
@@ -381,51 +644,16 @@ def verify(
             == "language-review " + manifest["package_version"],
             "Sdist CLI сообщил неверную версию.",
         )
-        checks["release_sdist_independent_install"] = "PASS"
-        # Проверяем реальную пользовательскую регистрацию PATH и новый pwsh; затем
-        # удаляем только добавленную приёмкой запись, не восстанавливаем чужой PATH целиком.
-        from language_review.distribution import change_path
-
-        added = change_path(install_root / "bin", add=True)
-        try:
-            import winreg
-
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
-                user_path = winreg.QueryValueEx(key, "Path")[0]
-            launch_env = {
-                **env,
-                "PATH": str(install_root / "bin")
-                + os.pathsep
-                + os.path.expandvars(user_path)
-                + os.pathsep
-                + env["PATH"],
-            }
-            result = command(
-                ["pwsh", "-NoProfile", "-Command", "language-review --version"],
-                launch_env,
-                inputs / "repo-b",
-            )
-            require(
-                result == "language-review " + manifest["package_version"],
-                "Команда из PATH запустила неверную версию.",
-            )
-            evaluator = command(
-                ["pwsh", "-NoProfile", "-Command", "language-review-eval --help"],
-                launch_env,
-                inputs / "repo-b",
-            )
-            require("language-review-eval" in evaluator, "Evaluator launcher отсутствует в PATH.")
-        finally:
-            if added:
-                change_path(install_root / "bin", add=False)
-        checks["user_path_new_powershell"] = "PASS"
+        checks["release_sdist_independent_install"] = {"status": "PASS"}
+        verify_registered_path(install_root, env, inputs / "repo-b", manifest["package_version"])
+        checks["installer_user_path_new_powershell"] = {"status": "PASS"}
         command(bootstrap, env, inputs / "repo-b")
         require(
             json.loads((install_root / "installation.json").read_text("utf-8"))["active"]
             == current["active"],
             "Повторная установка неожиданно сменила active runtime.",
         )
-        checks["idempotent_install_setup"] = "PASS"
+        checks["idempotent_install_setup"] = {"status": "PASS"}
         if codex_executable:
             codex_discovery(
                 codex_executable,
@@ -433,7 +661,10 @@ def verify(
                 inputs / "repo-b",
                 {**env, "PATH": str(install_root / "bin") + os.pathsep + env["PATH"]},
             )
-            checks["codex_live_discovery"] = "PASS (app-server skills/list, модель не запускалась)"
+            checks["codex_live_discovery"] = {
+                "status": "PASS",
+                "detail": "app-server skills/list, модель не запускалась",
+            }
         for agent, directory in (("codex", ".agents"), ("claude", ".claude")):
             skill = home / directory / "skills/language-review/SKILL.md"
             require(
@@ -453,7 +684,7 @@ def verify(
                 f"Setup перезаписал пользовательский skill: {agent}.",
             )
             skill.write_bytes(original)
-            checks[agent + "_skill_ownership"] = "PASS"
+            checks[agent + "_skill_ownership"] = {"status": "PASS"}
         command(
             [*cli, "check", str(inputs / "repo-a"), "--view", "review", "--format", "json"],
             env,
@@ -461,7 +692,7 @@ def verify(
             {2},
         )
         require(snapshot(inputs) == before, "Проверка без YAML изменила входные репозитории.")
-        checks["missing_yaml_no_creation"] = "PASS"
+        checks["missing_yaml_no_creation"] = {"status": "PASS"}
         command([*cli, "init", str(inputs / "repo-a")], env, root)
         policy = inputs / "repo-a/.language-review.yaml"
         policy_before = policy.read_bytes()
@@ -486,149 +717,55 @@ def verify(
         )
         review = json.loads((root / "review.json").read_text("utf-8"))
         require(review["schema"] == "language-review.review", "Review вернул неверную схему.")
-        checks["explicit_init_check"] = "PASS (статус движков: " + review["status"] + ")"
-        if shutil.which("vale", path=env["PATH"]):
-            policy.write_text(
-                "schema_version: 1\ndefault_profile: docs\n"
-                "profiles:\n  docs:\n    engines: [vale]\n",
-                encoding="utf-8",
-            )
-            source = inputs / "repo-a/notes.md"
-            original = source.read_bytes()
-            source.write_text("Слово слово повторяется.\n", encoding="utf-8")
-            command(
-                [
-                    *cli,
-                    "check",
-                    str(source),
-                    "--view",
-                    "review",
-                    "--format",
-                    "json",
-                    "--output",
-                    str(root / "positive.json"),
-                ],
-                env,
-                root,
-                {1},
-            )
-            positive = json.loads((root / "positive.json").read_text("utf-8"))
+        checks["explicit_init_check"] = {
+            "status": "PASS",
+            "detail": "Статус движков: " + review["status"],
+        }
+        verify_vale(cli, env, root, inputs, checks)
+        if previous_candidate:
+            previous = validate_bundle(previous_candidate)
             require(
-                positive["status"] == "findings" and positive["items"],
-                "Vale не обнаружил синтетическую языковую ошибку.",
+                previous["tag"] == manifest["previous_stable"] and previous["channel"] == "stable",
+                "Предыдущий кандидат не соответствует previous_stable.",
             )
-            command(
-                [
-                    *cli,
-                    "verify-review",
-                    str(root / "positive.json"),
-                    "--root",
-                    "root-0001=" + str(source),
-                    "--format",
-                    "json",
-                ],
-                env,
-                root,
-            )
-            source.write_bytes(original)
-            command(
-                [
-                    *cli,
-                    "verify-review",
-                    str(root / "positive.json"),
-                    "--root",
-                    "root-0001=" + str(source),
-                    "--format",
-                    "json",
-                ],
-                env,
-                root,
-                {4},
-            )
-            clean = json.loads(
-                command(
-                    [*cli, "check", str(source), "--view", "review", "--format", "json"], env, root
+            require_upgrade_version(previous, manifest)
+            predecessor = {
+                "tag": previous["tag"],
+                "commit": previous["commit"],
+                "manifest_sha256": digest(previous_candidate / "release.json"),
+            }
+            cycle_env = dict(env)
+            for key in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"):
+                cycle_env[key] = str(root / "previous-profile" / key)
+                Path(cycle_env[key]).mkdir(parents=True, exist_ok=True)
+            cycle_root = Path(cycle_env["LOCALAPPDATA"]) / "LanguageReview/application"
+            cycle_bootstrap = [
+                "pwsh",
+                "-NoProfile",
+                "-File",
+                str(received / "install.ps1"),
+                "-BundleDirectory",
+                str(previous_candidate),
+                "-TrustedManifestSha256",
+                digest(previous_candidate / "release.json"),
+                "-NonInteractive",
+                "-NoPath",
+            ]
+            command(cycle_bootstrap, cycle_env, root)
+            checks.update(
+                verify_version_cycle(
+                    previous_candidate, candidate, cycle_bootstrap, cycle_root, cycle_env, root
                 )
             )
-            require(clean["status"] == "clean", "Vale оставил finding после восстановления входа.")
-            checks["real_vale_findings_clean_stale_hash"] = "PASS"
-        else:
-            checks["real_vale_findings_clean_stale_hash"] = "NOT_RUN (vale не найден в PATH)"
         if upgrade_candidate:
-            upgrade = validate_bundle(upgrade_candidate)
-            require_upgrade_version(manifest, upgrade)
-            damaged = root / "failing-candidate"
-            shutil.copytree(upgrade_candidate, damaged)
-            wheel_path = next(damaged.glob("*.whl"))
-            import zipfile
-
-            with zipfile.ZipFile(wheel_path) as archive:
-                entries = {entry.filename: archive.read(entry) for entry in archive.infolist()}
-            entries["language_review/__main__.py"] = (
-                b'raise RuntimeError("synthetic candidate failure")\n'
+            checks.update(
+                verify_version_cycle(
+                    received, upgrade_candidate, bootstrap, install_root, env, root
+                )
             )
-            with zipfile.ZipFile(wheel_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-                for name, content in entries.items():
-                    archive.writestr(name, content)
-            damaged_manifest = json.loads((damaged / "release.json").read_text("utf-8"))
-            damaged_manifest["assets"][wheel_path.name] = {
-                "size": wheel_path.stat().st_size,
-                "sha256": digest(wheel_path),
-            }
-            (damaged / "release.json").write_text(json.dumps(damaged_manifest), encoding="utf-8")
-            failure = bootstrap.copy()
-            failure[failure.index(str(received))] = str(damaged)
-            failure[failure.index(digest(candidate / "release.json"))] = digest(
-                damaged / "release.json"
-            )
-            state_before = (install_root / "installation.json").read_bytes()
-            failure_output = subprocess.run(
-                failure,
-                env=env,
-                cwd=root,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=300,
-            )
-            failure_details = failure_output.stdout + failure_output.stderr
-            require(
-                failure_output.returncode == 1,
-                "Bootstrap должен отклонить кандидата с ошибкой readiness.",
-            )
-            require(
-                "synthetic candidate failure" in failure_details,
-                "Кандидат должен запуститься и завершиться синтетической ошибкой readiness.",
-            )
-            require(
-                (install_root / "installation.json").read_bytes() == state_before,
-                "Неудачный кандидат изменил текущий installation pointer.",
-            )
-            checks["real_failing_candidate_preserves_previous"] = "PASS"
-            success = bootstrap.copy()
-            success[success.index(str(received))] = str(upgrade_candidate)
-            success[success.index(digest(candidate / "release.json"))] = digest(
-                upgrade_candidate / "release.json"
-            )
-            command(success, env, root)
-            require(
-                json.loads((install_root / "installation.json").read_text("utf-8"))["version"]
-                == upgrade["version"],
-                "Upgrade не установил ожидаемую версию.",
-            )
-            command([*cli, "installation", "rollback"], env, root)
             current = json.loads((install_root / "installation.json").read_text("utf-8"))
-            require(
-                current["version"] == manifest["version"], "Rollback не восстановил прежнюю версию."
-            )
             python = install_root / "releases" / current["active"] / "venv/Scripts/python.exe"
             cli = [str(python), "-I", "-m", "language_review"]
-            require(
-                command([*cli, "--version"], env, root).endswith(manifest["package_version"]),
-                "CLI после rollback сообщил неверную версию.",
-            )
-            checks["controlled_version_upgrade_rollback"] = "PASS"
         altered = root / "altered"
         shutil.copytree(received, altered)
         with next(altered.glob("*.whl")).open("ab") as stream:
@@ -645,7 +782,7 @@ def verify(
             command([*cli, "--version"], env, root).endswith(manifest["package_version"]),
             "CLI после отказа повреждённого bundle сообщил неверную версию.",
         )
-        checks["tampered_asset_preserves_install"] = "PASS"
+        checks["tampered_asset_preserves_install"] = {"status": "PASS"}
         # Uninstall сохраняет неизвестные и изменённые файлы, OAuth/TOML/DB не обходятся.
         user_file = python.parent.parent / "user-note.txt"
         user_file.write_bytes(b"preserve")
@@ -679,11 +816,11 @@ def verify(
             not (install_root / "bin/language-review.cmd").exists(),
             "Uninstall оставил управляемый launcher.",
         )
-        checks["uninstall_ownership"] = "PASS"
+        checks["uninstall_ownership"] = {"status": "PASS"}
         # Пользователь сам сохраняет/перемещает конфликтный skill до переустановки.
         codex.rename(codex.with_name("SKILL.saved.md"))
         command(bootstrap, env, root)
-        checks["safe_reinstall"] = "PASS"
+        checks["safe_reinstall"] = {"status": "PASS"}
         require(
             account_file.read_bytes() == protected_session,
             "Установка изменила синтетическую DPAPI-сессию.",
@@ -697,30 +834,17 @@ def verify(
             user_config.read_bytes() == user_environment,
             "Установка изменила пользовательский TOML.",
         )
-        checks["dpapi_environment_preserved"] = (
-            "PASS (синтетический DPAPI payload, без OAuth login)"
-        )
+        checks["dpapi_environment_preserved"] = {
+            "status": "PASS",
+            "detail": "Синтетические данные DPAPI, без входа OAuth",
+        }
         for name, value in before.items():
             require(digest(inputs / name) == value, f"Изменился внешний вход: {name}.")
         require(
             not (inputs / "repo-b/.language-review.yaml").exists(),
             "Установка создала конфигурацию во внешнем репозитории.",
         )
-    return {
-        "status": "PASS",
-        "commit": manifest["commit"],
-        "manifest_sha256": digest(candidate / "release.json"),
-        "environment": "Windows/PowerShell 7/Python 3.15",
-        "checks": checks,
-        "not_run": [
-            "публичный GitHub Release/tag",
-            "вызов skill моделью Claude; выполнение агентских turn не запускалось",
-            "memory-worker/DB readiness и migration rollback",
-            "OAuth в пользовательском аккаунте",
-        ]
-        + ([] if codex_executable else ["обнаружение пользовательского skill Codex app-server"])
-        + ([] if upgrade_candidate else ["смена версии и rollback (нужен --upgrade-candidate)"]),
-    }
+    return acceptance.report(manifest, digest(candidate / "release.json"), checks, predecessor)
 
 
 def main() -> None:
@@ -729,11 +853,17 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--codex-executable", type=Path)
     parser.add_argument("--upgrade-candidate", type=Path)
+    parser.add_argument("--previous-candidate", type=Path)
     args = parser.parse_args()
     result = verify(
         args.candidate.absolute(),
         args.codex_executable.absolute() if args.codex_executable else None,
         args.upgrade_candidate.absolute() if args.upgrade_candidate else None,
+        **(
+            {"previous_candidate": args.previous_candidate.absolute()}
+            if args.previous_candidate
+            else {}
+        ),
     )
     args.output.write_text(
         json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

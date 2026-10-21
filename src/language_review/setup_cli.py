@@ -84,6 +84,20 @@ def configure_endpoints(values: dict[str, str]) -> None:
                 node = node.get(key, {})
             if "endpoint" in node:
                 previous[service] = node["endpoint"]
+        # Setup владеет только точным сгенерированным блоком. Дополненные ключи
+        # и комментарии сохраняются отказом до записи, а не пересборкой TOML.
+        if text.count(begin) != 1 or text.count(end) != 1 or text.index(begin) > text.index(end):
+            raise ReleaseError("Маркеры setup повреждены; настройте TOML вручную.")
+        managed = text.split(begin, 1)[1].split(end, 1)[0].strip()
+        expected = []
+        for service, value in previous.items():
+            section = "check.languagetool" if service == "languagetool" else "check.llm." + service
+            expected.extend(["[" + section + "]", "endpoint = " + json.dumps(value), ""])
+        if sorted(managed.split("\n\n")) != sorted("\n".join(expected).strip().split("\n\n")):
+            raise ReleaseError(
+                "Блок setup изменён пользователем; файл сохранён. "
+                "Измените нужный endpoint вручную в пользовательском TOML."
+            )
     previous.update(values)
     lines = [begin]
     for service, value in previous.items():
@@ -97,7 +111,7 @@ def configure_endpoints(values: dict[str, str]) -> None:
             or parsed_url.fragment
         ):
             raise ReleaseError(
-                "Setup принимает локальные HTTP endpoints без credentials; "
+                "Setup принимает локальные HTTP endpoints без учётных данных; "
                 "удалённые требуют отдельной ручной настройки согласий."
             )
         section = "check.languagetool" if service == "languagetool" else "check.llm." + service

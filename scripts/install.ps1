@@ -16,7 +16,7 @@ if (-not $IsWindows -or $PSVersionTable.PSVersion.Major -lt 7) {
     throw 'Поддерживаются Windows x64 и PowerShell 7. Установите PowerShell 7 вручную (winget install Microsoft.PowerShell), затем повторите команду в pwsh.'
 }
 if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') {
-    throw 'Этот bootstrap поддерживает Windows x64; ARM64 не проверен.'
+    throw 'Этот установщик поддерживает Windows x64; ARM64 не проверен.'
 }
 $repository = 'AliceLiddell01/language-review'
 $hostsAllowed = @('api.github.com', 'github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com')
@@ -31,7 +31,7 @@ function Get-VerifiedDownload([string]$Url, [string]$Destination, [string]$Hash,
         $uri = [uri]$Url
         for ($redirect = 0; $redirect -lt 6; $redirect++) {
             if ($uri.Scheme -ne 'https' -or $uri.Host -notin $hostsAllowed -or $uri.Port -ne 443 -or $uri.UserInfo) {
-                throw 'Отказ загрузки: неожиданный HTTPS host или credentials в URL.'
+                throw 'Отказ загрузки: неожиданный узел HTTPS или учётные данные в URL.'
             }
             $response = $client.GetAsync($uri, [Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
             if ([int]$response.StatusCode -in @(301, 302, 303, 307, 308)) {
@@ -121,7 +121,7 @@ try {
         $suffix = if ($Tag) { 'tags/' + $Tag } else { 'latest' }
         Get-VerifiedDownload "https://api.github.com/repos/$repository/releases/$suffix" $metadata '' 8000000
         $release = Get-Content -Raw -LiteralPath $metadata | ConvertFrom-Json
-        if ($release.draft -or -not $release.published_at -or (-not $Tag -and $release.prerelease)) { throw 'Нужен опубликованный stable или явно указанный prerelease.' }
+        if ($release.draft -or -not $release.published_at -or (-not $Tag -and $release.prerelease)) { throw 'Нужен опубликованный стабильный выпуск или явно указанный prerelease.' }
         $prefix = "https://github.com/$repository/releases/download/$($release.tag_name)/"
         $asset = @($release.assets | Where-Object name -EQ 'release.json')
         if ($asset.Count -ne 1 -or $asset[0].digest -notmatch '^sha256:[a-f0-9]{64}$' -or $asset[0].browser_download_url -ne $prefix + 'release.json') { throw 'Не найден проверяемый release manifest.' }
@@ -150,7 +150,7 @@ try {
             Get-VerifiedDownload ($prefix + $name) (Join-Path $bundle $name) $entry.Value.sha256 $entry.Value.size
         }
     }
-    # До установки/выполнения wheel проверяется каждый локальный файл, в том числе test bundle.
+    # До установки/выполнения wheel проверяется каждый локальный файл, в том числе тестовый комплект.
     foreach ($entry in $manifest.assets.PSObject.Properties) {
         if ($entry.Name -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,180}$' -or $entry.Name.Contains('..')) { throw 'Недопустимое имя asset.' }
         $path = Join-Path $bundle $entry.Name
@@ -160,11 +160,11 @@ try {
     if ($wheel.Count -ne 1) { throw 'Ожидался один wheel.' }
     $seed = Join-Path $temporary 'seed'
     & $uvPath venv --no-config --python 3.15 $seed
-    if ($LASTEXITCODE -ne 0) { throw 'Не удалось bootstrap Python 3.15; проверьте сеть и uv.' }
+    if ($LASTEXITCODE -ne 0) { throw 'Не удалось подготовить Python 3.15; проверьте сеть и uv.' }
     $python = Join-Path $seed 'Scripts/python.exe'
     & $uvPath pip install --no-config --python $python --no-deps $wheel[0].FullName
     if ($LASTEXITCODE -ne 0) { throw 'Не удалось установить проверенный seed wheel.' }
-    # Установщик копирует private uv внутрь кандидата и ведёт его ownership.
+    # Установщик копирует собственный uv внутрь кандидата и учитывает его принадлежность.
     $uvInstalled = $uvPath
     $installArgs = @('-I', '-m', 'language_review.distribution', '--bundle', $bundle, '--root', $Root, '--uv', $uvInstalled, '--extras', $Extras)
     if ($Codex) { $installArgs += @('--agent', 'codex') }

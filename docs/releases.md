@@ -40,7 +40,7 @@ prompt revision меняется только при изменении собс
 
 ```powershell
 uv run --locked python scripts/release.py prepare --version $Version --channel $Channel --commit $Commit --previous $PreviousStable --notes $NotesFile --output $CandidateDirectory
-uv run --locked python scripts/verify-distribution.py --candidate $CandidateDirectory --output $AcceptanceFile
+uv run --locked python scripts/release.py accept --candidate $CandidateDirectory --output $AcceptanceFile
 ```
 
 `$Commit` — полный SHA, `$PreviousStable` — последний опубликованный стабильный tag
@@ -55,14 +55,14 @@ skill. `uv_build` остаётся закреплённым в pyproject; runtim
 Комплект: wheel, sdist, `install.ps1`, закреплённые requirements с hashes, Windows wheelhouse,
 существующие memory runtime scripts/compose, `release-notes.md`, `release.json`,
 `SHA256SUMS`. Skill упакован в wheel/sdist. В manifest находятся tag/version/PEP
-version/SHA/предыдущий stable, Python и skill contract, размеры и SHA-256 assets.
+version/SHA/предыдущий стабильный выпуск, Python и skill contract, размеры и SHA-256 assets.
 Manifest не содержит локальных путей и пользовательских данных.
 Зависимости без готовых CPython 3.15 wheels собираются издателем из hash-locked
 источников через pip/setuptools/wheel из `uv.lock`, без build isolation с плавающими
-backend dependencies. Компилятор нужен только Windows builder. Клиент устанавливает
+backend dependencies. Компилятор нужен только сборщику в Windows. Клиент устанавливает
 зависимости только из проверенного `wheelhouse.zip`, с `--no-index` и hashes.
 
-Notes должны содержать версию, SHA, предыдущий stable и заполненные разделы:
+Notes должны содержать версию, SHA, предыдущий стабильный выпуск и заполненные разделы:
 `## Изменения`, `## Совместимость`, `## Миграции и откат`, `## Ограничения`.
 В «Совместимость» записывается обоснование версии; в миграциях — обратимость и
 возможность запуска прежнего worker после миграции. Пустые разделы/TODO не принимаются.
@@ -73,6 +73,29 @@ Workflow `release.yml` запускается исключительно чер�
 `operation=prepare` имеет read-only GitHub permissions, принимает явно заданные
 version/channel/SHA/previous/notes, проверяет принадлежность target к main, собирает
 кандидата и выполняет Windows acceptance. Результат — Actions artifact, не Release.
+Команда `accept` получает через официальный транспорт комплект `previous_stable`,
+проверяет его tag/channel и выполняет установку предыдущей версии, отказ неисправного
+кандидата, обновление до выпускаемого кандидата и откат с запуском CLI. Если предыдущий
+комплект недоступен, подготовка останавливается. Синтетическое изменение номера версии
+не заменяет эту проверку. Для первого выпуска (`previous_stable=none`) обе проверки
+смены версии имеют явно разрешённый `NOT_RUN` с причиной `no_predecessor`.
+
+Отчёт `acceptance.json` имеет схему `language-review.release-acceptance/1`.
+В `checks` каждый результат содержит точный `status` (`PASS` или `NOT_RUN`),
+необязательное пояснение `detail` и для пропуска — машинную причину `reason`.
+Обязательные имена и допустимые причины задаёт общий модуль
+`src/language_review/release_acceptance.py`; его использует и приёмка, и публикация.
+Отчёт связан с tag, commit, SHA-256 manifest и предыдущим комплектом, а `source`
+фиксирует репозиторий, SHA workflow, ID ручного запуска и ветку `main`.
+Публикация сверяет источник с GitHub API и ID скачанного артефакта. Локальный отчёт
+с `source.kind=local` для публикации не подходит.
+
+`not_run` явно перечисляет пропуски: публичный Release/tag, агентские turn,
+пользовательский OAuth и отдельную приёмку worker/БД. Допускаются также отсутствие
+Vale и незапрошенное обнаружение Codex. Эти пропуски не блокируют релиз ядра.
+Пропуск обязательных установки, PATH, обновления или отката при наличии предыдущего
+выпуска блокирует публикацию до создания любого ref или Release; пустой `checks`
+и общий `PASS` без полного набора результатов не принимаются.
 
 После изучения notes, результатов приёмки и compatibility rationale разработчик
 отдельно запускает `operation=publish` на main с ID успешного prepare run, теми же

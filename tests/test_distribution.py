@@ -35,9 +35,11 @@ from language_review.setup_cli import configure_endpoints
 
 @pytest.fixture
 def bundle(tmp_path: Path) -> Path:
-    root = tmp_path / "bundle"
+    return make_bundle(tmp_path / "bundle", "0.0.0-rc.1")
+
+
+def make_bundle(root: Path, version: str, previous: str = "none") -> Path:
     root.mkdir()
-    version = "0.0.0-rc.1"
     pep = package_version(version)
     identity = {
         "version": version,
@@ -80,8 +82,8 @@ def bundle(tmp_path: Path) -> Path:
         "schema": "language-review.release/1",
         "repository": REPOSITORY,
         **identity,
-        "channel": "prerelease",
-        "previous_stable": "none",
+        "channel": "prerelease" if "-" in version else "stable",
+        "previous_stable": previous,
         "python": "3.15",
         "skill_contract": 1,
         "lock_sha256": "b" * 64,
@@ -972,19 +974,106 @@ def test_distribution_verifier_requires_a_strictly_newer_upgrade() -> None:
             module.require_upgrade_version({"version": "1.2.3"}, {"version": version})
 
 
-def test_bootstrap_checks_release_channel_consistency() -> None:
-    script = Path("scripts/install.ps1").read_text(encoding="utf-8")
-
-    assert "[bool]$release.prerelease -ne ($manifest.channel -eq 'prerelease')" in script
-
-
-def test_distribution_verifier_reports_missing_vale_as_not_run() -> None:
-    script = Path("scripts/verify-distribution.py").read_text(encoding="utf-8")
-
-    assert (
-        'checks["real_vale_findings_clean_stale_hash"] = "NOT_RUN (vale не найден в PATH)"'
-        in script
+@pytest.mark.skipif(os.name != "nt", reason="Исполняемый Windows bootstrap")
+@pytest.mark.parametrize("prerelease", [False, True])
+@pytest.mark.parametrize("channel", ["stable", "prerelease"])
+def test_bootstrap_checks_release_channel_consistency(
+    tmp_path: Path, prerelease: bool, channel: str
+) -> None:
+    # Подменяется только сеть. AST выделяет downloader; guard и весь основной
+    # установщик выполняются PowerShell без изменений.
+    (tmp_path / "release.json").write_text(
+        json.dumps(
+            {
+                "tag_name": "v1.0.0",
+                "draft": False,
+                "published_at": "date",
+                "prerelease": prerelease,
+                "assets": [
+                    {
+                        "name": "release.json",
+                        "digest": "sha256:" + "b" * 64,
+                        "browser_download_url": f"https://github.com/{REPOSITORY}/releases/download/v1.0.0/release.json",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
     )
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "repository": REPOSITORY,
+                "tag": "v1.0.0",
+                "commit": "a" * 40,
+                "channel": channel,
+            }
+        ),
+        encoding="utf-8",
+    )
+    wrapper = tmp_path / "bootstrap-boundary.ps1"
+    wrapper.write_text(
+        """param([string]$Script, [string]$Fixtures)
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Script, [ref]$tokens, [ref]$errors)
+if ($errors) { throw 'Не удалось разобрать установщик.' }
+$fn = $ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
+    $n.Name -eq 'Get-VerifiedDownload'}, $true)
+$replacement = @'
+function Get-VerifiedDownload([string]$Url, [string]$Destination, [string]$Hash, [long]$Limit) {
+    if ($Url -like '*/git/ref/tags/*') { throw 'GUARD_PASSED_BOUNDARY' }
+    $name = if ($Url -like '*/releases/tags/*') { 'release.json' } else { 'manifest.json' }
+    Copy-Item -LiteralPath (Join-Path $env:LR_TEST_FIXTURES $name) -Destination $Destination
+}
+'@
+$env:LR_TEST_FIXTURES = $Fixtures
+$text = [IO.File]::ReadAllText($Script)
+$text = $text.Remove($fn.Extent.StartOffset, $fn.Extent.EndOffset - $fn.Extent.StartOffset)
+$text = $text.Insert($fn.Extent.StartOffset, $replacement)
+$root = Join-Path $Fixtures 'unused-root'
+& ([scriptblock]::Create($text)) -Tag v1.0.0 -Root $root -NonInteractive
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            "pwsh",
+            "-NoProfile",
+            "-File",
+            str(wrapper),
+            str(Path("scripts/install.ps1").absolute()),
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    assert result.returncode != 0
+    if prerelease == (channel == "prerelease"):
+        assert "GUARD_PASSED_BOUNDARY" in result.stderr
+    else:
+        assert "Manifest не соответствует GitHub release" in result.stderr
+        assert "GUARD_PASSED_BOUNDARY" not in result.stderr
+    assert not (tmp_path / "unused-root").exists()
+
+
+def test_distribution_verifier_reports_missing_vale_as_not_run(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    module = distribution_verifier_module()
+    calls: list[Any] = []
+    monkeypatch.setattr(module, "command", lambda *args: calls.append(args))
+    checks: dict[str, Any] = {}
+    # Настоящий поиск программы в пустом PATH, без подмены результата which.
+    module.verify_vale(["unused"], {"PATH": str(tmp_path / "empty")}, tmp_path, tmp_path, checks)
+    assert checks == {
+        "real_vale_findings_clean_stale_hash": {
+            "status": "NOT_RUN",
+            "reason": "vale_unavailable",
+        }
+    }
+    assert not calls
 
 
 def test_release_command_error_includes_bounded_stderr(monkeypatch: Any) -> None:
@@ -1043,7 +1132,7 @@ def test_release_history_guards_previous_stable_and_repeated_versions() -> None:
         ("evidence", "Нет приёмки Windows именно этого комплекта."),
         (
             "notes",
-            "Release notes должны содержать версию/SHA/предыдущий stable и заполненные разделы.",
+            "В описании выпуска нужны версия, SHA, предыдущий выпуск и заполненные разделы.",
         ),
     ],
 )
@@ -1053,6 +1142,28 @@ def test_publication_preconditions_never_reach_write(
     import argparse
 
     module = release_module()
+    if blocker != "notes":
+        notes = (
+            "0.0.0-rc.1 none "
+            + "a" * 40
+            + "\n"
+            + "\n".join(
+                title + "\nПроверенное содержимое.\n"
+                for title in (
+                    "## Изменения",
+                    "## Совместимость",
+                    "## Миграции и откат",
+                    "## Ограничения",
+                )
+            )
+        )
+        (bundle / "release-notes.md").write_text(notes, encoding="utf-8")
+        manifest = json.loads((bundle / "release.json").read_text("utf-8"))
+        manifest["assets"]["release-notes.md"] = {
+            "size": (bundle / "release-notes.md").stat().st_size,
+            "sha256": digest(bundle / "release-notes.md"),
+        }
+        (bundle / "release.json").write_text(json.dumps(manifest), encoding="utf-8")
     monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
     monkeypatch.setenv("LR_RELEASE_AUTHORIZATION", "publish v0.0.0-rc.1 " + "a" * 40)
     monkeypatch.setenv("LR_NOTES_SHA256", digest(bundle / "release-notes.md"))
@@ -1353,3 +1464,564 @@ def test_install_failure_preserves_pointer_and_skills(
     with pytest.raises(ReleaseError, match="Launcher"):
         deploy.install(bundle, root, uv=str(fake_uv), home=home, add_path=False)
     assert launcher.read_bytes() == b"user launcher"
+
+
+@pytest.fixture
+def isolated_install(bundle: Path, tmp_path: Path, monkeypatch: Any) -> tuple[Path, Path, str]:
+    root, home = tmp_path / "application", tmp_path / "home"
+    uv = tmp_path / "uv.exe"
+    uv.write_bytes(b"synthetic uv")
+    monkeypatch.setattr(deploy, "execute", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(deploy, "probe", lambda *_args: None)
+    monkeypatch.setattr(deploy, "path_conflict", lambda *_args: None)
+    deploy.install(bundle, root, uv=str(uv), home=home, agents=["codex", "claude"], add_path=False)
+    python = deploy.python_at(root / "releases" / deploy.state(root)["active"])
+    python.parent.mkdir(parents=True, exist_ok=True)
+    python.write_bytes(b"synthetic runtime")
+    return root, home, str(uv)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-установки")
+def test_journal_unlink_failure_keeps_recoverable_runtimes(
+    bundle: Path, isolated_install: tuple[Path, Path, str], monkeypatch: Any
+) -> None:
+    root, home, uv = isolated_install
+    before = (root / "installation.json").read_bytes()
+    old = deploy.state(root)
+    skills = {a: deploy.skill_path(a, home).read_bytes() for a in old["skills"]}
+    launchers = {p: p.read_bytes() for p in deploy.launcher_files(root)}
+    unlink = Path.unlink
+    observed: list[str] = []
+
+    def fail(path: Path, *args: Any, **kwargs: Any) -> None:
+        if path == root / ".transaction.json":
+            observed.append(deploy.state(root)["active"])
+            raise PermissionError("сбой завершения журнала")
+        unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail)
+    with pytest.raises(PermissionError, match="завершения журнала"):
+        deploy.install(bundle, root, uv=uv, home=home, extras="all", add_path=False)
+    assert observed[0] != old["active"]
+    current = deploy.state(root)
+    assert (root / "releases" / current["active"]).is_dir()
+    assert (root / "releases" / old["active"]).is_dir()
+    for agent, content in skills.items():
+        assert deploy.skill_path(agent, home).read_bytes() == content
+    assert all(p.read_bytes() == content for p, content in launchers.items())
+    monkeypatch.setattr(Path, "unlink", unlink)
+    deploy.recover(root)
+    deploy.recover(root)
+    assert (root / "installation.json").read_bytes() == before
+    result = deploy.install(bundle, root, uv=uv, home=home, extras="all", add_path=False)
+    assert (root / "releases" / result["active"]).is_dir()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-установки")
+@pytest.mark.parametrize("damage", ["bytes", "path", "inventory"])
+@pytest.mark.parametrize("operation", ["update", "rollback"])
+def test_update_and_rollback_reject_untrusted_uv_before_execution(
+    bundle: Path,
+    isolated_install: tuple[Path, Path, str],
+    monkeypatch: Any,
+    damage: str,
+    operation: str,
+    capsys: Any,
+) -> None:
+    root, home, uv = isolated_install
+    current = deploy.install(bundle, root, uv=uv, home=home, extras="all", add_path=False)
+    if damage == "bytes":
+        Path(current["uv"]).write_bytes(b"tampered")
+    elif damage == "path":
+        current["uv"] = uv
+        deploy.atomic(root / "installation.json", deploy.json_bytes(current))
+    else:
+        (root / "releases" / current["active"] / "owned-files.json").unlink()
+    before = (root / "installation.json").read_bytes()
+    calls: list[Any] = []
+    monkeypatch.setattr(deploy, "execute", lambda *args, **kwargs: calls.append(args) or "")
+    monkeypatch.setattr(deploy, "managed_root", lambda: root)
+    if operation == "rollback":
+        with pytest.raises(ReleaseError):
+            deploy.rollback(root)
+    else:
+        assert main(["installation", "update"]) == 2
+        capsys.readouterr()
+    assert not calls
+    assert (root / "installation.json").read_bytes() == before
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-установки")
+@pytest.mark.parametrize(
+    "name", ["language-review.cmd", "language-review-eval.cmd", "language-review-launch.ps1"]
+)
+@pytest.mark.parametrize("damage", ["missing", "changed"])
+def test_status_detects_launcher_drift(
+    isolated_install: tuple[Path, Path, str], name: str, damage: str
+) -> None:
+    root, _, _ = isolated_install
+    assert deploy.status(root)["status"] == "installed"
+    path = root / "bin" / name
+    if damage == "missing":
+        path.unlink()
+    else:
+        path.write_bytes(b"user edit")
+    result = deploy.status(root)
+    assert result["status"] == "issues"
+    assert result["launchers"][name] == damage
+    assert path.read_bytes() == b"user edit" if path.exists() else damage == "missing"
+
+
+def test_setup_preserves_edited_managed_toml(isolated_appdata: Path) -> None:
+    from language_review.config import load_config, user_config_path
+
+    configure_endpoints({"languagetool": "http://localhost:8081"})
+    target = user_config_path()
+    text = (
+        target.read_text("utf-8").replace(
+            "[check.languagetool]", "[check.languagetool]\n# Мой тайм-аут\ntimeout_seconds = 75"
+        )
+        + "\n[scan]\nmax_file_size = 2000000\n"
+    )
+    target.write_text(text, encoding="utf-8")
+    before = target.read_bytes()
+    try:
+        configure_endpoints({"ollama": "http://localhost:11435"})
+        configure_endpoints({"ollama": "http://localhost:11435"})
+    except ReleaseError:
+        assert target.read_bytes() == before
+    else:
+        assert "# Мой тайм-аут" in target.read_text("utf-8")
+        assert "timeout_seconds = 75" in target.read_text("utf-8")
+        assert target.read_text("utf-8").count("[check.languagetool]") == 1
+        load_config(target)
+
+
+def test_setup_repeated_endpoint_updates_preserve_neighbor_sections(isolated_appdata: Path) -> None:
+    from language_review.config import load_config, user_config_path
+
+    configure_endpoints({"languagetool": "http://localhost:8081"})
+    target = user_config_path()
+    target.write_text(
+        target.read_text("utf-8") + "\n# Ручная секция\n[scan]\nmax_file_size = 12345\n",
+        encoding="utf-8",
+    )
+    for port in (11435, 11436, 11436):
+        configure_endpoints({"ollama": f"http://localhost:{port}"})
+    text = target.read_text("utf-8")
+    assert text.count("[check.languagetool]") == text.count("[check.llm.ollama]") == 1
+    assert "# Ручная секция\n[scan]\nmax_file_size = 12345" in text
+    assert "11436" in text
+    load_config(target)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-установки")
+def test_failed_recovery_preserves_selected_candidate_until_retry(
+    bundle: Path,
+    isolated_install: tuple[Path, Path, str],
+    monkeypatch: Any,
+) -> None:
+    root, home, uv = isolated_install
+    before = (root / "installation.json").read_bytes()
+    old = deploy.state(root)
+    atomic, unlink = deploy.atomic, Path.unlink
+    phase = {"recovering": False}
+
+    def fail_unlink(path: Path, *args: Any, **kwargs: Any) -> None:
+        if path == root / ".transaction.json":
+            phase["recovering"] = True
+            raise PermissionError("журнал занят")
+        unlink(path, *args, **kwargs)
+
+    def fail_restore(path: Path, content: bytes) -> None:
+        if path == root / "installation.json" and phase["recovering"]:
+            raise PermissionError("восстановление pointer заблокировано")
+        atomic(path, content)
+
+    monkeypatch.setattr(Path, "unlink", fail_unlink)
+    monkeypatch.setattr(deploy, "atomic", fail_restore)
+    with pytest.raises(PermissionError, match="восстановление"):
+        deploy.install(bundle, root, uv=uv, home=home, extras="all", add_path=False)
+    current = deploy.state(root)
+    assert current["active"] != old["active"]
+    assert all(
+        (root / "releases" / identifier).is_dir()
+        for identifier in (current["active"], old["active"])
+    )
+    assert (root / ".transaction.json").is_file()
+    monkeypatch.setattr(deploy, "atomic", atomic)
+    monkeypatch.setattr(Path, "unlink", unlink)
+    with deploy.locked(root):
+        assert (root / "installation.json").read_bytes() == before
+    assert not (root / ".transaction.json").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-установки")
+def test_status_detects_missing_active_runtime(isolated_install: tuple[Path, Path, str]) -> None:
+    root, _, _ = isolated_install
+    deploy.python_at(root / "releases" / deploy.state(root)["active"]).unlink()
+    result = deploy.status(root)
+    assert result["status"] == "issues"
+    assert result["runtime"] == "missing"
+
+
+def test_path_acceptance_rejects_missing_registration(tmp_path: Path, monkeypatch: Any) -> None:
+    module = distribution_verifier_module()
+    monkeypatch.setattr(module, "user_path_contains", lambda _: False)
+    calls: list[Any] = []
+    monkeypatch.setattr(module, "command", lambda *args: calls.append(args))
+    with pytest.raises(RuntimeError, match="не зарегистрировал пользовательский PATH"):
+        module.verify_registered_path(tmp_path, {"PATH": ""}, tmp_path, "1.0.0")
+    assert not calls
+
+
+@pytest.mark.parametrize("previous", ["none", "v1.0.0"])
+def test_acceptance_reports_missing_version_cycle_honestly(
+    bundle: Path,
+    monkeypatch: Any,
+    previous: str,
+) -> None:
+    from language_review import release_acceptance as acceptance
+
+    manifest = validate_bundle(bundle)
+    manifest["previous_stable"] = previous
+    checks = {name: {"status": "PASS"} for name in acceptance.REQUIRED}
+    evidence = acceptance.report(manifest, digest(bundle / "release.json"), checks)
+    assert evidence["status"] == ("PASS" if previous == "none" else "PARTIAL")
+    assert evidence["checks"]["controlled_version_upgrade_rollback"]["status"] == "NOT_RUN"
+    assert "controlled_version_upgrade_rollback" in evidence["not_run"]
+    assert "public_release" in evidence["not_run"]
+    assert "agent_turns" in evidence["not_run"]
+    assert "user_oauth" in evidence["not_run"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-установки")
+def test_reinstall_preserves_unspecified_skills_and_explicit_disable(
+    bundle: Path, isolated_install: tuple[Path, Path, str]
+) -> None:
+    root, home, uv = isolated_install
+    for _ in range(2):
+        current = deploy.install(bundle, root, uv=uv, home=home, agents=["codex"], add_path=False)
+        assert set(current["skills"]) == {"codex", "claude"}
+        assert all(deploy.skill_path(a, home).is_file() for a in current["skills"])
+    deploy.setup_skills(root, ["codex"])
+    assert not deploy.skill_path("claude", home).exists()
+    assert deploy.skill_path("codex", home).is_file()
+    deploy.setup_skills(root, ["codex", "claude"])
+    claude = deploy.skill_path("claude", home)
+    claude.write_bytes(b"user edit")
+    before = (root / "installation.json").read_bytes()
+    with pytest.raises(ReleaseError):
+        deploy.setup_skills(root, ["codex"])
+    assert claude.read_bytes() == b"user edit"
+    assert (root / "installation.json").read_bytes() == before
+
+
+class WriteBoundaryReached(Exception):
+    pass
+
+
+@pytest.fixture
+def publication(tmp_path: Path, monkeypatch: Any) -> tuple[Any, Any, dict[str, Any], list[Any]]:
+    from language_review import release_acceptance as acceptance
+
+    candidate = make_bundle(tmp_path / "publish", "1.1.0", "v1.0.0")
+    notes = (
+        "1.1.0 v1.0.0 "
+        + "a" * 40
+        + "\n"
+        + "\n".join(
+            title + "\nПроверенное содержимое.\n"
+            for title in (
+                "## Изменения",
+                "## Совместимость",
+                "## Миграции и откат",
+                "## Ограничения",
+            )
+        )
+    )
+    (candidate / "release-notes.md").write_text(notes, encoding="utf-8")
+    manifest = json.loads((candidate / "release.json").read_text("utf-8"))
+    manifest["assets"]["release-notes.md"] = {
+        "size": (candidate / "release-notes.md").stat().st_size,
+        "sha256": digest(candidate / "release-notes.md"),
+    }
+    (candidate / "release.json").write_text(json.dumps(manifest), encoding="utf-8")
+    checks = {name: {"status": "PASS"} for name in acceptance.REQUIRED | acceptance.VERSION_CHECKS}
+    evidence = acceptance.report(
+        manifest,
+        digest(candidate / "release.json"),
+        checks,
+        {
+            "tag": "v1.0.0",
+            "commit": "b" * 40,
+            "manifest_sha256": "c" * 64,
+        },
+    )
+    evidence["source"] = {
+        "kind": "workflow",
+        "repository": REPOSITORY,
+        "run_id": "123",
+        "commit": "d" * 40,
+        "ref": "refs/heads/main",
+        "event": "workflow_dispatch",
+        "workflow": ".github/workflows/release.yml",
+    }
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+    monkeypatch.setenv("LR_RELEASE_AUTHORIZATION", "publish v1.1.0 " + "a" * 40)
+    monkeypatch.setenv("LR_NOTES_SHA256", digest(candidate / "release-notes.md"))
+    monkeypatch.setenv("LR_CANDIDATE_RUN", "123")
+    module = release_module()
+    monkeypatch.setattr(
+        module,
+        "release_history",
+        lambda: [
+            {
+                "tag_name": "v1.0.0",
+                "published_at": "date",
+                "prerelease": False,
+            }
+        ],
+    )
+    calls: list[Any] = []
+
+    def run(*args: str, **kwargs: Any) -> str:
+        calls.append(args)
+        if args[:2] == ("git", "ls-remote"):
+            return ""
+        raise WriteBoundaryReached(args)
+
+    def github(path: str) -> Any:
+        if path.startswith("actions/runs?"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 1,
+                        "path": ".github/workflows/" + name,
+                        "head_sha": "a" * 40,
+                        "conclusion": "success",
+                    }
+                    for name in ("ci.yml", "codeql.yml")
+                ]
+            }
+        if path == "actions/runs/123":
+            return {
+                "id": 123,
+                "path": ".github/workflows/release.yml",
+                "head_sha": "d" * 40,
+                "head_branch": "main",
+                "event": "workflow_dispatch",
+                "conclusion": "success",
+                "head_repository": {"full_name": REPOSITORY},
+            }
+        if path == "releases/tags/v1.0.0":
+            return {
+                "tag_name": "v1.0.0",
+                "published_at": "date",
+                "draft": False,
+                "prerelease": False,
+                "assets": [{"name": "release.json", "digest": "sha256:" + "c" * 64}],
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(module, "run", run)
+    monkeypatch.setattr(module, "github", github)
+    args = SimpleNamespace(candidate=candidate, evidence=tmp_path / "acceptance.json")
+    return module, args, evidence, calls
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "empty",
+        "missing",
+        "bad_value",
+        "not_run",
+        "missing_version",
+        "no_predecessor",
+        "not_run_list",
+        "unknown_not_run",
+        "candidate",
+        "source",
+        "run",
+        "previous_hash",
+    ],
+)
+def test_publish_rejects_incomplete_acceptance_before_any_github_write(
+    publication: tuple[Any, Any, dict[str, Any], list[Any]],
+    damage: str,
+) -> None:
+    module, args, evidence, calls = publication
+    if damage == "empty":
+        evidence["checks"] = {}
+    elif damage == "missing":
+        evidence["checks"].pop("core_foreign_cwd_readonly")
+    elif damage == "bad_value":
+        evidence["checks"]["core_foreign_cwd_readonly"] = {"status": "pass"}
+    elif damage == "not_run":
+        evidence["checks"]["core_foreign_cwd_readonly"] = {
+            "status": "NOT_RUN",
+            "reason": "unavailable",
+        }
+    elif damage == "missing_version":
+        evidence["checks"].pop("controlled_version_upgrade_rollback")
+    elif damage == "no_predecessor":
+        evidence["checks"]["controlled_version_upgrade_rollback"] = {
+            "status": "NOT_RUN",
+            "reason": "no_predecessor",
+        }
+    elif damage == "not_run_list":
+        evidence["not_run"] = []
+    elif damage == "unknown_not_run":
+        evidence["not_run"]["runtime_install"] = "unavailable"
+    elif damage == "candidate":
+        evidence["manifest_sha256"] = "e" * 64
+    elif damage == "source":
+        evidence["source"]["commit"] = "e" * 40
+    elif damage == "run":
+        evidence["source"]["run_id"] = "124"
+    elif damage == "previous_hash":
+        evidence["predecessor"]["manifest_sha256"] = "e" * 64
+    args.evidence.write_text(json.dumps(evidence), encoding="utf-8")
+    with pytest.raises(ReleaseError):
+        module.publish(args)
+    assert not any(call[0] == "gh" for call in calls)
+
+
+def test_publish_complete_acceptance_reaches_intercepted_write_boundary(
+    publication: tuple[Any, Any, dict[str, Any], list[Any]],
+) -> None:
+    module, args, evidence, calls = publication
+    args.evidence.write_text(json.dumps(evidence), encoding="utf-8")
+    with pytest.raises(WriteBoundaryReached):
+        module.publish(args)
+    assert calls[-1][:3] == ("gh", "api", "repos/" + REPOSITORY + "/git/refs")
+    assert "POST" in calls[-1]
+
+
+@pytest.mark.parametrize("previous", ["none", "v1.0.0"])
+def test_prepare_acceptance_uses_real_previous_candidate(
+    tmp_path: Path,
+    monkeypatch: Any,
+    previous: str,
+) -> None:
+    from language_review import release_transport
+
+    candidate = make_bundle(tmp_path / "candidate", "1.1.0", previous)
+    old = make_bundle(tmp_path / "old", "1.0.0")
+    fetched: list[str] = []
+    calls: list[Any] = []
+
+    def fetch(destination: Path, tag: str) -> None:
+        fetched.append(tag)
+        shutil.copytree(old, destination, dirs_exist_ok=True)
+
+    module = release_module()
+    monkeypatch.setattr(release_transport, "fetch_bundle", fetch)
+
+    def run(*args: str) -> str:
+        if previous != "none":
+            path = Path(args[args.index("--previous-candidate") + 1])
+            assert validate_bundle(path)["tag"] == previous
+            assert digest(path / "release.json") == digest(old / "release.json")
+        else:
+            assert "--previous-candidate" not in args
+        calls.append(args)
+        return ""
+
+    monkeypatch.setattr(module, "run", run)
+    module.accept(SimpleNamespace(candidate=candidate, output=tmp_path / "acceptance.json"))
+    assert fetched == ([] if previous == "none" else [previous])
+    assert len(calls) == 1
+    assert Path(calls[0][1]).name == "verify-distribution.py"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Общий Windows byte-range lock")
+@pytest.mark.parametrize("holder", ["python", "powershell"])
+@pytest.mark.parametrize("client", ["python", "launcher"])
+def test_launch_lock_waits_for_live_owner_and_survives_owner_crash(
+    tmp_path: Path,
+    holder: str,
+    client: str,
+) -> None:
+    root = tmp_path / "application"
+    root.mkdir()
+    ready, entered = tmp_path / "ready", tmp_path / "entered"
+    (root / ".launch-lock").write_bytes(b"orphan from an earlier process")
+    deploy.atomic(root / "installation.json", deploy.json_bytes({"active": "a" * 32}))
+    for path, content in deploy.launcher_files(root).items():
+        deploy.atomic(path, content)
+    python_owner = """import sys, time
+from pathlib import Path
+from language_review.distribution import launch_locked
+with launch_locked(Path(sys.argv[1])):
+    Path(sys.argv[2]).touch()
+    time.sleep(60)
+"""
+    ps_owner = tmp_path / "owner.ps1"
+    ps_owner.write_text(
+        """param([string]$Root, [string]$Ready)
+$gate = [IO.File]::Open((Join-Path $Root '.launch-lock'), 'OpenOrCreate', 'ReadWrite', 'ReadWrite')
+$gate.Lock(0, 1)
+[IO.File]::WriteAllText($Ready, 'ready')
+Start-Sleep -Seconds 60
+""",
+        encoding="utf-8",
+    )
+    owner_args = (
+        [sys.executable, "-c", python_owner]
+        if holder == "python"
+        else ["pwsh", "-NoProfile", "-File", str(ps_owner)]
+    ) + [str(root), str(ready)]
+    waiter_args = (
+        [
+            sys.executable,
+            "-c",
+            """import sys
+from pathlib import Path
+from language_review.distribution import launch_locked
+with launch_locked(Path(sys.argv[1])):
+    Path(sys.argv[2]).touch()
+""",
+            str(root),
+            str(entered),
+        ]
+        if client == "python"
+        else [
+            "pwsh",
+            "-NoProfile",
+            "-File",
+            str(root / "bin/language-review-launch.ps1"),
+            "review",
+            "--version",
+        ]
+    )
+    owner = subprocess.Popen(owner_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    waiter = None
+    try:
+        deadline = time.monotonic() + 10
+        while not ready.exists():
+            assert owner.poll() is None, owner.communicate()
+            assert time.monotonic() < deadline
+            time.sleep(0.03)
+        waiter = subprocess.Popen(waiter_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        time.sleep(0.5)
+        assert waiter.poll() is None
+        assert not entered.exists()
+        owner.kill()
+        owner.wait(timeout=10)
+        stdout, stderr = waiter.communicate(timeout=10)
+        if client == "python":
+            assert waiter.returncode == 0, stderr
+            assert entered.exists()
+        else:
+            assert waiter.returncode != 0
+            assert "Runtime не поддерживает" in stderr.decode("utf-8")
+        with deploy.launch_locked(root):
+            assert (root / ".launch-lock").exists()
+    finally:
+        for process in (waiter, owner):
+            if process is not None:
+                if process.poll() is None:
+                    process.kill()
+                process.communicate(timeout=10)

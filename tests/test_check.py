@@ -21,11 +21,11 @@ from support.check_helpers import (
     languagetool_responder,
     llama_responder,
 )
+from support.project_inputs import check_fixture_paths as check_paths
 
-from language_review.check import check_paths
 from language_review.config import load_config
 from language_review.engine_http import EngineHttpError, join_url, request_json
-from language_review.engine_llm import SYSTEM_PROMPT, response_schema
+from language_review.engine_llm import response_schema, system_prompt
 from language_review.errors import ConfigurationError
 
 SCHEMA = json.loads(
@@ -92,7 +92,7 @@ def test_languagetool_pipeline_maps_utf16_offsets_and_rejects_placeholder_matche
     assert source.read_bytes() == original
     # Отчёт можно передавать: в нём нет локальных путей к входам и конфигурации.
     _assert_no_local_path(report, tmp_path)
-    assert report["configuration"]["sources"]["engines"] == "файл конфигурации"
+    assert report["configuration"]["sources"]["engines"] == ".language-review.yaml:profiles.fixture"
 
 
 def test_reconciliation_merges_overlapping_engines_and_keeps_sources(
@@ -390,7 +390,7 @@ endpoint = "{json_server.url}"
     )
     ollama_request = next(item for item in json_server.requests if item.path == "/api/chat")
     assert llama_request.body["messages"] == ollama_request.body["messages"]
-    assert llama_request.body["messages"][0]["content"] == SYSTEM_PROMPT
+    assert llama_request.body["messages"][0]["content"] == system_prompt({})
     schema = llama_request.body["response_format"]["json_schema"]["schema"]
     assert schema == ollama_request.body["format"] == response_schema(4)
     assert llama_request.body["chat_template_kwargs"] == {"enable_thinking": False}
@@ -578,25 +578,25 @@ terms = {{ "апдейт" = "обновление" }}
     assert report["configuration"]["categories"] == ["spelling", "style"]
     documents = {item["path"]: item for item in report["documents"]}
     docs, notes = documents["docs/guide.md"], documents["notes.txt"]
-    assert docs["profile"] == "docs" and notes["profile"] is None
-    assert docs["configuration"] == {
+    assert docs["profile"] == "docs" and notes["profile"] == "fixture"
+    assert {key: value for key, value in docs["configuration"].items() if key != "policy"} == {
         "engines": ["llm"],
         "categories": ["spelling"],
         "terms_count": 2,
         "sources": {
-            "engines": "профиль docs",
-            "categories": "профиль docs",
-            "terms": "файл конфигурации; профиль docs",
+            "engines": ".language-review.yaml:profiles.docs",
+            "categories": ".language-review.yaml:profiles.docs",
+            "terms": ".language-review.yaml:profiles.docs",
         },
     }
-    assert notes["configuration"] == {
+    assert {key: value for key, value in notes["configuration"].items() if key != "policy"} == {
         "engines": ["languagetool", "llm"],
         "categories": ["spelling", "style"],
         "terms_count": 1,
         "sources": {
-            "engines": "файл конфигурации",
-            "categories": "файл конфигурации",
-            "terms": "файл конфигурации",
+            "engines": ".language-review.yaml:profiles.fixture",
+            "categories": ".language-review.yaml:profiles.fixture",
+            "terms": ".language-review.yaml:profiles.fixture",
         },
     }
     # Отражённые настройки совпадают с примененными: замечание style отфильтровано
@@ -637,14 +637,14 @@ def test_document_configuration_without_profile_matches_base(
     )
 
     [document] = report["documents"]
-    assert document["configuration"] == {
+    assert {key: value for key, value in document["configuration"].items() if key != "policy"} == {
         "engines": report["configuration"]["engines"],
         "categories": report["configuration"]["categories"],
         "terms_count": 0,
         "sources": {
-            "engines": "файл конфигурации",
-            "categories": "по умолчанию",
-            "terms": "по умолчанию",
+            "engines": ".language-review.yaml:profiles.fixture",
+            "categories": ".language-review.yaml:profiles.fixture",
+            "terms": ".language-review.yaml:profiles.fixture",
         },
     }
 

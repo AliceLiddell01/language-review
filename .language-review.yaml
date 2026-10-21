@@ -1,0 +1,10 @@
+# Политика языкового анализа этого репозитория. Секреты хранятся вне проекта.
+schema_version: 1
+default_profile: everyday
+profiles:
+  everyday:
+    engines: [languagetool, vale, llm]
+    analysis:
+      mode: normal
+    llm:
+      provider: llama_cpp

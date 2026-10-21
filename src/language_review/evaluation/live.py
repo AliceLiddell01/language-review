@@ -17,6 +17,7 @@ from language_review.evaluation.contracts import digest, save_new
 from language_review.evaluation.corpus import safe_path, source_map
 from language_review.evaluation.reports import load_product_report
 from language_review.evaluation.scoring import score
+from language_review.project_config import FILENAME, init_project, load_project
 
 
 def materialize(corpus: dict[str, Any], split: str, destination: Path) -> dict[str, str]:
@@ -52,13 +53,57 @@ def capture(
         bindings = materialize(corpus, split, inputs)
         if not bindings:
             raise InputError("В выбранном split нет документов.")
+        # Это явная подготовка временных синтетических репозиториев оценщика.
+        # TOML задаёт только среду; YAML — выбранную пользователем проектную политику.
+        project_yaml = config if config and config.suffix.lower() in {".yaml", ".yml"} else None
+        for repository in bindings.values():
+            root = inputs / repository
+            if project_yaml is None:
+                init_project(root)
+            else:
+                from language_review.config import load_config
+                from language_review.project_config import _inside, _relative, _yaml
+
+                if project_yaml.name != FILENAME:
+                    raise InputError(f"Политика оценщика должна называться {FILENAME}.")
+                load_project(load_config(), project_yaml.parent)
+                definition = _yaml(project_yaml)
+                prompt_sets = [definition.get("prompts", {})] + [
+                    profile.get("prompts", {}) for profile in definition["profiles"].values()
+                ]
+                copied: set[str] = set()
+                for prompt_set in prompt_sets:
+                    values = [
+                        value for key, value in prompt_set.items() if key != "strategies"
+                    ] + list(prompt_set.get("strategies", {}).values())
+                    for value in values:
+                        relative = (
+                            value
+                            if isinstance(value, str)
+                            else value.get("file")
+                            if isinstance(value, dict)
+                            else None
+                        )
+                        if relative is not None:
+                            if relative in copied:
+                                continue
+                            copied.add(relative)
+                            source = _inside(
+                                project_yaml.parent.resolve(), _relative(relative, "prompts")
+                            )
+                            target = root / relative
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            with target.open("xb") as stream:
+                                stream.write(source.read_bytes())
+                with (root / FILENAME).open("xb") as stream:
+                    stream.write(project_yaml.read_bytes())
         initial = {
             path: hashlib.sha256(path.read_bytes()).hexdigest()
             for path in inputs.rglob("*")
             if path.is_file()
         }
         command = [sys.executable, "-m", "language_review"]
-        if config:
+        if config and project_yaml is None:
             command += ["--config", str(config.resolve(strict=True))]
         command += [
             "check",
@@ -133,7 +178,14 @@ def capture(
                     "wall_clock_ms": elapsed,
                     "exit_code": completed.returncode,
                     "capture": "live_public_cli",
-                    "parameters": {"engines": engines, "view": "review"},
+                    "parameters": {
+                        "engines": engines,
+                        "view": "review",
+                        "document_policies": {
+                            document["id"]: document["configuration"].get("policy")
+                            for document in report["analysis"]["documents"]
+                        },
+                    },
                     "repetition": repetition,
                 }
                 result = score(corpus, report, bindings, split, manifest)

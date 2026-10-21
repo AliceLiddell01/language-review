@@ -62,6 +62,7 @@ language-review --help
 ### Инвентаризация
 
 ~~~powershell
+language-review init .
 language-review scan .\src
 language-review scan .\Cargo.toml .\README.md
 language-review scan .\repo --format json
@@ -96,7 +97,7 @@ language-review extract .\settings.json --extension .json --format json
 | reStructuredText, AsciiDoc | Заголовки и проза с базовой обработкой директив, ссылок и literal/code blocks | Поддерживается консервативное подмножество разметки |
 | JSON, YAML, TOML, XML | Только строковые значения по настроенным селекторам | Расширение нужно включить явно; YAML tags/aliases не интерпретируются, повторяющиеся JSON/YAML-ключи пропускаются, TOML-массивы таблиц (`[[table]]`) помечаются `partial` |
 
-В TOML селекторы задаются по расширению файла. Поддерживается безопасное подмножество путей: свойства через `.name`, ключи через `['name']` или `["name"]`, индексы обычного массива `[0]` и wildcard `*`. YAML flow mappings поддерживаются; повторяющиеся JSON/YAML-ключи в одном объекте/отображении пропускаются с диагностикой, потому что разные потребители могут выбрать разные значения. TOML-массивы таблиц пока пропускаются с диагностикой.
+В проектном YAML селекторы `extract.selectors` задаются по расширению файла; синтаксис селекторов в примере ниже сохранён для legacy TOML, который нужно перенести в YAML. Поддерживается безопасное подмножество путей: свойства через `.name`, ключи через `['name']` или `["name"]`, индексы обычного массива `[0]` и wildcard `*`. YAML flow mappings поддерживаются; повторяющиеся JSON/YAML-ключи в одном объекте/отображении пропускаются с диагностикой, потому что разные потребители могут выбрать разные значения. TOML-массивы таблиц пока пропускаются с диагностикой.
 
 ~~~toml
 [scan]
@@ -175,7 +176,7 @@ engines = ["languagetool", "vale"]
 
 Каталоги зависимостей и сборки, в том числе `.git`, `.venv`, `node_modules`, `target`, `bin`, `obj`, `build` и `dist`, исключаются по умолчанию. Для пользовательских исключений используй `--exclude 'docs/generated/**'`. Также поддерживаются `.gitignore` и отрицательные правила Git; обход ссылок выключен по умолчанию. `--follow-symlinks` включает ссылки только в пределах явно указанного корня и защищает от циклов.
 
-Для стандартной конфигурации выбирай проектный профиль по маркерам, заданным в пользовательском конфиге; `--profile NAME` выбирает профиль явно. Профили с `match_paths` могут задавать настройки для относительных путей внутри корня сканирования.
+Профили и `path_rules` задаются в обязательном корневом `.language-review.yaml`; `--profile NAME` принудительно выбирает объявленный профиль. Модель, effort, режим, бюджеты и языковые промпты применяются к фактическим запросам каждого профиля.
 
 ### Диагностика
 
@@ -189,33 +190,25 @@ language-review doctor --format json
 
 ### Конфигурация
 
+Для каждого целевого репозитория сначала явно создайте политику:
+
 ~~~powershell
-language-review config show
-language-review config show --format json
-language-review --config .\language-review.toml scan .\repo
+language-review init .\repo
+language-review config validate .\repo
+language-review config show .\repo\docs\guide.md --format json
+language-review --config .\environment.toml check .\repo
+language-review config show --environment --format json
 ~~~
 
-Пользовательский конфиг хранится в `%APPDATA%\language-review\config.toml` на Windows и в `$XDG_CONFIG_HOME/language-review/config.toml` (или `~/.config/language-review/config.toml`) на Unix. Явно переданный `--config` объединяется поверх пользовательского файла; параметры CLI имеют наивысший приоритет. Значения `config show` сопровождаются источником. Поля, похожие на секреты, и параметры URL скрываются.
+Обязательный `.language-review.yaml` владеет профилями, моделями, режимами,
+правилами путей и языковыми промптами. Пользовательский TOML и `--config TOML`
+задают среду: адреса сервисов, OAuth, секреты памяти и отдельные согласия на облако.
+Legacy языковая политика TOML больше не наследуется при анализе репозитория.
+`init` не перезаписывает файл; команды анализа не создают его автоматически.
 
-Пример TOML:
-
-~~~toml
-[scan]
-respect_gitignore = true
-max_file_size = 5000000
-exclude_patterns = ["docs/generated/**"]
-
-[doctor]
-programs = ["vale"]
-http_services = { ollama = "http://127.0.0.1:11434/api/tags" }
-
-[profiles.rust]
-priority = 20
-project_markers = ["Cargo.toml"]
-match_paths = ["crates/**"]
-[profiles.rust.scan]
-extensions = [".rs", ".md", ".txt"]
-~~~
+Обнаружение корня Git/worktree и поведение вне Git, строгий контракт версии 1,
+приоритеты, все поля и миграция описаны в [руководстве по проектной конфигурации](docs/project-configuration.md).
+Рабочий локальный пример — [.language-review.yaml](.language-review.yaml).
 
 ## Коды завершения
 

@@ -73,6 +73,36 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Не удалось установить $kind." }
 
         $launcher = Join-Path $environment 'Scripts\language-review.exe'
+        $policyPath = Join-Path $sample '.language-review.yaml'
+        if (-not (Test-Path -LiteralPath $policyPath)) {
+            & $launcher init $sample
+            if ($LASTEXITCODE -ne 0) { throw "$kind не создал проектную политику." }
+        }
+        $policyHash = (Get-FileHash -LiteralPath $policyPath).Hash
+        & $launcher init $sample 2>$null
+        if ($LASTEXITCODE -ne 2 -or (Get-FileHash -LiteralPath $policyPath).Hash -ne $policyHash) {
+            throw "$kind перезаписал существующую политику."
+        }
+        # Внешний промпт читается установленным пакетом, без исходного checkout.
+        $promptPath = Join-Path $sample 'policy-prompt.md'
+        Set-Content -LiteralPath $promptPath -Value 'Проверяй только доказуемые языковые ошибки.' -Encoding utf8NoBOM
+        $policyText = [IO.File]::ReadAllText($policyPath)
+        if ($policyText -notmatch 'primary:') {
+            Add-Content -LiteralPath $policyPath -Encoding utf8NoBOM -Value "`nprompts:`n  primary: policy-prompt.md`nscan:`n  exclude_patterns: [policy-prompt.md]"
+        }
+        $policyJson = (& $launcher config validate $sample --format json) -join [Environment]::NewLine
+        if ($LASTEXITCODE -ne 0) { throw "$kind не валидирует YAML без движков." }
+        $policyReport = $policyJson | ConvertFrom-Json
+        if ($policyReport.selected_profile -ne 'everyday' -or
+            $policyReport.prompts.primary.source -notmatch 'policy-prompt.md' -or
+            $policyJson -match 'Проверяй только доказуемые') {
+            throw "$kind потерял метаданные внешнего промпта либо раскрыл его текст."
+        }
+        $shownPolicy = (& $launcher config show $sampleFile --format json) -join [Environment]::NewLine
+        if ($LASTEXITCODE -ne 0 -or
+            ($shownPolicy | ConvertFrom-Json).prompts.primary.sha256 -ne $policyReport.prompts.primary.sha256) {
+            throw "$kind не применил промпт к целевому файлу."
+        }
         $version = (& $launcher --version) -join ''
         if ($LASTEXITCODE -ne 0 -or $version.Trim() -ne $expectedVersionOutput) {
             throw "Установленная команда $kind --version не прошла smoke-проверку."

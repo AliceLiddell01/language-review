@@ -59,7 +59,7 @@
       "id": "doc-718e8c318d97863341033e41",
       "language": "json",
       "path": "sample.json",
-      "profile": null,
+      "profile": "fixture",
       "reason": null,
       "root": "root-0001",
       "source_sha256": "e01be6c2c8df0c8e41d2ef2f1c87bc5998309b7e9c6c60986b0f6b9e100e8060",
@@ -71,7 +71,7 @@
     {
       "id": "root-0001",
       "kind": "file",
-      "profile": null,
+      "profile": "fixture",
       "status": "ok"
     }
   ],

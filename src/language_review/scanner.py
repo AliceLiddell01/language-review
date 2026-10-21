@@ -13,6 +13,7 @@ from pathspec import GitIgnoreSpec
 
 from language_review.config import LoadedConfig, Profile, ScanSettings
 from language_review.errors import ConfigurationError
+from language_review.project_config import load_project, path_profile
 
 FILE_TYPES = {
     ".rs": "rust_source",
@@ -64,6 +65,7 @@ class ScanResult:
     files: list[FileRecord]
     protected_paths: set[str]
     input_errors: bool = False
+    project_configs: dict[str, LoadedConfig] = field(default_factory=dict, repr=False)
 
     @property
     def error_count(self) -> int:
@@ -577,6 +579,7 @@ def _scan_directory(
     seen_directories: set[str],
 ) -> None:
     root_key = _path_key(scan_root)
+    policy_files = {_path_key(path) for path in config.project_files}
     seen_directories.add(root_key)
     may_respect_gitignore = any(
         apply_cli_overrides(config.settings_for_profile(name)[0], cli_overrides).respect_gitignore
@@ -624,6 +627,8 @@ def _scan_directory(
         child_directories: list[tuple[Path, tuple[str, ...], list[IgnoreContext]]] = []
         for entry in entries:
             path = Path(entry.path)
+            if _path_key(path) in policy_files:
+                continue
             entry_parts = (*parts, entry.name)
             relative = "/".join(entry_parts)
             try:
@@ -648,6 +653,8 @@ def _scan_directory(
                 root_profile,
                 requested_profile is not None,
             )
+            if config.project_root is not None:
+                profile_name = path_profile(config, path, requested_profile)
             settings, _ = config.settings_for_profile(profile_name)
             settings = apply_cli_overrides(settings, cli_overrides)
 
@@ -679,6 +686,17 @@ def _scan_directory(
                 continue
 
             if is_directory:
+                if (path / ".git").exists():
+                    result.files.append(
+                        FileRecord(
+                            root=root_path,
+                            path=relative,
+                            status="skipped",
+                            reason="nested_repository",
+                            profile=profile_name,
+                        )
+                    )
+                    continue
                 if _is_excluded(relative, settings, is_directory=True):
                     result.files.append(
                         FileRecord(
@@ -767,12 +785,16 @@ def scan_paths(
     cli_overrides: dict[str, Any] | None = None,
 ) -> ScanResult:
     result = ScanResult(roots=[], files=[], protected_paths=set())
+    environment = config
+    # Все политики валидируются до чтения исходников и до любого вызова движка.
+    policies = {raw: load_project(environment, raw) for raw in paths if Path(raw).exists()}
     seen_arguments: set[str] = set()
     seen_files: set[str] = set()
     seen_directories: set[str] = set()
     seen_resolved_roots: set[str] = set()
 
     for raw in paths:
+        config = policies.get(raw, environment)
         try:
             input_path = _normalize_root(raw)
         except (OSError, TypeError, ValueError) as exc:
@@ -782,6 +804,9 @@ def scan_paths(
             continue
 
         display_path = str(input_path)
+        result.project_configs[display_path] = config
+        if config.project_root is not None:
+            result.protected_paths.update(_path_key(path) for path in config.project_files)
         argument_key = _path_key(input_path)
         if argument_key in seen_arguments:
             result.roots.append({"path": display_path, "kind": "duplicate", "status": "skipped"})
@@ -830,6 +855,7 @@ def scan_paths(
                     path=".",
                     status="skipped",
                     reason="symbolic_link_not_followed",
+                    profile=root_profile,
                 )
             )
             result.protected_paths.add(_path_key(input_path))
@@ -922,10 +948,22 @@ def scan_paths(
                 root_profile,
                 requested_profile is not None,
             )
+            if config.project_root is not None:
+                profile_name = path_profile(config, resolved, requested_profile)
             settings, _ = config.settings_for_profile(profile_name)
             settings = apply_cli_overrides(settings, cli_overrides)
             result.protected_paths.add(_path_key(resolved))
-            if _is_excluded(relative, settings, is_directory=False):
+            if _path_key(resolved) in {_path_key(path) for path in config.project_files}:
+                result.files.append(
+                    FileRecord(
+                        root=display_path,
+                        path=relative,
+                        status="skipped",
+                        reason="project_configuration",
+                        profile=profile_name,
+                    )
+                )
+            elif _is_excluded(relative, settings, is_directory=False):
                 result.files.append(
                     FileRecord(
                         root=display_path,

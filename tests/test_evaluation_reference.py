@@ -11,8 +11,8 @@ from typing import Any
 import pytest
 from conftest import JsonServer
 from support.check_helpers import _languagetool_config, languagetool_responder
+from support.project_inputs import check_fixture_paths as check_paths
 
-from language_review.check import check_paths
 from language_review.check_report import check_document
 from language_review.config import load_config
 from language_review.errors import InputError

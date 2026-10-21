@@ -17,6 +17,9 @@ def _project_version() -> str:
 
 
 def _run(args: list[str], appdata: Path) -> subprocess.CompletedProcess[str]:
+    from support.project_inputs import prepare_cli
+
+    prepare_cli(args, appdata)
     environment = os.environ.copy()
     environment["APPDATA"] = str(appdata)
     environment["XDG_CONFIG_HOME"] = str(appdata)
@@ -130,7 +133,7 @@ def test_version_module_entrypoint_and_config_show(tmp_path: Path, isolated_appd
     assert version.returncode == 0
     assert version.stdout.strip() == f"language-review {_project_version()}"
 
-    config = _run(["config", "show", "--format", "json"], isolated_appdata)
+    config = _run(["config", "show", "--environment", "--format", "json"], isolated_appdata)
     assert config.returncode == 0
     mapping = json.loads(config.stdout)
     assert mapping["scan"]["respect_gitignore"]["value"] is True
@@ -157,7 +160,10 @@ match_paths = ["*.json"]
         encoding="utf-8",
     )
 
-    base = _run(["--config", str(explicit), "config", "show", "--format", "json"], isolated_appdata)
+    base = _run(
+        ["--config", str(explicit), "config", "show", "--environment", "--format", "json"],
+        isolated_appdata,
+    )
     assert base.returncode == 0
     base_selectors = json.loads(base.stdout)["extract"]["selectors"]
     assert base_selectors[".json"]["value"] == ["$.ui.base"]
@@ -170,6 +176,7 @@ match_paths = ["*.json"]
             str(explicit),
             "config",
             "show",
+            "--environment",
             "--profile",
             "readable_json",
             "--format",

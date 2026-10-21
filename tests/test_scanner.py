@@ -4,10 +4,10 @@ import hashlib
 from pathlib import Path
 
 import pytest
+from support.project_inputs import scan_fixture_paths as scan_paths
 
 from language_review.config import load_config
 from language_review.report import scan_json
-from language_review.scanner import scan_paths
 
 
 def _hash(path: Path) -> str:

@@ -107,6 +107,10 @@ try {
         $container.HostConfig.PortBindings.'5432/tcp'[0].HostPort -eq [string]$port)
     $sample = Join-Path $scratch 'собственные данные.md'
     Set-Content -LiteralPath $sample -Encoding utf8NoBOM -Value 'Нужно праверить параметр конфигурации. Этот параметр возврощает результат проверки.'
+    # Политика проверки исходников отделена от TOML фонового worker.
+    $localPolicy = @{schema_version=1; default_profile='acceptance'; profiles=@{acceptance=@{engines=@('llm'); llm=@{provider='ollama'; model=$LlmModel}}}} | ConvertTo-Json -Depth 5
+    # JSON — строгое подмножество YAML 1.2, без интерполяции имени модели.
+    Set-Content -LiteralPath (Join-Path $scratch '.language-review.yaml') -Encoding utf8NoBOM -Value $localPolicy
     $sourceHash = (Get-FileHash -LiteralPath $sample).Hash
     $projectId = [guid]::NewGuid().ToString()
     $report = Invoke-Cli @('check', $sample, '--memory-project', $projectId, '--memory-dataset', 'synthetic', '--view', 'review', '--format', 'json') @(0, 1, 4)

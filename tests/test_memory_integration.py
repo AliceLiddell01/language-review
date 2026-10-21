@@ -17,8 +17,8 @@ from uuid import uuid4
 import pytest
 from conftest import JsonServer
 from support.check_helpers import _languagetool_config, languagetool_responder
+from support.project_inputs import check_fixture_paths as check_paths
 
-from language_review.check import check_paths
 from language_review.check_models import ProbeResult
 from language_review.config import CheckSettings, load_config
 from language_review.engine_llm import ProviderReply
@@ -55,6 +55,9 @@ def stored(tmp_path: Path, isolated_appdata: Path, json_server: JsonServer) -> d
     store.migrate()
     config = replace(load_config(_languagetool_config(tmp_path, json_server.url)), memory=settings)
     result = check_paths([str(source)], config)
+    from language_review.project_config import load_project
+
+    project = load_project(config, source).project_id
     report = review_document(result)
     assert result.memory["status"] == "committed"
     assert len(report["items"]) == 2
@@ -767,6 +770,9 @@ def test_multiple_root_bindings_keep_counters_and_identity_isolated(
     checked = check_paths(
         [str(stored["source"]), str(foreign)], replace(stored["config"], memory=settings)
     )
+    from language_review.project_config import load_project
+
+    other_project = load_project(stored["config"], foreign).project_id
     assert checked.memory["status"] == "committed"
     own = stored["store"].status(stored["project"])
     other = stored["store"].status(other_project)

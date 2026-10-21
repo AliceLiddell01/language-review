@@ -8,7 +8,8 @@ import re
 import time
 from collections import Counter
 from collections.abc import Callable, Sequence
-from dataclasses import asdict
+from dataclasses import asdict, replace
+from pathlib import Path
 from typing import Any
 
 from language_review.check_models import (
@@ -24,7 +25,7 @@ from language_review.check_models import (
     Suggestion,
     UnitOutcome,
 )
-from language_review.config import CheckSettings, LoadedConfig
+from language_review.config import CHECK_KEYS, CheckSettings, LoadedConfig
 from language_review.coordinates import position_within
 from language_review.engine_languagetool import LanguageToolEngine
 from language_review.engine_llm import PROMPT_VERSION, LlmEngine
@@ -33,6 +34,7 @@ from language_review.extract_models import ExtractDocument, ResolvedFragment
 from language_review.extract_report import fragment_id
 from language_review.extraction import extract_paths
 from language_review.masking import EngineView, ViewFragment, build_view
+from language_review.project_config import matched_rule
 
 # Порядок запуска: быстрые детерминированные движки до LLM.
 ENGINE_ORDER = ("languagetool", "vale", "llm")
@@ -615,14 +617,22 @@ def check_paths(
     memory_options: dict[str, Any] | None = None,
 ) -> CheckResult:
     """Проверить тексты, извлечённые `extract`, выбранными движками без изменения исходников."""
-    base_settings, base_sources = config.check_settings_for_profile(None, check_overrides)
     extract = extract_paths(
         paths, config, requested_profile=requested_profile, cli_overrides=cli_overrides
     )
+    root_configs = {
+        f"root-{index:04d}": extract.scan_result.project_configs.get(str(root["path"]), config)
+        for index, root in enumerate(extract.scan_result.roots, 1)
+    }
+    policies = [root_configs[document.root] for document in extract.documents]
     effective = [
-        config.check_settings_for_profile(document.profile, check_overrides)
-        for document in extract.documents
+        policy.check_settings_for_profile(document.profile, check_overrides)
+        for document, policy in zip(extract.documents, policies, strict=True)
     ]
+    base_config = next(iter(root_configs.values()), config)
+    base_settings, base_sources = base_config.check_settings_for_profile(
+        base_config.default_profile, check_overrides
+    )
     settings = [item[0] for item in effective]
     units = build_units(extract.documents, settings)
     documents = [
@@ -634,14 +644,60 @@ def check_paths(
         )
         for index, document in enumerate(extract.documents)
     ]
+    from language_review.engine_llm import effective_prompts, public_model_name
+
+    for document, policy, (effective_settings, sources) in zip(
+        documents, policies, effective, strict=True
+    ):
+        root = extract.scan_result.roots[int(document.extract.root.split("-")[1]) - 1]
+        target = Path(str(root["path"])).resolve()
+        if target.is_dir():
+            target = target / document.extract.path
+        relative = (
+            target.relative_to(policy.project_root).as_posix()
+            if policy.project_root
+            else document.extract.path
+        )
+        rule = matched_rule(policy, relative) if requested_profile is None else None
+        provider = effective_settings.llm_provider
+        document.configuration["policy"] = {
+            "profile": document.extract.profile,
+            "path_rule": rule[0] if rule else None,
+            "provider": provider,
+            "model": public_model_name(getattr(effective_settings, f"llm_{provider}_model")),
+            "reasoning_effort": effective_settings.llm_chatgpt_effort
+            if provider == "chatgpt"
+            else None,
+            "analysis": {
+                key: list(effective_settings.value(key))
+                if isinstance(effective_settings.value(key), tuple)
+                else effective_settings.value(key)
+                for key in sorted(sources)
+                if key.startswith("analysis.")
+            },
+            "sources": {
+                key: public_source(value)
+                for key, value in sorted(sources.items())
+                if key in CHECK_KEYS
+            },
+            "prompts": effective_prompts(effective_settings),
+        }
     for unit in units:
         documents[unit.document_index].units.append(unit)
 
     # Импорт ленивый: обычный read-only check не требует драйвера PostgreSQL или Docker.
     from language_review.memory.pipeline import MemorySession
 
+    memory_settings = replace(
+        config.memory,
+        projects={
+            key: policy.project_id
+            for key, policy in root_configs.items()
+            if policy.project_id is not None
+        },
+    )
     memory = MemorySession.open(
-        config.memory, extract, memory_options or {}, policies=[asdict(item) for item in settings]
+        memory_settings, extract, memory_options or {}, policies=[asdict(item) for item in settings]
     )
     if memory is not None:
         memory.prepare(units)
@@ -651,11 +707,30 @@ def check_paths(
     engine_names = [name for name in ENGINE_ORDER if name in selected]
     runs: list[EngineRun] = []
     candidates: dict[int, list[Candidate]] = {}
+    groups: dict[tuple[str, str, str], tuple[CheckSettings, list[CheckUnit]]] = {}
     for name in engine_names:
+        for document_index, document in enumerate(documents):
+            unit_settings = settings[document_index]
+            if name in unit_settings.engines:
+                # Соединение и бюджеты общие только внутри одного корня и эффективной политики.
+                key = (
+                    name,
+                    document.extract.root,
+                    json.dumps(asdict(unit_settings), ensure_ascii=False, sort_keys=True),
+                )
+                groups.setdefault(key, (unit_settings, []))[1].extend(
+                    unit for unit in document.units if unit.checked_by(name)
+                )
+        if not any(key[0] == name for key in groups):
+            groups[(name, "", "")] = (base_settings, [])
+    for (name, root_id, _), (engine_settings, engine_units) in groups.items():
         if name == "llm":
+            current_units = {unit.index for unit in engine_units}
             for document_candidates in candidates.values():
                 for candidate in document_candidates:
                     unit, raw = candidate.unit, candidate.raw
+                    if unit.index not in current_units or raw.engine == "llm":
+                        continue
                     quote = source_excerpt(unit, candidate.source_start, candidate.source_end)
                     view = unit.views["llm"]
                     view_range = view.view_range(candidate.source_start, candidate.source_end)
@@ -690,17 +765,19 @@ def check_paths(
                     next(
                         unit for unit in document.units if unit.index == rejected.unit
                     ).routing_reasons.append("rejected_evidence")
-        engine = engine_factory(name, base_settings)
+        engine = engine_factory(name, engine_settings)
         run = EngineRun(name=name, details=engine.describe())
+        run.details["document_ids"] = sorted({unit.document.id for unit in engine_units})
+        run.details["root_id"] = root_id
         if name == "llm":
             run.details["document_policy_sha256"] = {
                 document.extract.id: hashlib.sha256(
                     json.dumps(asdict(policy), ensure_ascii=False, sort_keys=True).encode()
                 ).hexdigest()
                 for document, policy in zip(documents, settings, strict=True)
+                if document.extract.id in run.details["document_ids"]
             }
         runs.append(run)
-        engine_units = [unit for unit in units if unit.checked_by(name)]
         run.units_total = len(engine_units)
         started = time.perf_counter()
         try:
@@ -743,7 +820,7 @@ def check_paths(
                 reason
                 for document in documents
                 for (_unit, engine_name), (status, reason) in document.unit_status.items()
-                if engine_name == name and status != "checked" and reason
+                if engine_name == name and _unit in by_index and status != "checked" and reason
             }
         )
         run.diagnostics = sorted(set(run.diagnostics) | set(failure_reasons))
@@ -768,9 +845,12 @@ def check_paths(
             "llm_provider": base_settings.llm_provider,
             "report_schema_version": "1.1"
             if (
-                base_settings.llm_provider == "chatgpt"
-                or base_settings.analysis_mode != "normal"
-                or base_settings.analysis_verify
+                any(
+                    item.llm_provider == "chatgpt"
+                    or item.analysis_mode != "normal"
+                    or item.analysis_verify
+                    for item in [base_settings, *settings]
+                )
             )
             else "1.0",
             "sources": {

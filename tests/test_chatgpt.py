@@ -757,8 +757,9 @@ def test_cloud_product_check_validates_stream_and_same_review_contract(
 ) -> None:
     from dataclasses import replace
 
+    from support.project_inputs import check_fixture_paths as check_paths
+
     import language_review.engine_chatgpt as engine_module
-    from language_review.check import check_paths
     from language_review.config import load_config
     from language_review.engine_llm import LlmEngine
     from language_review.review_report import review_document

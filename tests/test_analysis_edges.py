@@ -9,13 +9,13 @@ from typing import Any
 
 import pytest
 from support.check_helpers import languagetool_responder
+from support.project_inputs import check_fixture_paths as check_paths
 from test_analysis import Provider, finding
 from test_chatgpt import MemoryStore, install_stream, sse
 
 from language_review.chatgpt_auth import ChatGptAuth
 from language_review.chatgpt_http import CloudError
 from language_review.chatgpt_store import CredentialStore, dpapi
-from language_review.check import check_paths
 from language_review.config import CheckSettings, load_config
 from language_review.engine_chatgpt import ChatGptProvider
 from language_review.engine_languagetool import LanguageToolEngine

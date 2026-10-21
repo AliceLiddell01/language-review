@@ -218,7 +218,18 @@ class Store:
                     ),
                     "configuration": doc["configuration"],
                     "policy_sha256": diagnostics.get("policy_sha256", {}).get(doc["id"]),
-                    "engines": [engine["details"] for engine in canonical["analysis"]["engines"]],
+                    # Привязки подпрогона нужны в отчёте, но соседние документы/корни
+                    # не должны менять идентичность того же свидетельства.
+                    "engines": [
+                        {
+                            key: value
+                            for key, value in engine["details"].items()
+                            if key not in {"root_id", "document_ids", "document_policy_sha256"}
+                        }
+                        for engine in canonical["analysis"]["engines"]
+                        if "document_ids" not in engine["details"]
+                        or doc["id"] in engine["details"]["document_ids"]
+                    ],
                     "dataset": run["dataset"],
                 }
                 finding = digest(identity)

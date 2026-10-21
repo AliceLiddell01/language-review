@@ -10,9 +10,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from support.project_inputs import check_fixture_paths as check_paths
 
 from language_review.chatgpt_http import CloudError
-from language_review.check import check_paths
 from language_review.check_models import ProbeResult
 from language_review.check_report import check_document, check_exit_code
 from language_review.config import CHATGPT_EFFORTS, CheckSettings, load_config
@@ -94,8 +94,8 @@ def test_deep_search_includes_clean_units_and_preserves_pass_sources(
     [found] = result.documents[0].findings
     assert len(found.candidates) == 2
     assert {c.raw.rule_id for c in found.candidates} == {
-        "ru-technical-review/4:spelling:spelling",
-        "ru-technical-review/4:grammar:spelling",
+        "ru-technical-review/5:spelling:spelling",
+        "ru-technical-review/5:grammar:spelling",
     }
     report = review_document(result)
     assert report["schema_version"] == "1.1"

@@ -127,7 +127,11 @@ try {
         if ($asset.Count -ne 1 -or $asset[0].digest -notmatch '^sha256:[a-f0-9]{64}$' -or $asset[0].browser_download_url -ne $prefix + 'release.json') { throw 'Не найден проверяемый release manifest.' }
         Get-VerifiedDownload $asset[0].browser_download_url (Join-Path $bundle 'release.json') $asset[0].digest.Substring(7) 1000000
         $manifest = Get-Content -Raw -LiteralPath (Join-Path $bundle 'release.json') | ConvertFrom-Json
-        if ($manifest.repository -ne $repository -or $manifest.tag -ne $release.tag_name -or $manifest.commit -notmatch '^[a-f0-9]{40}$') { throw 'Manifest не соответствует GitHub release.' }
+        if ($manifest.repository -ne $repository -or $manifest.tag -ne $release.tag_name -or
+            $manifest.commit -notmatch '^[a-f0-9]{40}$' -or
+            [bool]$release.prerelease -ne ($manifest.channel -eq 'prerelease')) {
+            throw 'Manifest не соответствует GitHub release.'
+        }
         $commitPath = Join-Path $temporary 'commit.json'
         Get-VerifiedDownload "https://api.github.com/repos/$repository/git/ref/tags/$($manifest.tag)" $commitPath '' 1000000
         $tagObject = (Get-Content -Raw -LiteralPath $commitPath | ConvertFrom-Json).object

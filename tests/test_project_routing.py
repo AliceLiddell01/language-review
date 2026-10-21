@@ -530,11 +530,16 @@ profiles:
     llm: {provider: llama_cpp, model: stub-model}
     prompts:
       primary: instructions.md
+      strategies:
+        technical: strategy.md
 prompts:
   primary: instructions.md
+  strategies:
+    grammar: strategy.md
 """,
     )
     (root / "instructions.md").write_text("Инструкция только для capture.", encoding="utf-8")
+    (root / "strategy.md").write_text("Инструкция для стратегии.", encoding="utf-8")
     environment = isolated_appdata / "language-review/config.toml"
     environment.parent.mkdir(parents=True)
     environment.write_text(

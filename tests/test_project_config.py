@@ -21,6 +21,7 @@ from language_review.project_config import (
     load_project,
     path_profile,
     project_mapping,
+    prompt_files,
     repository_root,
 )
 from language_review.scanner import scan_paths
@@ -97,6 +98,25 @@ profiles:
     project_inputs.prepare([str(source)], load_config())
 
     assert policy.read_bytes() == original
+
+
+def test_prompt_files_enumerates_common_and_profile_references_once() -> None:
+    definition = {
+        "prompts": {
+            "primary": "common.md",
+            "strategies": {
+                "grammar": {"file": "shared.md"},
+                "punctuation": {"text": "Проверяй пунктуацию."},
+                "meaning": None,
+            },
+        },
+        "profiles": {
+            "everyday": {"prompts": {"strategies": {"technical": "shared.md"}}},
+            "docs": {"prompts": {"verifier": {"file": "review.md"}}},
+        },
+    }
+
+    assert prompt_files(definition) == ["common.md", "shared.md", "review.md"]
 
 
 def test_missing_policy_never_uses_parent_or_global_profile(

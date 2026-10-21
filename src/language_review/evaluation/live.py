@@ -19,11 +19,9 @@ from language_review.evaluation.reports import load_product_report
 from language_review.evaluation.scoring import score
 from language_review.project_config import (
     FILENAME,
-    MAX_CONFIG_BYTES,
-    MAX_PROMPT_BYTES,
-    _read,
     init_project,
     load_project,
+    read_project_policy_files,
 )
 
 
@@ -63,11 +61,8 @@ def capture(
         # Это явная подготовка временных синтетических репозиториев оценщика.
         # TOML задаёт только среду; YAML — выбранную пользователем проектную политику.
         project_yaml = config if config and config.suffix.lower() in {".yaml", ".yml"} else None
-        policy_bytes = (
-            _read(project_yaml, MAX_CONFIG_BYTES, FILENAME).encode("utf-8")
-            if project_yaml
-            else None
-        )
+        policy_files = read_project_policy_files(project_yaml) if project_yaml else None
+        policy_bytes = None
         for repository in bindings.values():
             root = inputs / repository
             (root / ".git").mkdir()
@@ -75,52 +70,17 @@ def capture(
                 init_project(root)
             else:
                 from language_review.config import load_config
-                from language_review.project_config import _inside, _relative, _yaml
 
                 if project_yaml.name != FILENAME:
                     raise InputError(f"Политика оценщика должна называться {FILENAME}.")
-                definition = _yaml(project_yaml)
-                profiles = definition.get("profiles")
-                prompt_sets = [definition.get("prompts", {})]
-                if isinstance(profiles, dict):
-                    prompt_sets.extend(
-                        profile.get("prompts", {})
-                        for profile in profiles.values()
-                        if isinstance(profile, dict)
-                    )
-                copied: set[str] = set()
-                for prompt_set in prompt_sets:
-                    if not isinstance(prompt_set, dict):
-                        continue
-                    strategies = prompt_set.get("strategies", {})
-                    if not isinstance(strategies, dict):
-                        continue
-                    values = [
-                        value for key, value in prompt_set.items() if key != "strategies"
-                    ] + list(strategies.values())
-                    for value in values:
-                        relative = (
-                            value
-                            if isinstance(value, str)
-                            else value.get("file")
-                            if isinstance(value, dict)
-                            else None
-                        )
-                        if relative is not None:
-                            if relative in copied:
-                                continue
-                            copied.add(relative)
-                            source = _inside(
-                                project_yaml.parent.resolve(), _relative(relative, "prompts")
-                            )
-                            target = root / relative
-                            target.parent.mkdir(parents=True, exist_ok=True)
-                            with target.open("xb") as stream:
-                                stream.write(
-                                    _read(source, MAX_PROMPT_BYTES, "prompts").encode("utf-8")
-                                )
+                assert policy_files is not None
+                policy_bytes, prompt_files = policy_files
+                for relative, content in prompt_files.items():
+                    target = root / relative
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with target.open("xb") as stream:
+                        stream.write(content)
                 with (root / FILENAME).open("xb") as stream:
-                    assert policy_bytes is not None
                     stream.write(policy_bytes)
                 load_project(load_config(), root)
         initial = {

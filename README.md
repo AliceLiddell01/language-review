@@ -97,25 +97,27 @@ language-review extract .\settings.json --extension .json --format json
 | reStructuredText, AsciiDoc | Заголовки и проза с базовой обработкой директив, ссылок и literal/code blocks | Поддерживается консервативное подмножество разметки |
 | JSON, YAML, TOML, XML | Только строковые значения по настроенным селекторам | Расширение нужно включить явно; YAML tags/aliases не интерпретируются, повторяющиеся JSON/YAML-ключи пропускаются, TOML-массивы таблиц (`[[table]]`) помечаются `partial` |
 
-В проектном YAML селекторы `extract.selectors` задаются по расширению файла; синтаксис селекторов в примере ниже сохранён для legacy TOML, который нужно перенести в YAML. Поддерживается безопасное подмножество путей: свойства через `.name`, ключи через `['name']` или `["name"]`, индексы обычного массива `[0]` и wildcard `*`. YAML flow mappings поддерживаются; повторяющиеся JSON/YAML-ключи в одном объекте/отображении пропускаются с диагностикой, потому что разные потребители могут выбрать разные значения. TOML-массивы таблиц пока пропускаются с диагностикой.
+В проектном `.language-review.yaml` селекторы `extract.selectors` задаются по расширению файла. Поддерживается безопасное подмножество путей: свойства через `.name`, ключи через `['name']` или `["name"]`, индексы обычного массива `[0]` и wildcard `*`. YAML flow mappings поддерживаются; повторяющиеся JSON/YAML-ключи в одном объекте/отображении пропускаются с диагностикой, потому что разные потребители могут выбрать разные значения. TOML-массивы таблиц пока пропускаются с диагностикой.
 
-~~~toml
-[scan]
-extensions = [".rs", ".cs", ".md", ".json", ".yaml"]
-
-[extract]
-header_language = "auto" # auto, c или cpp для неоднозначных .h
-message_calls = ["MyLogger.ShowMessage", "logger->Notify"]
-
-[extract.selectors]
-".json" = ["$.ui.message", "$.errors[*].description"]
-".yaml" = ["$.ui.message"]
-
-[profiles.docs]
-priority = 5
-match_paths = ["docs/**"]
-[profiles.docs.extract.selectors]
-".json" = ["$.ui.message"]
+~~~yaml
+schema_version: 1
+default_profile: everyday
+scan:
+  extensions: [.rs, .cs, .md, .json, .yaml]
+extract:
+  header_language: auto # auto, c или cpp для неоднозначных .h
+  message_calls: [MyLogger.ShowMessage, logger->Notify]
+  selectors:
+    .json: ['$.ui.message', '$.errors[*].description']
+    .yaml: ['$.ui.message']
+profiles:
+  everyday: {}
+  docs:
+    extract:
+      selectors:
+        .json: ['$.ui.message']
+path_rules:
+  - {path: 'docs/**', profile: docs, priority: 5}
 ~~~
 
 В отчёте извлечения схема называется `language-review.extract` и имеет собственную версию `1.0`; она не меняет JSON-схему `scan` версии `1.0`. Документ содержит относительный путь, root ID, выбранный профиль, формат, кодировку, BOM, SHA-256, статус и диагностические коды. Каждый фрагмент включает `text`/`source_text`, вид, контекст, стабильный ID, исходный диапазон и защищённые диапазоны.

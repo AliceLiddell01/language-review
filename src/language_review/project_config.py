@@ -91,8 +91,7 @@ def _mapping(value: Any, label: str, keys: set[str] | None = None) -> dict[str, 
     return value
 
 
-def _yaml(path: Path) -> dict[str, Any]:
-    text = _read(path, MAX_CONFIG_BYTES, FILENAME)
+def _parse_yaml(text: str) -> dict[str, Any]:
     parser = YAML(typ="safe", pure=True)
     parser.allow_duplicate_keys = False
     try:
@@ -130,6 +129,10 @@ def _yaml(path: Path) -> dict[str, Any]:
         ) from exc
 
 
+def _yaml(path: Path) -> dict[str, Any]:
+    return _parse_yaml(_read(path, MAX_CONFIG_BYTES, FILENAME))
+
+
 def _relative(value: Any, label: str, *, pattern: bool = False) -> str:
     if (
         not isinstance(value, str)
@@ -162,37 +165,88 @@ def _inside(root: Path, relative: str) -> Path:
         raise ConfigurationError(f"Файл промпта недоступен: {relative}.") from exc
 
 
-def _prompts(
-    raw: Any, root: Path, label: str, protected: set[Path]
-) -> tuple[dict[str, str | None], dict[str, str]]:
+def _prompt_entries(raw: Any, label: str) -> list[tuple[str, Any]]:
     raw = _mapping(raw, label, {"primary", "strategies", "verifier"})
     flat = {key: value for key, value in raw.items() if key != "strategies"}
     if "strategies" in raw:
         flat.update(_mapping(raw["strategies"], label + ".strategies", set(ANALYSIS_STRATEGIES)))
+    return list(flat.items())
+
+
+def _parse_prompt_value(value: Any, label: str) -> tuple[str, str | None]:
+    if value is None:
+        return "builtin", None
+    if isinstance(value, str):
+        value = {"file": value}
+    value = _mapping(value, label, {"text", "file"})
+    if len(value) != 1:
+        raise ConfigurationError(f"{label}: задайте ровно text или file.")
+    if "file" in value:
+        relative = _relative(value["file"], label + ".file")
+        if not relative.lower().endswith(".md"):
+            raise ConfigurationError(f"{label}: файл промпта должен быть Markdown (.md).")
+        return "file", relative
+    text = value["text"]
+    if not isinstance(text, str) or not text.strip() or "\x00" in text:
+        raise ConfigurationError(f"{label}: нужен непустой текст без NUL.")
+    if len(text.encode("utf-8")) > MAX_PROMPT_BYTES:
+        raise ConfigurationError(f"{label}: превышен предел {MAX_PROMPT_BYTES} байт.")
+    return "text", text
+
+
+def prompt_files(definition: Any) -> list[str]:
+    """Возвращает уникальные относительные пути файловых промптов в порядке YAML."""
+    definition = _mapping(definition, FILENAME)
+    prompt_sets = [("prompts", definition.get("prompts", {}))]
+    profiles = _mapping(definition.get("profiles", {}), "profiles")
+    for name, raw_profile in profiles.items():
+        profile = _mapping(raw_profile, f"profiles.{name}")
+        prompt_sets.append((f"profiles.{name}.prompts", profile.get("prompts", {})))
+
+    paths: list[str] = []
+    seen: set[str] = set()
+    for label, raw in prompt_sets:
+        for key, value in _prompt_entries(raw, label):
+            kind, parsed = _parse_prompt_value(value, f"{label}.{key}")
+            if kind == "file":
+                assert parsed is not None
+                if parsed not in seen:
+                    seen.add(parsed)
+                    paths.append(parsed)
+    return paths
+
+
+def read_project_policy_files(path: Path) -> tuple[bytes, dict[str, bytes]]:
+    """Читает ограниченную YAML-политику и все её файловые промпты для копирования."""
+    text = _read(path, MAX_CONFIG_BYTES, FILENAME)
+    definition = _parse_yaml(text)
+    root = path.parent.resolve()
+    files = {
+        relative: _read(_inside(root, relative), MAX_PROMPT_BYTES, relative).encode("utf-8")
+        for relative in prompt_files(definition)
+    }
+    return text.encode("utf-8"), files
+
+
+def _prompts(
+    raw: Any, root: Path, label: str, protected: set[Path]
+) -> tuple[dict[str, str | None], dict[str, str]]:
     values: dict[str, str | None] = {}
     sources: dict[str, str] = {}
-    for key, value in flat.items():
-        if value is None:
+    for key, value in _prompt_entries(raw, label):
+        kind, parsed = _parse_prompt_value(value, f"{label}.{key}")
+        if kind == "builtin":
             values[key], sources[key] = None, "встроенный промпт"
             continue
-        if isinstance(value, str):
-            value = {"file": value}
-        value = _mapping(value, f"{label}.{key}", {"text", "file"})
-        if len(value) != 1:
-            raise ConfigurationError(f"{label}.{key}: задайте ровно text или file.")
-        if "file" in value:
-            relative = _relative(value["file"], f"{label}.{key}.file")
-            if not relative.lower().endswith(".md"):
-                raise ConfigurationError(f"{label}.{key}: файл промпта должен быть Markdown (.md).")
-            text = _read(_inside(root, relative), MAX_PROMPT_BYTES, f"{label}.{key}")
-            protected.update((root / relative, _inside(root, relative)))
-            source = f"{label}.{key}: {relative}"
+        if kind == "file":
+            assert parsed is not None
+            source_path = _inside(root, parsed)
+            text = _read(source_path, MAX_PROMPT_BYTES, f"{label}.{key}")
+            protected.update((root / parsed, source_path))
+            source = f"{label}.{key}: {parsed}"
         else:
-            text = value["text"]
-            if not isinstance(text, str) or not text.strip() or "\x00" in text:
-                raise ConfigurationError(f"{label}.{key}: нужен непустой текст без NUL.")
-            if len(text.encode("utf-8")) > MAX_PROMPT_BYTES:
-                raise ConfigurationError(f"{label}.{key}: превышен предел {MAX_PROMPT_BYTES} байт.")
+            assert parsed is not None
+            text = parsed
             source = f"{label}.{key}: inline"
         values[key], sources[key] = text, source
     return values, sources

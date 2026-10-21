@@ -17,7 +17,14 @@ from language_review.evaluation.contracts import digest, save_new
 from language_review.evaluation.corpus import safe_path, source_map
 from language_review.evaluation.reports import load_product_report
 from language_review.evaluation.scoring import score
-from language_review.project_config import FILENAME, init_project, load_project
+from language_review.project_config import (
+    FILENAME,
+    MAX_CONFIG_BYTES,
+    MAX_PROMPT_BYTES,
+    _read,
+    init_project,
+    load_project,
+)
 
 
 def materialize(corpus: dict[str, Any], split: str, destination: Path) -> dict[str, str]:
@@ -56,6 +63,11 @@ def capture(
         # Это явная подготовка временных синтетических репозиториев оценщика.
         # TOML задаёт только среду; YAML — выбранную пользователем проектную политику.
         project_yaml = config if config and config.suffix.lower() in {".yaml", ".yml"} else None
+        policy_bytes = (
+            _read(project_yaml, MAX_CONFIG_BYTES, FILENAME).encode("utf-8")
+            if project_yaml
+            else None
+        )
         for repository in bindings.values():
             root = inputs / repository
             if project_yaml is None:
@@ -94,9 +106,12 @@ def capture(
                             target = root / relative
                             target.parent.mkdir(parents=True, exist_ok=True)
                             with target.open("xb") as stream:
-                                stream.write(source.read_bytes())
+                                stream.write(
+                                    _read(source, MAX_PROMPT_BYTES, "prompts").encode("utf-8")
+                                )
                 with (root / FILENAME).open("xb") as stream:
-                    stream.write(project_yaml.read_bytes())
+                    assert policy_bytes is not None
+                    stream.write(policy_bytes)
         initial = {
             path: hashlib.sha256(path.read_bytes()).hexdigest()
             for path in inputs.rglob("*")
@@ -172,7 +187,9 @@ def capture(
                     "report_sha256": digest(report),
                     "root_bindings": bindings,
                     "product_commit": product_commit,
-                    "configuration_sha256": hashlib.sha256(config.read_bytes()).hexdigest()
+                    "configuration_sha256": hashlib.sha256(
+                        policy_bytes if policy_bytes is not None else config.read_bytes()
+                    ).hexdigest()
                     if config
                     else None,
                     "wall_clock_ms": elapsed,

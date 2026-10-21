@@ -453,7 +453,15 @@ prompts:
     environment.write_text(
         f'[check.llm.llama_cpp]\nendpoint = "{json_server.url}"\n', encoding="utf-8"
     )
-    json_server.responder = llama_responder('{"findings": []}')
+    initial_policy = (root / FILENAME).read_bytes()
+    base_response = llama_responder('{"findings": []}')
+
+    def respond(request: Any) -> Any:
+        if request.path == "/v1/chat/completions":
+            (root / FILENAME).write_bytes(initial_policy + "\n# Изменено после экспорта\n".encode())
+        return base_response(request)
+
+    json_server.responder = respond
     output = tmp_path / "capture"
     result = capture(
         make_corpus("Обычный русский текст."), "dev", ["llm"], root / FILENAME, output, "a" * 40
@@ -465,6 +473,9 @@ prompts:
         "Инструкция только для capture." in req.body["messages"][0]["content"] for req in sent
     )
     manifest = json.loads((output / "run-1.json").read_text(encoding="utf-8"))
+    import hashlib
+
+    assert manifest["configuration_sha256"] == hashlib.sha256(initial_policy).hexdigest()
     policies = manifest["parameters"]["document_policies"]
     assert policies and all(
         value["prompts"]["primary"]["source"].endswith("instructions.md")

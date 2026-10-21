@@ -483,6 +483,15 @@ def test_installation_from_checkout_is_explained(capsys: Any) -> None:
     assert "управляемую установку" in capsys.readouterr().err
 
 
+def test_non_windows_setup_refuses_mutation(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setattr(deploy.sys, "platform", "linux")
+    with pytest.raises(ReleaseError, match="Windows"):
+        deploy.change_path(tmp_path / "bin", add=True)
+    with pytest.raises(ReleaseError, match="Windows"):
+        deploy.schedule_cleanup(tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
 @pytest.mark.parametrize("name", ["language-review", "language-review-eval"])
 def test_path_conflict_preserves_foreign_program(
     tmp_path: Path, monkeypatch: Any, name: str

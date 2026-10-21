@@ -231,7 +231,7 @@ def probe(release: Path, version: str) -> None:
 
 
 def change_path(bin_path: Path, *, add: bool) -> bool:
-    if os.name != "nt":
+    if sys.platform != "win32":
         raise ReleaseError("Изменение пользовательского PATH поддерживается только в Windows.")
     import winreg
 
@@ -545,6 +545,8 @@ def uninstall(root: Path) -> list[str]:
 
 
 def schedule_cleanup(root: Path) -> None:
+    if sys.platform != "win32":
+        raise ReleaseError("Внешняя очистка поддерживается только в Windows.")
     from importlib.resources import files
 
     script = Path(tempfile.gettempdir()) / ("language-review-cleanup-" + uuid.uuid4().hex + ".ps1")

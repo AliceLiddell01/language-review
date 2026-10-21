@@ -11,6 +11,7 @@ import os
 import queue
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import urllib.request
@@ -45,6 +46,35 @@ def command(args: list[str], env: dict[str, str], cwd: Path, codes: set[int] | N
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise RuntimeError("FAIL: " + message)
+
+
+def _without_path_directories(path: str, excluded: set[Path]) -> str:
+    blocked = {os.path.normcase(str(directory.resolve())) for directory in excluded}
+    return os.pathsep.join(
+        part
+        for part in path.split(os.pathsep)
+        if part and os.path.normcase(str(Path(part).resolve())) not in blocked
+    )
+
+
+def isolated_environments(env: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+    uv = shutil.which("uv", path=env.get("PATH"))
+    checkout_scripts = (Path(sys.prefix) / "Scripts").resolve()
+    runtime_path = _without_path_directories(env["PATH"], {checkout_scripts})
+    runtime_env = {**env, "PATH": runtime_path}
+    bootstrap_excluded = {Path(uv).resolve().parent} if uv else set()
+    bootstrap_env = {
+        **env,
+        "PATH": _without_path_directories(runtime_path, bootstrap_excluded),
+    }
+    return runtime_env, bootstrap_env
+
+
+def bootstrap_for_bundle(bootstrap: list[str], bundle: Path) -> list[str]:
+    result = bootstrap.copy()
+    result[result.index("-BundleDirectory") + 1] = str(bundle)
+    result[result.index("-TrustedManifestSha256") + 1] = digest(bundle / "release.json")
+    return result
 
 
 def snapshot(root: Path) -> dict[str, str]:
@@ -358,9 +388,7 @@ def verify_version_cycle(
         "sha256": digest(wheel_path),
     }
     (damaged / "release.json").write_text(json.dumps(damaged_manifest), encoding="utf-8")
-    failure = bootstrap.copy()
-    failure[failure.index(str(initial))] = str(damaged)
-    failure[failure.index(digest(initial / "release.json"))] = digest(damaged / "release.json")
+    failure = bootstrap_for_bundle(bootstrap, damaged)
     state_before = (install_root / "installation.json").read_bytes()
     failure_output = subprocess.run(
         failure,
@@ -386,11 +414,7 @@ def verify_version_cycle(
         "Неудачный кандидат изменил текущий installation pointer.",
     )
     checks["real_failing_candidate_preserves_previous"] = {"status": "PASS"}
-    success = bootstrap.copy()
-    success[success.index(str(initial))] = str(upgrade_candidate)
-    success[success.index(digest(initial / "release.json"))] = digest(
-        upgrade_candidate / "release.json"
-    )
+    success = bootstrap_for_bundle(bootstrap, upgrade_candidate)
     command(success, env, root)
     require(
         json.loads((install_root / "installation.json").read_text("utf-8"))["version"]
@@ -498,15 +522,10 @@ def verify(
         user_config.parent.mkdir(parents=True)
         user_environment = b'[check.llm.ollama]\nendpoint = "http://127.0.0.1:11434"\n'
         user_config.write_bytes(user_environment)
-        # uv run добавляет dev venv в PATH; чистая приёмка исключает этот checkout.
-        checkout_scripts = (Path.cwd() / ".venv/Scripts").resolve()
-        existing_uv = shutil.which("uv")
-        uv_scripts = Path(existing_uv).resolve().parent if existing_uv else None
-        env["PATH"] = os.pathsep.join(
-            part
-            for part in env["PATH"].split(os.pathsep)
-            if part and Path(part).resolve() not in {checkout_scripts, uv_scripts}
-        )
+        # Исключаем checkout venv из runtime checks; uv скрыт только от bootstrap.
+        env, bootstrap_env = isolated_environments(env)
+        pwsh = shutil.which("pwsh", path=env["PATH"])
+        require(pwsh is not None, "PowerShell 7 не найден.")
         inputs = root / "foreign"
         for name in ("repo-a", "repo-b"):
             repo = inputs / name
@@ -516,7 +535,7 @@ def verify(
         before = snapshot(inputs)
         install_root = Path(env["LOCALAPPDATA"]) / "LanguageReview/application"
         bootstrap = [
-            "pwsh",
+            str(pwsh),
             "-NoProfile",
             "-File",
             str(received / "install.ps1"),
@@ -536,7 +555,7 @@ def verify(
             "Тестовый каталог уже зарегистрирован в PATH.",
         )
         cleanup.callback(change_path, install_root / "bin", add=False)
-        command(bootstrap, env, inputs / "repo-a")
+        command(bootstrap, bootstrap_env, inputs / "repo-a")
         verify_registered_path(install_root, env, inputs / "repo-b", manifest["package_version"])
         require(
             change_path(install_root / "bin", add=False), "Не удалось снять тестовую запись PATH."
@@ -552,7 +571,7 @@ def verify(
             )
         else:
             raise RuntimeError("Отсутствующая регистрация PATH дала ложный успех.")
-        command(bootstrap, env, inputs / "repo-a")
+        command(bootstrap, bootstrap_env, inputs / "repo-a")
         verify_registered_path(install_root, env, inputs / "repo-b", manifest["package_version"])
         current = json.loads((install_root / "installation.json").read_text("utf-8"))
         python = install_root / "releases" / current["active"] / "venv/Scripts/python.exe"
@@ -583,7 +602,7 @@ def verify(
         # Extras включаются явно отдельным проверяемым upgrade той же поставки.
         bootstrap[bootstrap.index("core")] = "all"
         bootstrap.append("-Claude")
-        command(bootstrap, env, inputs / "repo-b")
+        command(bootstrap, bootstrap_env, inputs / "repo-b")
         updated = json.loads((install_root / "installation.json").read_text("utf-8"))
         require(
             updated["active"] != current["active"] and updated["previous"] == current["active"],
@@ -594,7 +613,7 @@ def verify(
         cli = [str(python), "-I", "-m", "language_review"]
         checks["controlled_extras_upgrade"] = {"status": "PASS"}
         codex_only = [arg for arg in bootstrap if arg != "-Claude"]
-        command(codex_only, env, inputs / "repo-b")
+        command(codex_only, bootstrap_env, inputs / "repo-b")
         require(
             json.loads((install_root / "installation.json").read_text("utf-8"))["skills"]
             == current["skills"],
@@ -647,7 +666,7 @@ def verify(
         checks["release_sdist_independent_install"] = {"status": "PASS"}
         verify_registered_path(install_root, env, inputs / "repo-b", manifest["package_version"])
         checks["installer_user_path_new_powershell"] = {"status": "PASS"}
-        command(bootstrap, env, inputs / "repo-b")
+        command(bootstrap, bootstrap_env, inputs / "repo-b")
         require(
             json.loads((install_root / "installation.json").read_text("utf-8"))["active"]
             == current["active"],
@@ -735,15 +754,17 @@ def verify(
                 "manifest_sha256": digest(previous_candidate / "release.json"),
             }
             cycle_env = dict(env)
+            cycle_bootstrap_env = dict(bootstrap_env)
             for key in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"):
                 cycle_env[key] = str(root / "previous-profile" / key)
                 Path(cycle_env[key]).mkdir(parents=True, exist_ok=True)
+                cycle_bootstrap_env[key] = cycle_env[key]
             cycle_root = Path(cycle_env["LOCALAPPDATA"]) / "LanguageReview/application"
-            cycle_bootstrap = [
-                "pwsh",
+            previous_bootstrap = [
+                str(pwsh),
                 "-NoProfile",
                 "-File",
-                str(received / "install.ps1"),
+                str(previous_candidate / "install.ps1"),
                 "-BundleDirectory",
                 str(previous_candidate),
                 "-TrustedManifestSha256",
@@ -751,16 +772,33 @@ def verify(
                 "-NonInteractive",
                 "-NoPath",
             ]
-            command(cycle_bootstrap, cycle_env, root)
+            command(previous_bootstrap, cycle_bootstrap_env, root)
+            cycle_bootstrap = [
+                str(pwsh),
+                "-NoProfile",
+                "-File",
+                str(received / "install.ps1"),
+                "-BundleDirectory",
+                str(received),
+                "-TrustedManifestSha256",
+                digest(received / "release.json"),
+                "-NonInteractive",
+                "-NoPath",
+            ]
             checks.update(
                 verify_version_cycle(
-                    previous_candidate, candidate, cycle_bootstrap, cycle_root, cycle_env, root
+                    previous_candidate,
+                    candidate,
+                    cycle_bootstrap,
+                    cycle_root,
+                    cycle_bootstrap_env,
+                    root,
                 )
             )
         if upgrade_candidate:
             checks.update(
                 verify_version_cycle(
-                    received, upgrade_candidate, bootstrap, install_root, env, root
+                    received, upgrade_candidate, bootstrap, install_root, bootstrap_env, root
                 )
             )
             current = json.loads((install_root / "installation.json").read_text("utf-8"))
@@ -772,7 +810,7 @@ def verify(
             stream.write(b"tamper")
         bad = bootstrap.copy()
         bad[bad.index(str(received))] = str(altered)
-        command(bad, env, root, {1})
+        command(bad, bootstrap_env, root, {1})
         require(
             json.loads((install_root / "installation.json").read_text("utf-8"))["active"]
             == current["active"],
@@ -819,7 +857,7 @@ def verify(
         checks["uninstall_ownership"] = {"status": "PASS"}
         # Пользователь сам сохраняет/перемещает конфликтный skill до переустановки.
         codex.rename(codex.with_name("SKILL.saved.md"))
-        command(bootstrap, env, root)
+        command(bootstrap, bootstrap_env, root)
         checks["safe_reinstall"] = {"status": "PASS"}
         require(
             account_file.read_bytes() == protected_session,

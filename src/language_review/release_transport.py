@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -51,6 +52,7 @@ def download(url: str, target: Path, expected: str | None = None, limit: int = 1
     check_url(url)
     partial = target.with_name(target.name + ".partial")
     try:
+        parsed_url = urllib.parse.urlsplit(url)
         request = urllib.request.Request(
             url,
             headers={
@@ -60,6 +62,9 @@ def download(url: str, target: Path, expected: str | None = None, limit: int = 1
                 else "application/octet-stream",
             },
         )
+        token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+        if token and parsed_url.hostname == "api.github.com":
+            request.add_unredirected_header("Authorization", "Bearer " + token)
         with (
             urllib.request.build_opener(GitHubRedirect()).open(request, timeout=45) as response,
             partial.open("xb") as stream,

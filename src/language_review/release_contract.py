@@ -92,6 +92,17 @@ def validate_manifest(data: dict[str, Any]) -> None:
         raise ReleaseError("Версии тега, пакета и manifest не совпадают.")
     if data.get("channel") != ("prerelease" if "-" in version else "stable"):
         raise ReleaseError("Канал не соответствует версии.")
+    previous_stable = data.get("previous_stable")
+    if previous_stable != "none":
+        if (
+            not isinstance(previous_stable, str)
+            or not previous_stable.startswith("v")
+            or not SEMVER.fullmatch(previous_stable[1:])
+            or "-" in previous_stable[1:]
+        ):
+            raise ReleaseError("Некорректная предыдущая стабильная версия.")
+        if version_key(previous_stable[1:]) >= version_key(version):
+            raise ReleaseError("Предыдущая стабильная версия должна быть старше кандидата.")
     if not SHA.fullmatch(str(data.get("commit", ""))):
         raise ReleaseError("Нужен полный commit SHA.")
     if data.get("python") != "3.15" or data.get("skill_contract") != 1:

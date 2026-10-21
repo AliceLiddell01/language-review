@@ -136,6 +136,41 @@ def test_manifest_rejects_identity_mismatch(bundle: Path, key: str, value: Any) 
 
 
 @pytest.mark.parametrize(
+    ("previous", "valid"),
+    [
+        (None, False),
+        ("none", True),
+        ("v1.2.2", True),
+        ("v1.x", False),
+        ("v1.2.3-rc.1", False),
+        ("v1.2.3", False),
+        ("v2.0.0", False),
+    ],
+)
+def test_manifest_validates_previous_stable(
+    bundle: Path, previous: str | None, valid: bool
+) -> None:
+    data = json.loads((bundle / "release.json").read_text("utf-8"))
+    data.update(
+        {
+            "version": "1.2.3",
+            "package_version": "1.2.3",
+            "tag": "v1.2.3",
+            "channel": "stable",
+        }
+    )
+    if previous is None:
+        data.pop("previous_stable")
+    else:
+        data["previous_stable"] = previous
+    if valid:
+        validate_manifest(data)
+    else:
+        with pytest.raises(ReleaseError):
+            validate_manifest(data)
+
+
+@pytest.mark.parametrize(
     "name",
     [
         "../evil.ps1",
@@ -808,6 +843,13 @@ def test_generated_launcher_parses_in_powershell(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_generated_batch_launchers_exit_on_the_invocation_line(tmp_path: Path) -> None:
+    launchers = deploy.launcher_files(tmp_path)
+    for name in ("language-review.cmd", "language-review-eval.cmd"):
+        invocation = launchers[tmp_path / "bin" / name].splitlines()[1]
+        assert invocation.endswith(b" %* & exit /b")
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-планировщика")
 def test_schedule_cleanup_waits_for_venv_parent_process(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setattr(deploy.tempfile, "gettempdir", lambda: str(tmp_path))
@@ -1064,6 +1106,56 @@ def test_distribution_verifier_requires_a_strictly_newer_upgrade() -> None:
             module.require_upgrade_version({"version": "1.2.3"}, {"version": version})
 
 
+def test_distribution_verifier_isolates_checkout_and_bootstrap_paths(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    module = distribution_verifier_module()
+    checkout_scripts = tmp_path / "checkout" / "Scripts"
+    tools = tmp_path / "shared-tools"
+    other = tmp_path / "other"
+    for directory in (checkout_scripts, tools, other):
+        directory.mkdir(parents=True)
+    uv = tools / "uv.exe"
+    uv.write_bytes(b"synthetic uv")
+    monkeypatch.setattr(module.sys, "prefix", str(checkout_scripts.parent))
+    monkeypatch.setattr(
+        module.shutil,
+        "which",
+        lambda name, path=None: str(uv) if name == "uv" else None,
+    )
+    source_path = os.pathsep.join(map(str, (checkout_scripts, tools, other)))
+    runtime, bootstrap = module.isolated_environments({"PATH": source_path, "MARKER": "kept"})
+
+    assert runtime["MARKER"] == bootstrap["MARKER"] == "kept"
+    assert str(checkout_scripts) not in runtime["PATH"]
+    assert str(checkout_scripts) not in bootstrap["PATH"]
+    assert str(tools) in runtime["PATH"] and str(tools) not in bootstrap["PATH"]
+    assert str(other) in runtime["PATH"] and str(other) in bootstrap["PATH"]
+
+
+def test_distribution_verifier_retargets_bootstrap_bundle_and_digest(tmp_path: Path) -> None:
+    module = distribution_verifier_module()
+    bundle = tmp_path / "candidate"
+    bundle.mkdir()
+    manifest = bundle / "release.json"
+    manifest.write_text('{"version":"1.2.3"}', encoding="utf-8")
+    bootstrap = [
+        "pwsh.exe",
+        "-File",
+        "install.ps1",
+        "-BundleDirectory",
+        "old",
+        "-TrustedManifestSha256",
+        "old-digest",
+    ]
+
+    result = module.bootstrap_for_bundle(bootstrap, bundle)
+
+    assert result[result.index("-BundleDirectory") + 1] == str(bundle)
+    assert result[result.index("-TrustedManifestSha256") + 1] == digest(manifest)
+    assert bootstrap[4:7] == ["old", "-TrustedManifestSha256", "old-digest"]
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Исполняемый Windows bootstrap")
 @pytest.mark.parametrize("prerelease", [False, True])
 @pytest.mark.parametrize("channel", ["stable", "prerelease"])
@@ -1292,16 +1384,22 @@ def test_publication_preconditions_never_reach_write(
     )
     monkeypatch.setattr(module, "github", lambda path: {"workflow_runs": checks})
     evidence = bundle.parent / "acceptance.json"
-    evidence.write_text(
-        json.dumps(
-            {
-                "status": "PASS",
-                "commit": "b" * 40 if blocker == "evidence" else "a" * 40,
-                "manifest_sha256": digest(bundle / "release.json"),
-            }
-        ),
-        encoding="utf-8",
-    )
+    if blocker == "evidence":
+        from language_review import release_acceptance as acceptance
+
+        manifest = json.loads((bundle / "release.json").read_text("utf-8"))
+        completed_checks = {
+            name: {"status": "PASS"} for name in acceptance.REQUIRED | acceptance.VERSION_CHECKS
+        }
+        report = acceptance.report(manifest, digest(bundle / "release.json"), completed_checks)
+        report["commit"] = "b" * 40
+    else:
+        report = {
+            "status": "PASS",
+            "commit": "a" * 40,
+            "manifest_sha256": digest(bundle / "release.json"),
+        }
+    evidence.write_text(json.dumps(report), encoding="utf-8")
     with pytest.raises(ReleaseError) as error:
         module.publish(argparse.Namespace(candidate=bundle, evidence=evidence))
     assert str(error.value) == expected
@@ -1331,6 +1429,59 @@ def test_asset_download_hash_failure_and_partial_cleanup(tmp_path: Path, monkeyp
     with pytest.raises(ReleaseError, match="размер"):
         transport.download("https://github.com/file", target, limit=1)
     assert not target.exists() and not target.with_name("asset.partial").exists()
+
+
+@pytest.mark.parametrize(
+    ("url", "expected_token"),
+    [
+        ("https://api.github.com/repos/AliceLiddell01/language-review/releases/latest", True),
+        (
+            "https://github.com/AliceLiddell01/language-review/releases/download/v1.0.0/file.zip",
+            False,
+        ),
+    ],
+)
+def test_download_sends_token_only_to_github_api(
+    tmp_path: Path, monkeypatch: Any, url: str, expected_token: bool
+) -> None:
+    from language_review import release_transport as transport
+
+    class Response(io.BytesIO):
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            self.close()
+
+    requests: list[Any] = []
+
+    class Opener:
+        def open(self, request: Any, **_kwargs: Any) -> Response:
+            requests.append(request)
+            return Response(b"metadata")
+
+    monkeypatch.setenv("GH_TOKEN", "synthetic-test-token")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(transport.urllib.request, "build_opener", lambda *_args: Opener())
+    transport.download(url, tmp_path / "download")
+    request = requests[0]
+    authorization = request.unredirected_hdrs.get("Authorization")
+    assert (authorization == "Bearer synthetic-test-token") is expected_token
+    if expected_token:
+        redirected = transport.GitHubRedirect().redirect_request(
+            request,
+            None,
+            302,
+            "Found",
+            {},
+            "https://github.com/AliceLiddell01/language-review/releases/latest",
+        )
+        assert redirected is not None
+        assert not any(
+            key.casefold() == "authorization"
+            for headers in (redirected.headers, redirected.unredirected_hdrs)
+            for key in headers
+        )
 
 
 @pytest.mark.parametrize(
@@ -1476,15 +1627,26 @@ def test_default_application_root_preserves_existing_oauth_directory(
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Контракт PowerShell Windows")
-def test_memory_installer_resolves_relative_release_from_powershell_location(
-    tmp_path: Path,
+@pytest.mark.parametrize("blocker", ["schema", "lock_sha256"])
+def test_memory_installer_resolves_relative_release_and_validates_manifest(
+    tmp_path: Path, blocker: str
 ) -> None:
     pwsh = shutil.which("pwsh")
     if pwsh is None:
         pytest.skip("PowerShell 7 не найден.")
     candidate = tmp_path / "candidate"
     candidate.mkdir()
-    (candidate / "release.json").write_text('{"schema":"invalid"}', encoding="utf-8")
+    manifest = (
+        {"schema": "invalid"}
+        if blocker == "schema"
+        else {
+            "schema": "language-review.release/1",
+            "commit": "a" * 40,
+            "lock_sha256": "invalid",
+            "assets": {},
+        }
+    )
+    (candidate / "release.json").write_text(json.dumps(manifest), encoding="utf-8")
 
     def quote_ps(value: str | Path) -> str:
         return "'" + str(value).replace("'", "''") + "'"
@@ -1689,6 +1851,21 @@ def test_setup_preserves_edited_managed_toml(isolated_appdata: Path) -> None:
         configure_endpoints({"ollama": "http://localhost:11435"})
     assert target.read_bytes() == before
     load_config(target)
+
+
+def test_setup_rejects_malformed_managed_toml_without_writing(isolated_appdata: Path) -> None:
+    from language_review.config import user_config_path
+
+    configure_endpoints({"ollama": "http://localhost:11434"})
+    target = user_config_path()
+    target.write_text(
+        "# language-review setup: начало\n[check.llm.ollama\n# language-review setup: конец\n",
+        encoding="utf-8",
+    )
+    before = target.read_bytes()
+    with pytest.raises(ReleaseError, match="синтаксически повреждён"):
+        configure_endpoints({"ollama": "http://localhost:11435"})
+    assert target.read_bytes() == before
 
 
 def test_setup_repeated_endpoint_updates_preserve_neighbor_sections(isolated_appdata: Path) -> None:

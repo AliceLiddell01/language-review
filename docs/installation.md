@@ -18,9 +18,14 @@ asset или назначение номера первого релиза. Не
 Для просмотра перед выполнением сохраните `install.ps1` выбранного релиза из раздела
 Assets, сравните `Get-FileHash` с `digest` этого asset в GitHub API, прочитайте файл
 в редакторе и запустите `pwsh -NoProfile -File .\install.ps1 -Tag $Tag`.
-Для конкретной версии/prerelease замените `/releases/latest` в загрузке metadata на
-`/releases/tags/$Tag` и проверяйте тот же tag при запуске. Не используйте скрипт,
-полученный из другого релиза, для первого bootstrap.
+Для конкретной версии/prerelease задайте `$Tag` полным именем тега, замените
+`/releases/latest` в загрузке metadata на `/releases/tags/$Tag` и добавьте в условие
+отказа проверку `$r.tag_name -ne $Tag`. В stable-команде удалите проверку
+`$r.prerelease`; для prerelease замените её на
+`($r.prerelease -and $r.tag_name -ne $Tag)`. Так prerelease разрешается только для
+точно запрошенного тега; проверки draft, asset URL и digest остаются обязательными.
+Передавайте тот же `$Tag` установщику. Не используйте скрипт, полученный из другого
+релиза, для первого bootstrap.
 
 Модель доверия: TLS/GitHub API официального репозитория и права издателя. GitHub
 asset digest и hashes manifest проверяют integrity в этой границе. Они **не являются

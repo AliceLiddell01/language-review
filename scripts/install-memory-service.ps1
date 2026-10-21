@@ -20,7 +20,9 @@ $source = if ($ReleaseDirectory) {
 $releaseManifest = $null
 if ($ReleaseDirectory) {
     $releaseManifest = Get-Content -Raw -LiteralPath (Join-Path $source 'release.json') | ConvertFrom-Json
-    if ($releaseManifest.schema -ne 'language-review.release/1' -or $releaseManifest.commit -notmatch '^[a-f0-9]{40}$') {
+    if ($releaseManifest.schema -ne 'language-review.release/1' -or
+        $releaseManifest.commit -notmatch '^[a-f0-9]{40}$' -or
+        $releaseManifest.lock_sha256 -notmatch '^[a-f0-9]{64}$') {
         throw 'Некорректный релизный комплект memory-worker.'
     }
     foreach ($entry in $releaseManifest.assets.PSObject.Properties) {

@@ -73,7 +73,12 @@ def configure_endpoints(values: dict[str, str]) -> None:
     if text:
         import tomllib
 
-        parsed = tomllib.loads(text)
+        try:
+            parsed = tomllib.loads(text)
+        except tomllib.TOMLDecodeError as exc:
+            raise ReleaseError(
+                "Пользовательский TOML синтаксически повреждён; файл сохранён."
+            ) from exc
         for service, table in (
             ("ollama", ["check", "llm", "ollama"]),
             ("llama_cpp", ["check", "llm", "llama_cpp"]),

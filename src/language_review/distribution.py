@@ -527,9 +527,13 @@ try {
 }
 exit $exitCode
 """
-    cmd = '@echo off\r\npwsh.exe -NoProfile -File "%~dp0language-review-launch.ps1" review %*\r\n'
+    cmd = (
+        "@echo off\r\n"
+        'pwsh.exe -NoProfile -File "%~dp0language-review-launch.ps1" review %* & exit /b\r\n'
+    )
     evaluator = (
-        '@echo off\r\npwsh.exe -NoProfile -File "%~dp0language-review-launch.ps1" eval %*\r\n'
+        "@echo off\r\n"
+        'pwsh.exe -NoProfile -File "%~dp0language-review-launch.ps1" eval %* & exit /b\r\n'
     )
     return {
         root / "bin/language-review.cmd": cmd.encode(),
@@ -605,7 +609,8 @@ def install(
             writes.update(launchers)
             writes[root / "installation.json"] = json_bytes(current)
             try:
-                transaction(root, writes)
+                with launch_locked(root):
+                    transaction(root, writes)
             except BaseException:
                 if added:
                     change_path(root / "bin", add=False)
@@ -707,7 +712,7 @@ def install(
                 if release.is_relative_to(root / "releases") and not release.is_symlink():
                     shutil.rmtree(release)
             raise
-        with launch_locked(root), contextlib.suppress(OSError, ReleaseError):
+        with contextlib.suppress(OSError, ReleaseError), launch_locked(root):
             prune_stale_releases(root, active=identifier, previous=old.get("active"))
         return current
 
@@ -732,7 +737,8 @@ def setup_skills(root: Path, agents: list[str]) -> None:
             content = wheel.read("language_review/distribution_assets/SKILL.md")
         writes, skills = skill_writes(old, agents, content, Path(old["home"]))
         writes[root / "installation.json"] = json_bytes({**old, "skills": skills})
-        transaction(root, writes)
+        with launch_locked(root):
+            transaction(root, writes)
 
 
 def rollback(root: Path) -> dict[str, Any]:
@@ -818,12 +824,17 @@ def uninstall(root: Path) -> list[str]:
                 writes[path] = None
             elif path.exists():
                 preserved.append("Изменённый launcher сохранён: " + path.name)
-        transaction(root, writes)
+        with launch_locked(root):
+            transaction(root, writes)
         if old["path_added"]:
             change_path(root / "bin", add=False)
         # Не удаляем текущий python.exe из собственного процесса: Windows держит его открытым.
         # Inventory остаётся для внешней очистки и обнаружения чужих изменений.
-        atomic(root / "installation.json", json_bytes({**old, "uninstalled": True, "skills": {}}))
+        with launch_locked(root):
+            atomic(
+                root / "installation.json",
+                json_bytes({**old, "uninstalled": True, "skills": {}}),
+            )
     return preserved
 
 

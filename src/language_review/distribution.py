@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 import zipfile
 from collections.abc import Iterator
@@ -89,6 +90,179 @@ def locked(root: Path) -> Iterator[None]:
             yield
     finally:
         lock.unlink(missing_ok=True)
+
+
+@contextlib.contextmanager
+def launch_locked(root: Path) -> Iterator[None]:
+    """Сериализует выбор active runtime с переключением и очисткой поколений."""
+    lock = root / ".launch-lock"
+    safe_path(lock)
+    deadline = time.monotonic() + 30
+    while True:
+        try:
+            stream = lock.open("x")
+            break
+        except FileExistsError as exc:
+            if time.monotonic() >= deadline:
+                raise ReleaseError("Не удалось дождаться завершения запуска CLI.") from exc
+            time.sleep(0.05)
+    try:
+        with stream:
+            stream.write(str(os.getpid()))
+            stream.flush()
+            yield
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def _has_live_runtime_lease(release: Path) -> bool:
+    lease_directory = release / ".run-leases"
+    safe_path(lease_directory)
+    if not lease_directory.is_dir():
+        return True
+    protocol = lease_directory / "protocol"
+    try:
+        safe_path(release / "owned-files.json")
+        index = read_json(release / "owned-files.json")
+        expected = index.get("files", {}).get(str(Path(".run-leases") / "protocol"))
+        if index.get("owner") != OWNER or not expected or digest(protocol) != expected:
+            return True
+    except OSError, ReleaseError, TypeError, AttributeError:
+        return True
+    try:
+        leases = list(lease_directory.iterdir())
+    except OSError:
+        return True
+    for lease in leases:
+        if lease == protocol:
+            continue
+        if not lease.is_file() or lease.suffix != ".lock":
+            return True
+        try:
+            import msvcrt
+
+            with lease.open("r+b") as stream:
+                try:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                except OSError:
+                    return True
+                else:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            lease.unlink()
+        except ImportError, OSError:
+            return True
+    return False
+
+
+def _remove_owned_release(release: Path) -> bool:
+    safe_path(release)
+    index_path = release / "owned-files.json"
+    safe_path(index_path)
+    try:
+        index = read_json(index_path)
+    except OSError, ReleaseError:
+        return False
+    files = index.get("files")
+    if index.get("owner") != OWNER or not isinstance(files, dict):
+        return False
+    owned: list[tuple[Path, str]] = []
+    for name, expected in files.items():
+        if not isinstance(name, str) or not isinstance(expected, str):
+            return False
+        normalized = name.replace("\\", "/")
+        parts = normalized.split("/")
+        if (
+            not normalized
+            or normalized.startswith("/")
+            or (len(normalized) > 1 and normalized[1] == ":")
+            or any(part in {"", ".", ".."} for part in parts)
+            or len(expected) != 64
+        ):
+            return False
+        path = release.joinpath(*parts)
+        safe_path(path)
+        owned.append((path, expected))
+    complete = True
+    for path, expected in owned:
+        try:
+            if not path.exists():
+                continue
+            if not path.is_file() or digest(path) != expected:
+                complete = False
+                continue
+            path.unlink()
+        except OSError:
+            complete = False
+    for directory in sorted(
+        (path for path in release.rglob("*") if path.is_dir()),
+        key=lambda path: len(path.parts),
+        reverse=True,
+    ):
+        try:
+            safe_path(directory)
+            directory.rmdir()
+        except OSError:
+            complete = False
+    if not complete:
+        return False
+    try:
+        if any(path != index_path for path in release.rglob("*")):
+            return False
+        index_path.unlink()
+        release.rmdir()
+        return True
+    except OSError:
+        return False
+
+
+def prune_stale_releases(root: Path, *, active: str, previous: str | None) -> list[str]:
+    """Удаляет только проверенные поколения вне active/previous без работающих lease."""
+    releases = root / "releases"
+    safe_path(releases)
+    if not releases.is_dir():
+        return []
+    keep = {active, previous}
+    removed: list[str] = []
+    for release in releases.iterdir():
+        identifier = release.name
+        if not release.is_dir() or not re_identifier(identifier) or identifier in keep:
+            continue
+        try:
+            if _has_live_runtime_lease(release):
+                continue
+            if _remove_owned_release(release):
+                removed.append(identifier)
+        except OSError, ReleaseError:
+            continue
+    return removed
+
+
+def private_uv(root: Path, current: dict[str, Any]) -> str:
+    active = current.get("active")
+    if not isinstance(active, str) or not re_identifier(active):
+        raise ReleaseError("Установленный runtime не содержит корректный active identifier.")
+    release = root / "releases" / active
+    expected = release / "tools" / "uv.exe"
+    configured = current.get("uv")
+    if not isinstance(configured, str) or os.path.normcase(
+        str(Path(configured).absolute())
+    ) != os.path.normcase(str(expected.absolute())):
+        raise ReleaseError("Путь установленного uv не соответствует active runtime.")
+    safe_path(expected)
+    if not expected.is_file():
+        raise ReleaseError("Проверенная копия uv отсутствует в active runtime.")
+    try:
+        safe_path(release / "owned-files.json")
+        index = read_json(release / "owned-files.json")
+        files = index.get("files", {})
+        recorded = files.get(str(Path("tools") / "uv.exe"))
+        if recorded is None:
+            recorded = files.get("tools/uv.exe")
+        if index.get("owner") != OWNER or recorded != digest(expected):
+            raise ReleaseError("Копия uv не совпадает с inventory active runtime.")
+    except (OSError, TypeError, AttributeError) as exc:
+        raise ReleaseError("Не удалось проверить копию uv active runtime.") from exc
+    return str(expected)
 
 
 def recover(root: Path) -> None:
@@ -281,16 +455,58 @@ def launcher_files(root: Path) -> dict[Path, bytes]:
     script = """$ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $file = Join-Path $root 'installation.json'
-$installation = Get-Content -Raw -LiteralPath $file | ConvertFrom-Json
-$python = Join-Path $root ('releases/' + $installation.active + '/venv/Scripts/python.exe')
+$gatePath = Join-Path $root '.launch-lock'
+$gate = $null
+$lease = $null
+$leasePath = $null
 $module = switch ($args[0]) {
     'review' { 'language_review' }
     'eval' { 'language_review.evaluation' }
     default { throw 'Неизвестный launcher Language Review.' }
 }
 $forward = @($args | Select-Object -Skip 1)
-& $python -I -m $module @forward
-exit $LASTEXITCODE
+for ($attempt = 0; $attempt -lt 300; $attempt++) {
+    try {
+        $gate = [IO.File]::Open($gatePath, 'CreateNew', 'Write', 'None')
+        break
+    } catch [IO.IOException] { Start-Sleep -Milliseconds 100 }
+}
+if (-not $gate) { throw 'Не удалось дождаться переключения active runtime.' }
+try {
+    $installation = Get-Content -Raw -LiteralPath $file | ConvertFrom-Json
+    if ($installation.active -notmatch '^[a-f0-9]{32}$') { throw 'Некорректный active runtime.' }
+    $release = Join-Path $root ('releases/' + $installation.active)
+    $leaseDirectory = Join-Path $release '.run-leases'
+    if (-not (Test-Path -LiteralPath (Join-Path $leaseDirectory 'protocol') -PathType Leaf)) {
+        throw 'Runtime не поддерживает безопасное управление lease.'
+    }
+    $leasePath = Join-Path $leaseDirectory ([guid]::NewGuid().ToString('N') + '.lock')
+    $lease = [IO.File]::Open($leasePath, 'CreateNew', 'ReadWrite', 'None')
+    $lease.SetLength(1)
+    $lease.Lock(0, 1)
+    $lease.Write([Text.Encoding]::ASCII.GetBytes([string]$PID))
+    $lease.Flush()
+} catch {
+    if ($lease) { $lease.Dispose() }
+    if ($leasePath -and (Test-Path -LiteralPath $leasePath)) {
+        Remove-Item -LiteralPath $leasePath -Force
+    }
+    throw
+} finally {
+    $gate.Dispose()
+    Remove-Item -LiteralPath $gatePath -Force
+}
+$python = Join-Path $release 'venv/Scripts/python.exe'
+$exitCode = 1
+try {
+    & $python -I -m $module @forward
+    $exitCode = $LASTEXITCODE
+} finally {
+    $lease.Unlock(0, 1)
+    $lease.Dispose()
+    Remove-Item -LiteralPath $leasePath -Force
+}
+exit $exitCode
 """
     cmd = '@echo off\r\npwsh.exe -NoProfile -File "%~dp0language-review-launch.ps1" review %*\r\n'
     evaluator = (
@@ -384,7 +600,10 @@ def install(
             shutil.copytree(bundle, release / "bundle")
             (release / "tools").mkdir()
             private_uv = release / "tools/uv.exe"
-            shutil.copyfile(shutil.which(uv) or uv, private_uv)
+            shutil.copyfile(uv, private_uv)
+            lease_directory = release / ".run-leases"
+            lease_directory.mkdir()
+            (lease_directory / "protocol").write_text("1\n", encoding="ascii")
             execute([uv, "venv", "--no-config", "--python", "3.15", str(release / "venv")])
             python = str(python_at(release))
             from language_review.release_contract import unpack_wheelhouse
@@ -453,7 +672,13 @@ def install(
             }
             writes.update(launchers)
             writes[root / "installation.json"] = json_bytes(current)
-            transaction(root, writes)
+            with launch_locked(root):
+                transaction(root, writes)
+            prune_stale_releases(
+                root,
+                active=identifier,
+                previous=old.get("active"),
+            )
             return current
         except BaseException:
             if added:

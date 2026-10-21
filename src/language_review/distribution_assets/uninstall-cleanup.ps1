@@ -37,6 +37,23 @@ $preserved = [Collections.Generic.List[string]]::new()
 $releasesPath = Join-Path $rootPath 'releases'
 foreach ($release in Get-ChildItem -LiteralPath $releasesPath -Directory) {
     Assert-NoLink $release.FullName
+    $leaseDirectory = Join-Path $release.FullName '.run-leases'
+    $liveLease = $false
+    if (Test-Path -LiteralPath $leaseDirectory -PathType Container) {
+        foreach ($leaseFile in Get-ChildItem -LiteralPath $leaseDirectory -Filter '*.lock' -File) {
+            try {
+                $leaseProbe = [IO.File]::Open($leaseFile.FullName, 'Open', 'ReadWrite', 'None')
+                $leaseProbe.Dispose()
+            } catch {
+                $liveLease = $true
+                break
+            }
+        }
+    }
+    if ($liveLease) {
+        $preserved.Add('Runtime занят работающим CLI: ' + $release.Name)
+        continue
+    }
     $indexPath = Join-Path $release.FullName 'owned-files.json'
     if (-not (Test-Path -LiteralPath $indexPath)) { continue }
     $index = Get-Content -Raw -LiteralPath $indexPath | ConvertFrom-Json
@@ -58,6 +75,11 @@ foreach ($release in Get-ChildItem -LiteralPath $releasesPath -Directory) {
                 if ($attempt -lt 4) { Start-Sleep -Milliseconds 200 }
             }
             if (-not $removed) { $preserved.Add($entry.Name) }
+        }
+    }
+    if (Test-Path -LiteralPath $leaseDirectory -PathType Container) {
+        foreach ($staleLease in Get-ChildItem -LiteralPath $leaseDirectory -Filter '*.lock' -File) {
+            Remove-Item -LiteralPath $staleLease.FullName -ErrorAction SilentlyContinue
         }
     }
     # Удаляются только пустые каталоги. Неизвестные файлы и изменённые байты остаются.

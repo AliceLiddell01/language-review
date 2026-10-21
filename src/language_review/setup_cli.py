@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import subprocess
 import tempfile
 import urllib.parse
@@ -283,10 +282,10 @@ def run(arguments: argparse.Namespace) -> int:
             }
         else:
             current = deployment.state(root)
+            uv = deployment.private_uv(root, current)
             with tempfile.TemporaryDirectory(prefix="language-review-update-") as directory:
                 bundle = Path(directory)
                 fetch_bundle(bundle, arguments.tag, prerelease=arguments.prerelease)
-                uv = shutil.which("uv") or current["uv"]
                 result = deployment.install(
                     bundle,
                     root,

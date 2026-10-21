@@ -315,6 +315,203 @@ def test_interactive_setup_preserves_unspecified_skills(
     assert prompts[0].endswith(prompt_suffix)
 
 
+def test_installation_update_uses_inventory_verified_private_uv(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    root = tmp_path / "application"
+    active = "a" * 32
+    release = root / "releases" / active
+    tools = release / "tools"
+    tools.mkdir(parents=True)
+    private_uv = tools / "uv.exe"
+    private_uv.write_bytes(b"verified uv")
+    (release / "owned-files.json").write_text(
+        json.dumps(
+            {
+                "owner": deploy.OWNER,
+                "files": {str(Path("tools") / "uv.exe"): digest(private_uv)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    current = {
+        "active": active,
+        "uv": str(private_uv),
+        "extras": "core",
+        "home": str(tmp_path / "home"),
+    }
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(setup_cli.deployment, "managed_root", lambda: root)
+    monkeypatch.setattr(setup_cli.deployment, "state", lambda _root: current)
+    monkeypatch.setattr(
+        "language_review.release_transport.fetch_bundle", lambda *_args, **_kwargs: None
+    )
+
+    def install(*_args: Any, **kwargs: Any) -> dict[str, str]:
+        captured["uv"] = kwargs["uv"]
+        return {"version": "1.2.3"}
+
+    monkeypatch.setattr(setup_cli.deployment, "install", install)
+    arguments = SimpleNamespace(
+        command="installation",
+        installation_command="update",
+        tag=None,
+        prerelease=False,
+        extras=None,
+        allow_downgrade=False,
+    )
+
+    assert setup_cli.run(arguments) == 0
+    assert captured["uv"] == str(private_uv)
+    assert '"status": "updated"' in capsys.readouterr().out
+
+
+def test_installation_update_rejects_unverified_private_uv(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    root = tmp_path / "application"
+    active = "b" * 32
+    current = {
+        "active": active,
+        "uv": "C:/unrelated/uv.exe",
+        "extras": "core",
+        "home": str(tmp_path / "home"),
+    }
+    fetched: list[bool] = []
+    monkeypatch.setattr(setup_cli.deployment, "managed_root", lambda: root)
+    monkeypatch.setattr(setup_cli.deployment, "state", lambda _root: current)
+    monkeypatch.setattr(
+        "language_review.release_transport.fetch_bundle",
+        lambda *_args, **_kwargs: fetched.append(True),
+    )
+    arguments = SimpleNamespace(
+        command="installation",
+        installation_command="update",
+        tag=None,
+        prerelease=False,
+        extras=None,
+        allow_downgrade=False,
+    )
+
+    assert setup_cli.run(arguments) == 2
+    assert not fetched
+    assert "не соответствует active runtime" in capsys.readouterr().err
+
+
+def test_prune_stale_releases_removes_only_owned_inactive_generation(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "application"
+    stale_id = "c" * 32
+    active_id = "d" * 32
+    previous_id = "e" * 32
+    stale = root / "releases" / stale_id
+    leases = stale / ".run-leases"
+    leases.mkdir(parents=True)
+    protocol = leases / "protocol"
+    protocol.write_text("1\n", encoding="ascii")
+    module = stale / "bundle" / "module.py"
+    module.parent.mkdir()
+    module.write_text("owned\n", encoding="utf-8")
+    (stale / "owned-files.json").write_text(
+        json.dumps(
+            {
+                "owner": deploy.OWNER,
+                "files": {
+                    str(Path(".run-leases") / "protocol"): digest(protocol),
+                    str(Path("bundle") / "module.py"): digest(module),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    for identifier in (active_id, previous_id):
+        (root / "releases" / identifier).mkdir(parents=True)
+
+    removed = deploy.prune_stale_releases(root, active=active_id, previous=previous_id)
+
+    assert removed == [stale_id]
+    assert not stale.exists()
+    assert (root / "releases" / active_id).is_dir()
+    assert (root / "releases" / previous_id).is_dir()
+
+
+def test_prune_stale_releases_preserves_modified_and_legacy_generations(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "application"
+    modified_id = "f" * 32
+    legacy_id = "0" * 32
+    modified = root / "releases" / modified_id
+    leases = modified / ".run-leases"
+    leases.mkdir(parents=True)
+    protocol = leases / "protocol"
+    protocol.write_text("1\n", encoding="ascii")
+    module = modified / "bundle" / "module.py"
+    module.parent.mkdir()
+    module.write_text("original\n", encoding="utf-8")
+    (modified / "owned-files.json").write_text(
+        json.dumps(
+            {
+                "owner": deploy.OWNER,
+                "files": {
+                    str(Path(".run-leases") / "protocol"): digest(protocol),
+                    str(Path("bundle") / "module.py"): digest(module),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    module.write_text("user change\n", encoding="utf-8")
+    legacy = root / "releases" / legacy_id
+    legacy.mkdir()
+    (legacy / "unknown.txt").write_text("preserve", encoding="utf-8")
+
+    removed = deploy.prune_stale_releases(root, active="1" * 32, previous="2" * 32)
+
+    assert not removed
+    assert module.read_text("utf-8") == "user change\n"
+    assert (legacy / "unknown.txt").read_text("utf-8") == "preserve"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Lease использует Windows byte-range lock")
+def test_prune_stale_releases_preserves_live_lease(
+    tmp_path: Path,
+) -> None:
+    import msvcrt
+
+    root = tmp_path / "application"
+    identifier = "9" * 32
+    release = root / "releases" / identifier
+    leases = release / ".run-leases"
+    leases.mkdir(parents=True)
+    protocol = leases / "protocol"
+    protocol.write_text("1\n", encoding="ascii")
+    lease = leases / "running.lock"
+    lease.write_bytes(b"1")
+    module = release / "module.py"
+    module.write_text("owned", encoding="utf-8")
+    (release / "owned-files.json").write_text(
+        json.dumps(
+            {
+                "owner": deploy.OWNER,
+                "files": {
+                    str(Path(".run-leases") / "protocol"): digest(protocol),
+                    "module.py": digest(module),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    with lease.open("r+b") as stream:
+        msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+        assert not deploy.prune_stale_releases(root, active="1" * 32, previous="2" * 32)
+        assert release.is_dir()
+        msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+
+    assert deploy.prune_stale_releases(root, active="1" * 32, previous="2" * 32) == [identifier]
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Контракт PowerShell Windows")
 def test_uninstall_cleanup_reports_deferred_when_lock_is_busy(tmp_path: Path) -> None:
     pwsh = shutil.which("pwsh")
@@ -412,6 +609,113 @@ def test_uninstall_cleanup_retries_removing_locked_owned_file(tmp_path: Path) ->
         if lock_process.poll() is None:
             lock_process.terminate()
         lock_process.wait(timeout=5)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Lease использует exclusive Windows sharing")
+def test_uninstall_cleanup_preserves_runtime_with_live_cli_lease(tmp_path: Path) -> None:
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 не найден.")
+    root = tmp_path / "application"
+    identifier = "b" * 32
+    release = root / "releases" / identifier
+    leases = release / ".run-leases"
+    leases.mkdir(parents=True)
+    protocol = leases / "protocol"
+    protocol.write_text("1\n", encoding="ascii")
+    lease = leases / "running.lock"
+    lease.write_bytes(b"1")
+    runtime = release / "venv" / "Scripts" / "python.exe"
+    runtime.parent.mkdir(parents=True)
+    runtime.write_bytes(b"synthetic venv redirector")
+    (root / "installation.json").write_text(
+        json.dumps({"owner": deploy.OWNER, "root": str(root), "uninstalled": True}),
+        encoding="utf-8",
+    )
+    (release / "owned-files.json").write_text(
+        json.dumps(
+            {
+                "owner": deploy.OWNER,
+                "files": {
+                    str(Path(".run-leases") / "protocol"): digest(protocol),
+                    "venv/Scripts/python.exe": digest(runtime),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    marker = tmp_path / "lease-ready"
+    holder = tmp_path / "hold-lease.ps1"
+    holder.write_text(
+        "$handle = [IO.File]::Open($args[0], 'Open', 'ReadWrite', 'None')\n"
+        "[IO.File]::WriteAllText($args[1], 'ready')\n"
+        "Start-Sleep -Milliseconds 1200\n"
+        "$handle.Dispose()\n",
+        encoding="utf-8",
+    )
+    lock_process = subprocess.Popen(
+        [pwsh, "-NoProfile", "-File", str(holder), str(lease), str(marker)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not marker.exists():
+            if lock_process.poll() is not None or time.monotonic() > deadline:
+                pytest.fail("Не удалось захватить runtime lease.")
+            time.sleep(0.02)
+        script = tmp_path / "uninstall-cleanup.ps1"
+        script.write_bytes(
+            Path("src/language_review/distribution_assets/uninstall-cleanup.ps1")
+            .resolve()
+            .read_bytes()
+        )
+
+        result = subprocess.run(
+            [pwsh, "-NoProfile", "-File", str(script), "-Root", str(root)],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+
+        assert result.returncode == 0, result.stderr
+        outcome = json.loads((root / "uninstall-result.json").read_text(encoding="utf-8"))
+        assert outcome["status"] == "uninstalled"
+        assert outcome["preserved"] == ["Runtime занят работающим CLI: " + identifier]
+        assert runtime.read_bytes() == b"synthetic venv redirector"
+    finally:
+        if lock_process.poll() is None:
+            lock_process.terminate()
+        lock_process.wait(timeout=5)
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 не найден")
+def test_generated_launcher_parses_in_powershell(tmp_path: Path) -> None:
+    pwsh = shutil.which("pwsh")
+    assert pwsh is not None
+    launcher = tmp_path / "language-review-launch.ps1"
+    launcher.write_bytes(
+        deploy.launcher_files(tmp_path)[tmp_path / "bin/language-review-launch.ps1"]
+    )
+    parser = tmp_path / "parse-powershell.ps1"
+    parser.write_text(
+        "param([string]$Path)\n"
+        "$tokens = $null\n$errors = $null\n"
+        "[void][System.Management.Automation.Language.Parser]::ParseFile(\n"
+        "    $Path,\n    [ref]$tokens,\n    [ref]$errors\n)\n"
+        "if ($errors) { $errors | Out-String | Write-Error; exit 1 }\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-File", str(parser), str(launcher)],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-планировщика")

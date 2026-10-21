@@ -815,6 +815,16 @@ def release_module() -> Any:
     return module
 
 
+def distribution_verifier_module() -> Any:
+    spec = importlib.util.spec_from_file_location(
+        "distribution_verifier", "scripts/verify-distribution.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_verify_distribution_conditions_remain_active_under_optimization() -> None:
     script = Path("scripts/verify-distribution.py").resolve()
     code = "\n".join(
@@ -846,10 +856,108 @@ def test_verify_distribution_conditions_remain_active_under_optimization() -> No
     assert "assert statement remains" not in result.stderr
 
 
+def test_personal_skill_probe_removes_every_created_profile_directory(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    sandbox = tmp_path / "sandbox"
+    source = sandbox / ".agents/skills/language-review/SKILL.md"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"synthetic acceptance skill")
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: profile))
+    module = distribution_verifier_module()
+
+    with module.personal_skill_probe(sandbox) as installed:
+        assert installed.read_bytes() == source.read_bytes()
+        assert (profile / ".agents/skills/language-review").is_dir()
+
+    assert not (profile / ".agents").exists()
+
+
+def test_personal_skill_probe_preserves_preexisting_profile_directories(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    profile = tmp_path / "profile"
+    existing = profile / ".agents"
+    existing.mkdir(parents=True)
+    sandbox = tmp_path / "sandbox"
+    source = sandbox / ".agents/skills/language-review/SKILL.md"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"synthetic acceptance skill")
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: profile))
+    module = distribution_verifier_module()
+
+    with module.personal_skill_probe(sandbox):
+        pass
+
+    assert existing.is_dir()
+    assert not (existing / "skills").exists()
+
+
+@pytest.mark.parametrize(
+    ("codex", "upgrade"),
+    [("tools/codex.exe", "dist/upgrade"), (None, None)],
+)
+def test_distribution_verifier_resolves_optional_paths(
+    tmp_path: Path, monkeypatch: Any, codex: str | None, upgrade: str | None
+) -> None:
+    module = distribution_verifier_module()
+    captured: dict[str, Any] = {}
+
+    def verify(
+        candidate: Path, codex_executable: Path | None, upgrade_candidate: Path | None
+    ) -> dict[str, str]:
+        captured.update(
+            candidate=candidate,
+            codex=codex_executable,
+            upgrade=upgrade_candidate,
+        )
+        return {"status": "PASS"}
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(module, "verify", verify)
+    arguments = [
+        "verify-distribution.py",
+        "--candidate",
+        "candidate",
+        "--output",
+        str(tmp_path / "acceptance.json"),
+    ]
+    if codex is not None and upgrade is not None:
+        arguments.extend(["--codex-executable", codex, "--upgrade-candidate", upgrade])
+    monkeypatch.setattr(sys, "argv", arguments)
+
+    module.main()
+
+    assert captured["candidate"] == (tmp_path / "candidate").absolute()
+    assert captured["codex"] == ((tmp_path / codex).absolute() if codex else None)
+    assert captured["upgrade"] == ((tmp_path / upgrade).absolute() if upgrade else None)
+    assert json.loads((tmp_path / "acceptance.json").read_text("utf-8")) == {"status": "PASS"}
+
+
+def test_distribution_verifier_requires_a_strictly_newer_upgrade() -> None:
+    module = distribution_verifier_module()
+    module.require_upgrade_version({"version": "1.2.3"}, {"version": "1.2.4"})
+
+    for version in ("1.2.3", "1.2.2"):
+        with pytest.raises(RuntimeError, match="более новую версию"):
+            module.require_upgrade_version({"version": "1.2.3"}, {"version": version})
+
+
 def test_bootstrap_checks_release_channel_consistency() -> None:
     script = Path("scripts/install.ps1").read_text(encoding="utf-8")
 
     assert "[bool]$release.prerelease -ne ($manifest.channel -eq 'prerelease')" in script
+
+
+def test_distribution_verifier_reports_missing_vale_as_not_run() -> None:
+    script = Path("scripts/verify-distribution.py").read_text(encoding="utf-8")
+
+    assert (
+        'checks["real_vale_findings_clean_stale_hash"] = "NOT_RUN (vale не найден в PATH)"'
+        in script
+    )
 
 
 def test_release_command_error_includes_bounded_stderr(monkeypatch: Any) -> None:
@@ -900,9 +1008,20 @@ def test_release_history_guards_previous_stable_and_repeated_versions() -> None:
             module.check_target(version, commit, previous, history)
 
 
-@pytest.mark.parametrize("blocker", ["tag", "ci", "evidence", "notes"])
+@pytest.mark.parametrize(
+    ("blocker", "expected"),
+    [
+        ("tag", "Тег уже существует; повторная публикация запрещена."),
+        ("ci", "Обязательный CI не завершён успешно для target SHA: ci.yml"),
+        ("evidence", "Нет приёмки Windows именно этого комплекта."),
+        (
+            "notes",
+            "Release notes должны содержать версию/SHA/предыдущий stable и заполненные разделы.",
+        ),
+    ],
+)
 def test_publication_preconditions_never_reach_write(
-    bundle: Path, monkeypatch: Any, blocker: str
+    bundle: Path, monkeypatch: Any, blocker: str, expected: str
 ) -> None:
     import argparse
 
@@ -945,8 +1064,9 @@ def test_publication_preconditions_never_reach_write(
         ),
         encoding="utf-8",
     )
-    with pytest.raises(ReleaseError):
+    with pytest.raises(ReleaseError) as error:
         module.publish(argparse.Namespace(candidate=bundle, evidence=evidence))
+    assert str(error.value) == expected
     assert not any(args[:2] == ("gh", "release") for args in calls)
 
 

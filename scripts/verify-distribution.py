@@ -18,7 +18,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from language_review.release_contract import digest, validate_bundle
+from language_review.release_contract import digest, validate_bundle, version_key
 
 
 def command(args: list[str], env: dict[str, str], cwd: Path, codes: set[int] | None = None) -> str:
@@ -60,19 +60,52 @@ def personal_skill_probe(home: Path) -> Iterator[Path]:
         raise RuntimeError(
             "Live Codex acceptance требует свободное имя личного skill language-review."
         )
-    created_directory = not expected.parent.exists()
-    expected.parent.mkdir(parents=True, exist_ok=True)
-    content = (home / ".agents/skills/language-review/SKILL.md").read_bytes()
-    with expected.open("xb") as stream:
-        stream.write(content)
+    profile = Path.home()
+    missing: list[Path] = []
+    directory = expected.parent
+    while directory != profile and directory.is_relative_to(profile):
+        missing.append(directory)
+        directory = directory.parent
+    created_directories: list[Path] = []
+    created_file = False
     try:
-        yield expected
+        for directory in reversed(missing):
+            try:
+                directory.mkdir()
+            except FileExistsError:
+                if not directory.is_dir():
+                    raise
+            else:
+                created_directories.append(directory)
+        content = (home / ".agents/skills/language-review/SKILL.md").read_bytes()
+        try:
+            with expected.open("xb") as stream:
+                created_file = True
+                stream.write(content)
+            yield expected
+        finally:
+            if created_file and expected.exists():
+                if (
+                    expected.is_symlink()
+                    or expected.is_junction()
+                    or expected.read_bytes() != content
+                ):
+                    raise RuntimeError("Тестовый личный skill изменён извне; файл сохранён.")
+                expected.unlink()
     finally:
-        if expected.read_bytes() != content:
-            raise RuntimeError("Тестовый личный skill изменён извне; файл сохранён.")
-        expected.unlink()
-        if created_directory:
-            expected.parent.rmdir()
+        if not expected.exists():
+            for directory in reversed(created_directories):
+                try:
+                    directory.rmdir()
+                except FileNotFoundError:
+                    pass
+
+
+def require_upgrade_version(current: dict[str, Any], upgrade: dict[str, Any]) -> None:
+    require(
+        version_key(upgrade["version"]) > version_key(current["version"]),
+        "--upgrade-candidate должен иметь более новую версию.",
+    )
 
 
 def codex_discovery(executable: Path, home: Path, cwd: Path, env: dict[str, str]) -> None:
@@ -519,8 +552,11 @@ def verify(
             )
             require(clean["status"] == "clean", "Vale оставил finding после восстановления входа.")
             checks["real_vale_findings_clean_stale_hash"] = "PASS"
+        else:
+            checks["real_vale_findings_clean_stale_hash"] = "NOT_RUN (vale не найден в PATH)"
         if upgrade_candidate:
             upgrade = validate_bundle(upgrade_candidate)
+            require_upgrade_version(manifest, upgrade)
             damaged = root / "failing-candidate"
             shutil.copytree(upgrade_candidate, damaged)
             wheel_path = next(damaged.glob("*.whl"))
@@ -694,7 +730,11 @@ def main() -> None:
     parser.add_argument("--codex-executable", type=Path)
     parser.add_argument("--upgrade-candidate", type=Path)
     args = parser.parse_args()
-    result = verify(args.candidate.absolute(), args.codex_executable, args.upgrade_candidate)
+    result = verify(
+        args.candidate.absolute(),
+        args.codex_executable.absolute() if args.codex_executable else None,
+        args.upgrade_candidate.absolute() if args.upgrade_candidate else None,
+    )
     args.output.write_text(
         json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )

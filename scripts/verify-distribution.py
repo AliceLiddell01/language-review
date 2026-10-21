@@ -1,4 +1,4 @@
-"""Настоящий Windows bootstrap из скачанного тестового комплекта в отдельном профиле."""
+"""Настоящая установка Windows из скачанного тестового комплекта в отдельном профиле."""
 
 from __future__ import annotations
 
@@ -375,7 +375,7 @@ def verify_version_cycle(
     failure_details = failure_output.stdout + failure_output.stderr
     require(
         failure_output.returncode == 1,
-        "Bootstrap должен отклонить кандидата с ошибкой readiness.",
+        "Установщик должен отклонить кандидата с ошибкой readiness.",
     )
     require(
         "synthetic candidate failure" in failure_details,

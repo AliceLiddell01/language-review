@@ -63,7 +63,7 @@ language-review setup
 ```
 
 Ядро установлено не означает готовности всех движков. Doctor показывает по отдельности
-доступность сервисов и программ; отсутствие выбранного optional движка даёт issues,
+доступность сервисов и программ; отсутствие выбранного необязательного движка даёт issues,
 а не повод молча выбрать другой. Конфликт другого `language-review` в PATH блокирует
 установку с объяснением. Изменённые пользовательские skills блокируют замену.
 
@@ -160,7 +160,7 @@ language-review setup --non-interactive --memory-service --memory-llm-model $Loc
 
 Релизный `install-memory-service.ps1 -ReleaseDirectory` использует проверенный wheel,
 закреплённые requirements и тот же Scheduler/manifest/DPAPI/volume протокол, что
-checkout-установка. Конкурирующая task или credentials не создаются. Для отдельной
+checkout-установка. Конкурирующая задача или учётные данные не создаются. Для отдельной
 приёмки доступны `--memory-runtime` и `--memory-project`.
 Обновление CLI сохраняет прежний worker; его обновление — отдельный setup с тем же
 runtime/project. Readiness и rollback task/runtime остаются у существующего владельца.

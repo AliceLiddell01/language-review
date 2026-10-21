@@ -36,7 +36,7 @@ def check_url(url: str) -> None:
         or parsed.username
         or parsed.password
     ):
-        raise ReleaseError("Отказ загрузки: требуется HTTPS с разрешённого GitHub host.")
+        raise ReleaseError("Отказ загрузки: требуется HTTPS с разрешённого узла GitHub.")
 
 
 class GitHubRedirect(urllib.request.HTTPRedirectHandler):
@@ -73,7 +73,7 @@ def download(url: str, target: Path, expected: str | None = None, limit: int = 1
                 checksum.update(block)
                 stream.write(block)
         if expected is not None and checksum.hexdigest() != expected:
-            raise ReleaseError("SHA-256 загруженного asset не совпадает.")
+            raise ReleaseError("SHA-256 загруженного файла поставки не совпадает.")
         partial.replace(target)
     except (OSError, urllib.error.URLError) as exc:
         raise ReleaseError("GitHub недоступен или загрузка прервана; установка сохранена.") from exc
@@ -93,7 +93,7 @@ def api(path: str) -> Any:
 def published(tag: str | None = None, *, prerelease: bool = False) -> dict[str, Any]:
     if tag:
         if not tag.startswith("v"):
-            raise ReleaseError("Укажите полный tag вида vX.Y.Z.")
+            raise ReleaseError("Укажите полный тег вида vX.Y.Z.")
         version_key(tag.removeprefix("v"))
         release = api("releases/tags/" + tag)
     elif prerelease:
@@ -133,7 +133,7 @@ def fetch_bundle(
     release = published(tag, prerelease=prerelease)
     assets = {item["name"]: item for item in release["assets"]}
     if len(assets) != len(release["assets"]) or "release.json" not in assets:
-        raise ReleaseError("Неоднозначный или неполный список assets GitHub.")
+        raise ReleaseError("Неоднозначный или неполный список файлов поставки GitHub.")
     item = assets["release.json"]
     checksum = item.get("digest", "")
     if not checksum.startswith("sha256:"):
@@ -160,6 +160,6 @@ def fetch_bundle(
             or asset.get("digest") != "sha256:" + expected["sha256"]
             or asset.get("size") != expected["size"]
         ):
-            raise ReleaseError("GitHub asset не соответствует manifest: " + name)
+            raise ReleaseError("Файл поставки GitHub не соответствует manifest: " + name)
         download(prefix + name, directory / name, expected["sha256"], expected["size"])
     return dict(data)

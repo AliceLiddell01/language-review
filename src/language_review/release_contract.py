@@ -100,7 +100,7 @@ def validate_manifest(data: dict[str, Any]) -> None:
         raise ReleaseError("Отсутствует SHA-256 исходного lock.")
     assets = data.get("assets")
     if not isinstance(assets, dict) or not assets:
-        raise ReleaseError("Нет проверяемых assets.")
+        raise ReleaseError("Нет проверяемых файлов поставки.")
     for name, entry in assets.items():
         if (
             not ASSET.fullmatch(name)
@@ -109,15 +109,15 @@ def validate_manifest(data: dict[str, Any]) -> None:
             or name.split(".", 1)[0].casefold() in RESERVED
             or not isinstance(entry, dict)
         ):
-            raise ReleaseError("Недопустимое имя asset.")
+            raise ReleaseError("Недопустимое имя файла поставки.")
         if (
             not HASH.fullmatch(str(entry.get("sha256", "")))
             or type(entry.get("size")) is not int
             or not 0 < entry["size"] <= 100_000_000
         ):
-            raise ReleaseError("Недопустимый hash или размер asset.")
+            raise ReleaseError("Недопустимый хеш или размер файла поставки.")
     if len({name.casefold() for name in assets}) != len(assets):
-        raise ReleaseError("Неоднозначные имена assets Windows.")
+        raise ReleaseError("Неоднозначные имена файлов поставки в Windows.")
     required = {
         "INSTALL.md",
         "wheelhouse.zip",

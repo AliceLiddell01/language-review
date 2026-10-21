@@ -660,7 +660,10 @@ def check_paths(
         environment_config,
     )
     base_settings, base_sources = base_config.check_settings_for_profile(
-        base_config.default_profile, check_overrides
+        (requested_profile or base_config.default_profile)
+        if base_config.project_root is not None
+        else None,
+        check_overrides,
     )
     settings = [item[0] for item in effective]
     units = build_units(extract.documents, settings)

@@ -336,6 +336,50 @@ def test_duplicate_input_without_profile_uses_project_default_profile(
     assert set(engine_names) == {"llm"}
 
 
+def test_forced_project_profile_is_reported_as_base_configuration(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    root = project(
+        tmp_path / "repo",
+        """schema_version: 1
+default_profile: source
+profiles:
+  source:
+    engines: [vale]
+  docs:
+    engines: [llm]
+    llm: {provider: ollama, model: docs-model}
+""",
+    )
+    (root / ".git").mkdir()
+    source = root / "notes.md"
+    source.write_text("Текст для проверки.", encoding="utf-8")
+
+    class UnavailableEngine:
+        def describe(self) -> dict[str, Any]:
+            return {}
+
+        def probe(self) -> ProbeResult:
+            return ProbeResult("unavailable")
+
+        def run(self, units: Any, run: Any) -> Any:
+            return iter(())
+
+        def close(self) -> None:
+            return None
+
+    result = check_paths(
+        [str(source)],
+        load_config(),
+        requested_profile="docs",
+        engine_factory=lambda _name, _settings: UnavailableEngine(),
+    )
+
+    assert result.settings["engines"] == ["llm"]
+    assert result.settings["llm_provider"] == "ollama"
+    assert result.settings["sources"]["engines"].startswith(f"{FILENAME}:profiles.docs")
+
+
 def test_unavailable_selected_model_is_not_replaced(
     tmp_path: Path, isolated_appdata: Path, responses: Any, monkeypatch: Any
 ) -> None:

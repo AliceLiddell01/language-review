@@ -592,16 +592,22 @@ def _scan_directory(
     while stack:
         directory, parts, parents = stack.pop()
         relative_directory = "/".join(parts)
-        directory_profile = (
-            _profile_for_path(
+        if not parts:
+            directory_profile = root_profile
+        elif config.project_root is not None:
+            directory_profile = path_profile(
                 config,
-                relative_directory + ("/" if relative_directory else ""),
+                scan_root.joinpath(*parts),
+                requested_profile,
+                directory=True,
+            )
+        else:
+            directory_profile = _profile_for_path(
+                config,
+                relative_directory + "/",
                 root_profile,
                 requested_profile is not None,
             )
-            if parts
-            else root_profile
-        )
         directory_settings, _ = config.settings_for_profile(directory_profile)
         directory_settings = apply_cli_overrides(directory_settings, cli_overrides)
         contexts = list(parents)
@@ -646,15 +652,17 @@ def _scan_directory(
                 )
                 continue
 
-            relative_for_profile = relative + ("/" if is_directory else "")
-            profile_name = _profile_for_path(
-                config,
-                relative_for_profile,
-                root_profile,
-                requested_profile is not None,
-            )
+            profile_name: str | None
             if config.project_root is not None:
-                profile_name = path_profile(config, path, requested_profile)
+                profile_name = path_profile(config, path, requested_profile, directory=is_directory)
+            else:
+                relative_for_profile = relative + ("/" if is_directory else "")
+                profile_name = _profile_for_path(
+                    config,
+                    relative_for_profile,
+                    root_profile,
+                    requested_profile is not None,
+                )
             settings, _ = config.settings_for_profile(profile_name)
             settings = apply_cli_overrides(settings, cli_overrides)
 
@@ -844,7 +852,11 @@ def scan_paths(
 
         is_directory = resolved.is_dir()
         scope_root = resolved if is_directory else resolved.parent
-        root_profile = _choose_profile(config, scope_root, requested_profile)
+        root_profile = (
+            path_profile(config, resolved, requested_profile, directory=is_directory)
+            if config.project_root is not None
+            else _choose_profile(config, scope_root, requested_profile)
+        )
         base_settings, _ = config.settings_for_profile(root_profile)
         root_settings = apply_cli_overrides(base_settings, cli_overrides)
         if is_link and not root_settings.follow_symlinks:

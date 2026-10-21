@@ -291,11 +291,16 @@ def _profile_policy(raw: dict[str, Any], label: str) -> dict[str, Any]:
     }
 
 
-def matched_rule(config: LoadedConfig, relative: str) -> tuple[str, str] | None:
+def matched_rule(
+    config: LoadedConfig, relative: str, *, directory: bool = False
+) -> tuple[str, str] | None:
+    relative_paths = {relative}
+    if directory and relative not in {"", "."}:
+        relative_paths.add(relative.rstrip("/") + "/")
     matches = [
         (priority, pattern, profile)
         for pattern, profile, priority in config.path_rules
-        if fnmatch.fnmatchcase(relative, pattern)
+        if any(fnmatch.fnmatchcase(candidate, pattern) for candidate in relative_paths)
     ]
     if not matches:
         return None
@@ -303,14 +308,20 @@ def matched_rule(config: LoadedConfig, relative: str) -> tuple[str, str] | None:
     return pattern, profile
 
 
-def path_profile(config: LoadedConfig, target: Path, forced: str | None = None) -> str:
+def path_profile(
+    config: LoadedConfig,
+    target: Path,
+    forced: str | None = None,
+    *,
+    directory: bool = False,
+) -> str:
     if forced is not None:
         if forced not in config.profiles:
             raise ConfigurationError(f"Профиль «{forced}» не найден в {FILENAME}.")
         return forced
     assert config.project_root is not None and config.default_profile is not None
     relative = target.relative_to(config.project_root).as_posix()
-    rule = matched_rule(config, relative)
+    rule = matched_rule(config, relative, directory=directory)
     return rule[1] if rule else config.default_profile
 
 

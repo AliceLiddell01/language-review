@@ -436,7 +436,7 @@ def _same_defect(first: Candidate, second: Candidate) -> bool:
 
 
 def _rule_key(raw: RawFinding) -> str | None:
-    # Проходы одной LLM сохраняют provenance в rule_id, но не становятся разными движками.
+    # Проходы одной LLM сохраняют происхождение в rule_id, но не становятся разными движками.
     prefix = f"{PROMPT_VERSION}:"
     if raw.engine == "llm" and raw.rule_id and raw.rule_id.startswith(prefix):
         return prefix + raw.category

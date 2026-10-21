@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,54 @@ from language_review.errors import ConfigurationError
 def _write(path: Path, text: str) -> Path:
     path.write_text(text, encoding="utf-8")
     return path
+
+
+@pytest.mark.parametrize(
+    "mode,provider",
+    [
+        ("normal", "llama_cpp"),
+        ("normal", "ollama"),
+        ("adaptive", "llama_cpp"),
+        ("deep", "ollama"),
+        ("normal", "chatgpt"),
+    ],
+)
+def test_effective_analysis_defaults_follow_mode_and_provider(
+    isolated_appdata: Path, mode: str, provider: str
+) -> None:
+    config = load_config()
+    config = replace(config, check=replace(config.check, analysis_mode=mode, llm_provider=provider))
+    mapping = config.as_mapping()["check"]
+    bounded = mode != "normal" or provider == "chatgpt"
+    for key, default in [
+        ("max_requests", 100),
+        ("max_text_chars", 200_000),
+        ("timeout_seconds", 1800.0),
+    ]:
+        row = mapping[f"analysis.{key}"]
+        assert row["value"] == (default if bounded else None)
+        assert row["source"] == "по умолчанию"
+    assert mapping["analysis.max_context_chars"]["value"] == 4000
+    assert json.loads(json.dumps(mapping)) == mapping
+
+
+def test_explicit_analysis_limits_survive_file_and_cli_precedence(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    user_path = isolated_appdata / "language-review" / "config.toml"
+    user_path.parent.mkdir(parents=True)
+    _write(user_path, "[check.analysis]\nmax_requests = 100\ntimeout_seconds = 1800\n")
+    explicit = _write(tmp_path / "limits.toml", "[check.analysis]\nmax_text_chars = 200000\n")
+    config = load_config(explicit)
+    mapping = config.as_mapping()["check"]
+    assert mapping["analysis.max_requests"]["value"] == 100
+    assert mapping["analysis.max_text_chars"]["value"] == 200_000
+    assert mapping["analysis.timeout_seconds"]["value"] == 1800.0
+    assert mapping["analysis.max_requests"]["source"].endswith(str(user_path))
+    assert mapping["analysis.max_text_chars"]["source"].endswith(str(explicit))
+    settings, sources = config.check_settings_for_profile(None, {"analysis.max_requests": 2})
+    assert settings.value("analysis.max_requests") == 2
+    assert sources["analysis.max_requests"] == "аргумент командной строки"
 
 
 def test_precedence_profile_and_sources(tmp_path: Path, isolated_appdata: Path) -> None:

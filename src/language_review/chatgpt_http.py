@@ -1,4 +1,4 @@
-"""Публичный OAuth HTTP/SSE через системный proxy, без API-ключей и redirects."""
+"""Публичный OAuth HTTP/SSE через системный прокси, без API-ключей и перенаправлений."""
 
 from __future__ import annotations
 
@@ -19,8 +19,8 @@ API = "https://api.openai.com/v1"
 ISSUER = "https://auth.openai.com"
 TOKEN = ISSUER + "/api/accounts/oauth/token"
 DISCOVERY = ISSUER + "/.well-known/openid-configuration"
-# Облачный HTTPS следует настройкам сети ОС; TLS и allowlist действуют и в туннеле.
-# Локальные движки по-прежнему обходят proxy через собственный engine_http.
+# Облачный HTTPS следует настройкам сети ОС; TLS и список разрешённых адресов действуют в туннеле.
+# Локальные движки по-прежнему обходят прокси через собственный engine_http.
 _OPENER = urllib.request.build_opener(_NoRedirect)
 _CODE = re.compile(r"[a-zA-Z0-9_.-]{1,120}\Z")
 
@@ -55,9 +55,9 @@ class CloudError(EngineHttpError):
 def error_from(body: Any, status: int | None = None, request_id: str | None = None) -> CloudError:
     error = body.get("error") if isinstance(body, dict) else None
     if isinstance(body, dict) and body.get("type") == "error" and "code" in body:
-        error = body  # Responses SSE error fields are at the event's top level.
+        error = body  # Поля ошибки Responses SSE находятся на верхнем уровне события.
     code = error.get("code") or error.get("type") if isinstance(error, dict) else None
-    if isinstance(error, str):  # OAuth token endpoint
+    if isinstance(error, str):  # Адрес выдачи токенов OAuth.
         code = error
     if not isinstance(code, str) or not _CODE.fullmatch(code):
         code = f"http_{status}" if status else "response_failed"
@@ -82,7 +82,7 @@ def open_response(
     form: dict[str, str] | None = None,
     timeout: float = 30,
 ) -> Iterator[Any]:
-    # Вызывающий код использует только константные API/auth адреса либо проверенный discovery.
+    # Вызывающий код использует константные адреса API/авторизации либо проверенные метаданные.
     parts = urllib.parse.urlsplit(url)
     if (
         parts.scheme != "https"
@@ -185,7 +185,7 @@ def stream_response(payload: dict[str, Any], token: str, timeout: float) -> dict
                     result = event.get("response")
                     if not isinstance(result, dict) or result.get("status") != "completed":
                         raise CloudError("sse_protocol_error")
-                    # Не считаем refusal или пустой output чистым JSON-анализом.
+                    # Не считаем отказ модели или пустой вывод чистым JSON-анализом.
                     return {
                         "content": "".join(text),
                         "usage": result.get("usage"),
@@ -196,14 +196,14 @@ def stream_response(payload: dict[str, Any], token: str, timeout: float) -> dict
 
 
 def _sse_lines(response: Any, deadline: float) -> Iterator[bytes]:
-    """read1 не ждёт заполнения буфера; общий deadline ограничивает и slow-drip SSE."""
+    """read1 не ждёт заполнения буфера; общий срок ограничивает и медленную передачу SSE."""
     pending = b""
     total = 0
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise CloudError("timeout")
-        # HTTPResponse предоставляет buffered fp; socket timeout уменьшается с общим бюджетом.
+        # HTTPResponse предоставляет буфер fp; таймаут сокета уменьшается с общим бюджетом.
         raw_socket = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
         if raw_socket is not None:
             raw_socket.settimeout(remaining)

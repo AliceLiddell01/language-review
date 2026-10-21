@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -451,6 +453,225 @@ def test_default_local_uses_single_search_and_no_oauth(
     result = run(tmp_path, provider)
     assert len(provider.calls) == 1 and result.status == "clean"
     assert check_document(result)["schema_version"] == "1.0"
+
+
+def test_local_normal_covers_large_corpus_without_implicit_budgets(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    text = "\n\n".join(f"Абзац {i}: " + "Корректный текст. " * 55 for i in range(150))
+    provider = Provider()
+    result = run(tmp_path, provider, text=text, llm_batch_items=1)
+    analysis = result.engines[0].details["analysis"]
+    assert result.status == "clean"
+    assert len(provider.calls) == analysis["units_complete"] == 150
+    assert analysis["sent_chars"] > 200_000
+    assert analysis["units_remaining"] == 0
+    assert result.engines[0].diagnostics == []
+    assert check_document(result)["schema_version"] == "1.0"
+
+
+def test_local_normal_has_no_implicit_total_timeout(
+    tmp_path: Path, isolated_appdata: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ticks = iter(range(0, 100_000, 3601))
+    monkeypatch.setattr(
+        "language_review.analysis.time",
+        SimpleNamespace(monotonic=lambda: next(ticks), perf_counter=time.perf_counter),
+    )
+    provider = Provider()
+    result = run(tmp_path, provider, llm_batch_items=1)
+    assert result.status == "clean" and len(provider.calls) == 2
+
+
+@pytest.mark.parametrize(
+    "mode,provider_name", [("adaptive", "llama_cpp"), ("deep", "ollama"), ("normal", "chatgpt")]
+)
+def test_extended_and_cloud_modes_keep_implicit_global_budgets(
+    tmp_path: Path, isolated_appdata: Path, mode: str, provider_name: str
+) -> None:
+    provider = Provider()
+    result = run(
+        tmp_path,
+        provider,
+        text="\n\n".join(f"Абзац {i} верен." for i in range(150)),
+        llm_batch_items=1,
+        analysis_mode=mode,
+        analysis_strategies=("grammar",),
+        llm_provider=provider_name,
+        llm_chatgpt_allow_cloud=provider_name == "chatgpt",
+    )
+    engine = result.engines[0]
+    analysis = engine.details["analysis"]
+    assert result.status in {"partial", "unavailable"}
+    assert 0 < analysis["requests"] == len(provider.calls) <= 100
+    assert analysis["sent_chars"] <= 200_000
+    assert analysis["units_remaining"] > 0
+    assert "analysis_text_budget" in engine.diagnostics
+    assert "engine_aborted" not in engine.diagnostics
+
+
+@pytest.mark.parametrize("concurrency", [1, 3])
+@pytest.mark.parametrize(
+    "budget,reason,sent",
+    [
+        ({"analysis_max_requests": 1}, "analysis_request_budget", 1),
+        ({"analysis_max_text_chars": 1}, "analysis_text_budget", 0),
+        ({"analysis_timeout_seconds": 0.0000001}, "analysis_time_budget", 0),
+    ],
+)
+def test_explicit_budgets_preserve_reason_for_remaining_units(
+    tmp_path: Path,
+    isolated_appdata: Path,
+    concurrency: int,
+    budget: dict[str, Any],
+    reason: str,
+    sent: int,
+) -> None:
+    provider = Provider()
+    result = run(
+        tmp_path,
+        provider,
+        text="\n\n".join(f"Абзац {i} верен." for i in range(10)),
+        llm_batch_items=1,
+        analysis_concurrency=concurrency,
+        **budget,
+    )
+    engine = result.engines[0]
+    analysis = engine.details["analysis"]
+    units = analysis["passes"][0]["units"]
+    assert len(provider.calls) == engine.requests == sent
+    assert result.status in {"partial", "unavailable"}
+    assert check_exit_code(result) in {4, 5}
+    assert analysis["units_complete"] == sent
+    assert analysis["units_remaining"] == 10 - sent
+    assert {u["reason"] for u in units if u["status"] != "checked"} == {reason}
+    assert "engine_aborted" not in engine.diagnostics
+    assert engine.request_failures == 0
+    assert analysis["stop_reason"] == reason
+    report = check_document(result)
+    assert reason in report["engines"][0]["diagnostics"]
+
+
+@pytest.mark.parametrize("budget_source", ["file", "cli"])
+def test_local_normal_applies_explicit_request_budget_at_check_entry(
+    tmp_path: Path, isolated_appdata: Path, budget_source: str
+) -> None:
+    source = tmp_path / "source.md"
+    source.write_text("\n\n".join(f"Абзац {i} верен." for i in range(8)), encoding="utf-8")
+    configuration = tmp_path / "config.toml"
+    configuration.write_text(
+        '[check]\nengines=["llm"]\n[check.llm]\nbatch_items=1\n'
+        + ("[check.analysis]\nmax_requests=1\n" if budget_source == "file" else ""),
+        encoding="utf-8",
+    )
+    provider = Provider()
+    result = check_paths(
+        [str(source)],
+        load_config(configuration),
+        check_overrides={"analysis.max_requests": 1} if budget_source == "cli" else {},
+        engine_factory=lambda name, settings: LlmEngine(settings, provider),
+    )
+    assert result.status == "partial" and len(provider.calls) == 1
+    assert result.engines[0].details["analysis"]["units_remaining"] == 7
+    assert result.engines[0].diagnostics == ["analysis_request_budget"]
+
+
+@pytest.mark.parametrize("limit", ["requests", "chars"])
+def test_retry_accounts_full_prompt_and_obeys_explicit_budget(
+    tmp_path: Path, isolated_appdata: Path, limit: str
+) -> None:
+    reference = Provider()
+    run(tmp_path, reference)
+    system, payload = reference.calls[0]
+    request_chars = len(system) + len(json.dumps(payload, ensure_ascii=False))
+
+    def respond(_system: str, _payload: dict[str, Any]) -> Any:
+        raise EngineHttpError("http_503", "Синтетический временный отказ.")
+
+    provider = Provider(respond)
+    budget = (
+        {"analysis_max_requests": 1}
+        if limit == "requests"
+        else {"analysis_max_text_chars": request_chars}
+    )
+    result = run(tmp_path, provider, analysis_retries=1, **budget)
+    engine = result.engines[0]
+    analysis = engine.details["analysis"]
+    reason = "analysis_request_budget" if limit == "requests" else "analysis_text_budget"
+    assert result.status == "unavailable" and len(provider.calls) == 1
+    assert engine.requests == engine.request_failures == analysis["retries"] == 1
+    assert analysis["sent_chars"] == request_chars
+    assert analysis["stop_reason"] == reason
+    assert engine.diagnostics == [reason]
+
+
+def test_budget_stop_allows_inflight_requests_and_preserves_remaining_reason(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    rendezvous = threading.Barrier(3, timeout=10)
+
+    def respond(_system: str, _payload: dict[str, Any]) -> Any:
+        rendezvous.wait()
+        return {"findings": []}
+
+    provider = Provider(respond)
+    result = run(
+        tmp_path,
+        provider,
+        text="\n\n".join(f"Абзац {i} верен." for i in range(12)),
+        llm_batch_items=1,
+        analysis_concurrency=3,
+        analysis_max_requests=3,
+    )
+    analysis = result.engines[0].details["analysis"]
+    assert result.status == "partial"
+    assert len(provider.calls) == analysis["units_complete"] == 3
+    assert analysis["units_remaining"] == 9
+    assert [u["reason"] for u in analysis["passes"][0]["units"]][3:] == [
+        "analysis_request_budget"
+    ] * 9
+
+
+def test_global_budget_cause_survives_later_pass_limit(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    provider = Provider()
+    result = run(
+        tmp_path,
+        provider,
+        text="\n\n".join(f"Абзац {i} верен." for i in range(8)),
+        llm_batch_items=1,
+        analysis_mode="deep",
+        analysis_strategies=("grammar",),
+        analysis_max_requests=1,
+        analysis_max_passes=1,
+    )
+    analysis = result.engines[0].details["analysis"]
+    assert len(provider.calls) == 1 and result.status == "unavailable"
+    assert analysis["stop_reason"] == "analysis_request_budget"
+    assert {u["reason"] for u in analysis["passes"][1]["units"]} == {"analysis_request_budget"}
+    assert set(result.documents[0].unit_status.values()) == {("failed", "analysis_request_budget")}
+
+
+def test_real_transport_failures_still_abort_after_three_batches(
+    tmp_path: Path, isolated_appdata: Path
+) -> None:
+    def respond(_system: str, _payload: dict[str, Any]) -> Any:
+        raise EngineHttpError("connection_failed", "Синтетический отказ соединения.")
+
+    provider = Provider(respond)
+    result = run(
+        tmp_path,
+        provider,
+        text="\n\n".join(f"Абзац {i} верен." for i in range(8)),
+        llm_batch_items=1,
+    )
+    engine = result.engines[0]
+    assert result.status != "clean"
+    assert len(provider.calls) == engine.request_failures == 3
+    assert [u["reason"] for u in engine.details["analysis"]["passes"][0]["units"]] == [
+        "connection_failed"
+    ] * 3 + ["engine_aborted"] * 5
 
 
 def test_parallel_requests_respect_concurrency_and_global_budget(

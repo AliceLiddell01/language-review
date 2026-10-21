@@ -1,4 +1,4 @@
-"""Воспроизводимые поисковые проходы и критическая проверка гипотез, без human gold."""
+"""Воспроизводимые поисковые проходы и критическая проверка гипотез, без ручного эталона."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def fingerprint(value: Any) -> str:
 @dataclass
 class Budget:
     engine: LlmEngine
-    deadline: float
+    deadline: float | None
     chars: int = 0
     retries: int = 0
     stopped: str | None = None
@@ -54,12 +54,15 @@ class Budget:
     def reserve(self, chars: int, run: EngineRun) -> None:
         settings = self.engine.settings
         reason = self.stopped
-        if time.monotonic() >= self.deadline:
-            reason = "analysis_time_budget"
-        elif run.requests >= settings.analysis_max_requests:
-            reason = "analysis_request_budget"
-        elif self.chars + chars > settings.analysis_max_text_chars:
-            reason = "analysis_text_budget"
+        if reason is None:
+            max_requests = settings.value("analysis.max_requests")
+            max_chars = settings.value("analysis.max_text_chars")
+            if self.deadline is not None and time.monotonic() >= self.deadline:
+                reason = "analysis_time_budget"
+            elif max_requests is not None and run.requests >= max_requests:
+                reason = "analysis_request_budget"
+            elif max_chars is not None and self.chars + chars > max_chars:
+                reason = "analysis_text_budget"
         if reason:
             self.stopped = reason
             raise EngineHttpError(reason, reason)
@@ -149,13 +152,24 @@ def _verify(
         hypothesis = dict(hypothesis)
         view_range = hypothesis.pop("_view_range", None)
         hypothesis["id"] = str(index)
+        if not engine.context_within_budget(unit):
+            row.update(status="failed", reason="analysis_context_budget")
+            row["decisions"].append(
+                {
+                    "id": str(index),
+                    "hypothesis": hypothesis,
+                    "decision": "uncertain",
+                    "evidence": row["reason"],
+                }
+            )
+            continue
         if view_range is None:
             row["decisions"].append(
                 {
                     "id": str(index),
                     "hypothesis": hypothesis,
                     "decision": "uncertain",
-                    "evidence": "Позицию гипотезы нельзя отобразить в masked context.",
+                    "evidence": "Позицию гипотезы нельзя отобразить в замаскированном контексте.",
                 }
             )
             if row["status"] != "failed":
@@ -174,7 +188,7 @@ def _verify(
                     "id": str(index),
                     "hypothesis": hypothesis,
                     "decision": "uncertain",
-                    "evidence": "Диапазон гипотезы не совпадает с masked context.",
+                    "evidence": "Диапазон гипотезы не совпадает с замаскированным контекстом.",
                 }
             )
             row.update(status="failed", reason="verification_unlocalized")
@@ -221,8 +235,11 @@ def _verify(
             reply = engine.request(VERIFY_PROMPT, user, schema, run)
             run.add_tokens("prompt", reply.prompt_tokens)
             run.add_tokens("completion", reply.completion_tokens)
-            value = json.loads(reply.content)
-            jsonschema.Draft202012Validator(schema).validate(value)
+            try:
+                value = json.loads(reply.content)
+                jsonschema.Draft202012Validator(schema).validate(value)
+            except RecursionError as exc:
+                raise ValueError("verification_invalid_response") from exc
             if reply.truncated:
                 raise ValueError("truncated")
             row["decisions"].append({**value["decisions"][0], "hypothesis": hypothesis})
@@ -245,7 +262,8 @@ def _verify(
 
 def analyze(engine: LlmEngine, units: Sequence[CheckUnit], run: EngineRun) -> Iterator[UnitOutcome]:
     settings = engine.settings
-    engine.budget = Budget(engine, time.monotonic() + settings.analysis_timeout_seconds)
+    timeout = settings.value("analysis.timeout_seconds")
+    engine.budget = Budget(engine, time.monotonic() + timeout if timeout is not None else None)
     if hasattr(engine.provider, "deadline"):
         engine.provider.deadline = engine.budget.deadline
     ledger: list[dict[str, Any]] = []
@@ -295,7 +313,8 @@ def analyze(engine: LlmEngine, units: Sequence[CheckUnit], run: EngineRun) -> It
         ledger.append(row)
         if pass_index >= settings.analysis_max_passes:
             results = [
-                UnitOutcome(unit.index, "failed", "analysis_pass_budget") for unit in selected
+                UnitOutcome(unit.index, "failed", engine.budget.stopped or "analysis_pass_budget")
+                for unit in selected
             ]
         else:
             results = list(engine.run_once(selected, run))
@@ -322,7 +341,10 @@ def analyze(engine: LlmEngine, units: Sequence[CheckUnit], run: EngineRun) -> It
                     total.status, total.reason = outcome.status, outcome.reason
             if strategy == "primary":
                 route[outcome.unit] = _routing(unit, outcome)
-            if outcome.reason == "subscription_sharing_usage_limit_exceeded":
+            if (
+                outcome.reason == "subscription_sharing_usage_limit_exceeded"
+                and engine.budget.stopped is None
+            ):
                 engine.budget.stopped = outcome.reason
         selected_ids = {unit.index for unit in selected}
         row["not_selected"] = [
@@ -343,7 +365,7 @@ def analyze(engine: LlmEngine, units: Sequence[CheckUnit], run: EngineRun) -> It
                     "kind": "verification",
                     "unit": unit.index,
                     "status": "failed",
-                    "reason": "analysis_pass_budget",
+                    "reason": engine.budget.stopped or "analysis_pass_budget",
                 }
             else:
                 record = _verify(engine, unit, outcome, run)
@@ -358,6 +380,7 @@ def analyze(engine: LlmEngine, units: Sequence[CheckUnit], run: EngineRun) -> It
             "requests": run.requests,
             "retries": engine.budget.retries,
             "sent_chars": engine.budget.chars,
+            "stop_reason": engine.budget.stopped,
             "units_complete": sum(o.status == "checked" for o in totals.values()),
             "units_remaining": sum(o.status != "checked" for o in totals.values()),
             "chars_complete": sum(

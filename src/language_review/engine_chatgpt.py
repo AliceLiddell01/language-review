@@ -1,4 +1,4 @@
-"""SIWC Responses transport, только вручную выбранные разрешённые модели."""
+"""Транспорт SIWC Responses, только вручную выбранные разрешённые модели."""
 
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ class ChatGptProvider:
             raise CloudError("cloud_consent_required")
         if self.auth is None or self.label is None:
             raise CloudError("oauth_sign_in_required")
-        # Structured outputs не предполагаются разрешёнными OAuth-профилем.
+        # Нельзя считать структурированные ответы разрешёнными OAuth-профилем.
         # Схема включена в инструкции; parse_response остаётся обязательной проверкой.
         import json
 

@@ -575,10 +575,10 @@ class LlmEngine:
                 "strategies": list(self.settings.analysis_strategies),
                 "verify": self.settings.analysis_verify,
                 "max_passes": self.settings.analysis_max_passes,
-                "max_requests": self.settings.analysis_max_requests,
-                "max_text_chars": self.settings.analysis_max_text_chars,
+                "max_requests": self.settings.value("analysis.max_requests"),
+                "max_text_chars": self.settings.value("analysis.max_text_chars"),
                 "max_context_chars": self.settings.analysis_max_context_chars,
-                "timeout_seconds": self.settings.analysis_timeout_seconds,
+                "timeout_seconds": self.settings.value("analysis.timeout_seconds"),
                 "concurrency": self.settings.analysis_concurrency,
                 "retries": self.settings.analysis_retries,
                 "allow_cloud": self.settings.llm_chatgpt_allow_cloud,
@@ -627,14 +627,22 @@ class LlmEngine:
 
         yield from analyze(self, units, run)
 
+    def context_within_budget(self, unit: CheckUnit) -> bool:
+        """Одинаковый предел терминов и подобранной памяти для поиска и верификации."""
+        chars = sum(
+            len(json.dumps(value, ensure_ascii=False))
+            for value in (unit.terms, unit.memory_context)
+            if value
+        )
+        return chars <= self.settings.analysis_max_context_chars
+
     def run_once(self, units: Sequence[CheckUnit], run: EngineRun) -> Iterator[UnitOutcome]:
         outcomes: dict[int, UnitOutcome] = {}
         pending: dict[int, int] = {}
         sendable: list[CheckUnit] = []
         limit = MAX_CHUNK_FACTOR * self.settings.llm_batch_chars
         for unit in units:
-            terms_chars = len(json.dumps(unit.terms, ensure_ascii=False)) if unit.terms else 0
-            if terms_chars > self.settings.analysis_max_context_chars:
+            if not self.context_within_budget(unit):
                 yield UnitOutcome(unit.index, "skipped", "analysis_context_budget")
                 continue
             chunk_limit = self.settings.llm_batch_chars * (
@@ -655,8 +663,12 @@ class LlmEngine:
         batches = iter(self._batches(sendable))
         with ThreadPoolExecutor(max_workers=self.settings.analysis_concurrency) as pool:
             while group := list(islice(batches, self.settings.analysis_concurrency)):
-                if failures >= CONSECUTIVE_FAILURE_LIMIT:
-                    reasons: list[str | None] = ["engine_aborted"] * len(group)
+                with self.metrics_lock:
+                    stopped = self.budget.stopped if self.budget else None
+                if stopped:
+                    reasons: list[str | None] = [stopped] * len(group)
+                elif failures >= CONSECUTIVE_FAILURE_LIMIT:
+                    reasons = ["engine_aborted"] * len(group)
                 elif self.settings.analysis_concurrency == 1:
                     reasons = [self._run_batch(group[0], outcomes, run)]
                 else:
@@ -664,7 +676,11 @@ class LlmEngine:
                         pool.map(lambda batch: self._run_batch(batch, outcomes, run), group)
                     )
                 for batch, reason in zip(group, reasons, strict=True):
-                    failures = failures + 1 if reason and not reason.startswith("llm_") else 0
+                    failures = (
+                        failures + 1
+                        if reason and not reason.startswith(("llm_", "analysis_"))
+                        else 0
+                    )
                     for item in batch:
                         outcome = outcomes[item.unit.index]
                         if reason is not None:
@@ -788,7 +804,9 @@ class LlmEngine:
                         "subscription_sharing_invalid_user",
                     }
                 ):
-                    self.budget.stopped = code
+                    with self.metrics_lock:
+                        if self.budget.stopped is None:
+                            self.budget.stopped = code
                 temporary = (
                     http_status == 429
                     or (http_status is not None and 500 <= http_status < 600)

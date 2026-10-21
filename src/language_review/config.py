@@ -76,6 +76,11 @@ CHECK_CATEGORIES = (
 )
 LLM_PROVIDERS = ("llama_cpp", "ollama", "chatgpt")
 ANALYSIS_MODES = ("normal", "adaptive", "deep")
+ANALYSIS_BUDGET_DEFAULTS = {
+    "analysis.max_requests": 100,
+    "analysis.max_text_chars": 200_000,
+    "analysis.timeout_seconds": 1800.0,
+}
 ANALYSIS_STRATEGIES = ("grammar", "spelling", "punctuation", "technical", "meaning", "english")
 CHATGPT_EFFORTS = {
     "gpt-6-luna": ("none", "low", "medium", "high", "xhigh", "max"),
@@ -169,10 +174,10 @@ class CheckSettings:
     analysis_strategies: tuple[str, ...] = ANALYSIS_STRATEGIES
     analysis_verify: bool = False
     analysis_max_passes: int = 8
-    analysis_max_requests: int = 100
-    analysis_max_text_chars: int = 200_000
+    analysis_max_requests: int | None = None
+    analysis_max_text_chars: int | None = None
     analysis_max_context_chars: int = 4000
-    analysis_timeout_seconds: float = 1800.0
+    analysis_timeout_seconds: float | None = None
     analysis_concurrency: int = 1
     analysis_retries: int = 0
     llm_chatgpt_model: str = "gpt-6-luna"
@@ -205,7 +210,15 @@ class CheckSettings:
     vale_timeout_seconds: float = 60.0
 
     def value(self, key: str) -> Any:
-        return getattr(self, key.replace(".", "_"))
+        value = getattr(self, key.replace(".", "_"))
+        # Отсутствие настройки сохраняется при смене режима или провайдера через CLI.
+        if (
+            value is None
+            and key in ANALYSIS_BUDGET_DEFAULTS
+            and (self.analysis_mode != "normal" or self.llm_provider == "chatgpt")
+        ):
+            return ANALYSIS_BUDGET_DEFAULTS[key]
+        return value
 
 
 @dataclass(frozen=True)

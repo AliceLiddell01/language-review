@@ -190,7 +190,7 @@ try {
         if ((Get-FileHash -LiteralPath $sampleFile -Algorithm SHA256).Hash -ne $sampleHash) {
             throw "Установленный пакет $kind review изменил исходный файл."
         }
-        # Оценщик импортирует сохранённую синтетическую выдачу offline: серверы не нужны.
+        # Оценщик импортирует сохранённую синтетическую выдачу автономно: серверы не нужны.
         $evalLauncher = Join-Path $environment 'Scripts/language-review-eval.exe'
         $evalFixture = Join-Path $projectRoot 'tests/fixtures/evaluation'
         $evalCorpus = Join-Path $tempRoot ("corpus-$kind.json")
@@ -264,7 +264,7 @@ try {
             throw "$kind потерял контракт облачного отказа."
         }
         if ((Get-FileHash -LiteralPath $sampleFile -Algorithm SHA256).Hash -ne $sampleHash) {
-            throw "$kind cloud check изменил исходник."
+            throw "$kind облачная проверка изменила исходник."
         }
         & $environmentPython -I -c 'import importlib.util; assert importlib.util.find_spec("jwt") is None'
         if ($LASTEXITCODE -ne 0) { throw "Базовый $kind неожиданно требует JWT extra." }
@@ -274,7 +274,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Не работают JWT/DPAPI в установленном $kind." }
         $authStatus = (& $launcher chatgpt status) -join [Environment]::NewLine | ConvertFrom-Json
         if ($LASTEXITCODE -ne 0 -or $authStatus.active -or $authStatus.accounts.Count -ne 0) {
-            throw "$kind не изолировал OAuth storage smoke-проверки."
+            throw "$kind не изолировал хранилище OAuth при проверке пакета."
         }
         & uv pip install --python $environmentPython ($artifact.FullName + '[memory]')
         if ($LASTEXITCODE -ne 0) { throw "Не установлено memory extra для $kind." }

@@ -174,7 +174,9 @@ def test_token_scopes_identity_and_rotation(identity: Any) -> None:
         "scope": "openid resource.invoke",
     }
     row = token_record(tokens, "test-client", nonce="test-nonce")
-    assert "chatgpt.tokens.use.direct" not in row["scopes"]  # signed in, plan disabled
+    assert (
+        "chatgpt.tokens.use.direct" not in row["scopes"]
+    )  # Вход выполнен, доступ по плану отключён.
     updated = token_record(
         tokens | {"refresh_token": "rotated", "id_token": identity()}, "test-client", previous=row
     )
@@ -217,7 +219,7 @@ def test_reauthorization_requires_fresh_id_token_even_for_saved_account(identity
 
 
 class MemoryStore:
-    """Тестовый storage boundary, не production fallback."""
+    """Тестовая граница хранилища, без подмены рабочего хранилища при сбое."""
 
     def __init__(self) -> None:
         self.data = {
@@ -390,6 +392,7 @@ def test_loopback_login_and_new_code_recovery(
     original = copy.deepcopy(store.data)
     browser_queries = []
     callbacks = []
+    callback_responses = []
     exchanges = []
     key_reader = auth_module.cloud_json
 
@@ -408,6 +411,7 @@ def test_loopback_login_and_new_code_recovery(
                 parameters["redirect_uri"][0] + "?" + urlencode(query), timeout=5
             ) as response:
                 assert response.status == 200 and response.headers["Cache-Control"] == "no-store"
+                callback_responses.append((dict(response.headers), response.read()))
 
         thread = threading.Thread(target=callback)
         callbacks.append(thread)
@@ -450,6 +454,15 @@ def test_loopback_login_and_new_code_recovery(
     finally:
         for thread in callbacks:
             thread.join(timeout=5)
+    assert len(callback_responses) == len(browser_queries)
+    for headers, body in callback_responses:
+        assert headers["Content-Type"] == "text/plain; charset=utf-8"
+        assert headers["Content-Security-Policy"] == "default-src 'none'"
+        assert body.decode("utf-8") == "Вернитесь в Language Review, чтобы узнать результат входа."
+        assert all(
+            browser_queries[0][key][0].encode() not in body
+            for key in ("state", "nonce", "code_challenge")
+        )
 
 
 def test_cancelled_and_timed_out_login_preserve_active_account(

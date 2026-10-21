@@ -28,6 +28,9 @@ def _verify_local_hypothesis(
     json_server: Any,
     text: str,
     misspellings: dict[str, list[str]],
+    *,
+    verification_reply: str | None = None,
+    **options: Any,
 ) -> tuple[Any, Provider]:
     source = tmp_path / "input.txt"
     source.write_text(text, encoding="utf-8")
@@ -38,12 +41,15 @@ def _verify_local_hypothesis(
             engines=("languagetool", "llm"),
             languagetool_endpoint=json_server.url,
             analysis_verify=True,
+            **options,
         ),
     )
 
     def respond(_system: str, payload: dict[str, Any]) -> Any:
         if "hypotheses" not in payload:
             return {"findings": []}
+        if verification_reply is not None:
+            return verification_reply
         [hypothesis] = payload["hypotheses"]
         return {
             "decisions": [
@@ -57,6 +63,7 @@ def _verify_local_hypothesis(
         }
 
     provider = Provider(respond)
+    before = source.read_bytes()
     result = check_paths(
         [str(source)],
         config,
@@ -64,7 +71,136 @@ def _verify_local_hypothesis(
             LlmEngine(settings, provider) if name == "llm" else LanguageToolEngine(settings)
         ),
     )
+    assert source.read_bytes() == before
     return result, provider
+
+
+@pytest.mark.parametrize("excess", [0, 1])
+def test_local_hypothesis_verification_obeys_context_boundary(
+    tmp_path: Path, isolated_appdata: Path, json_server: Any, excess: int
+) -> None:
+    terms = {"термин": "предпочтительное слово"}
+    limit = len(json.dumps(terms, ensure_ascii=False)) - excess
+    result, provider = _verify_local_hypothesis(
+        tmp_path,
+        json_server,
+        "Эта ошыбка.",
+        {"ошыбка": ["ошибка"]},
+        terms=terms,
+        analysis_max_context_chars=limit,
+    )
+    llm = next(e for e in result.engines if e.name == "llm")
+    verification = llm.details["analysis"]["passes"][1]
+    [found] = result.documents[0].findings
+    assert found.suggestions[0].engine_replacement == "ошибка"
+    assert {c.raw.engine for c in found.candidates} == {"languagetool"}
+    if excess:
+        assert provider.calls == []
+        assert result.status in {"partial", "unavailable"}
+        assert verification["status"] == "failed"
+        assert verification["reason"] == "analysis_context_budget"
+        assert "analysis_context_budget" in llm.diagnostics
+        assert verification["decisions"][0]["decision"] == "uncertain"
+        assert verification["decisions"][0]["hypothesis"]["replacements"] == ["ошибка"]
+    else:
+        assert len(provider.calls) == 2
+        assert result.status == "findings"
+        assert verification["status"] == "checked"
+        assert verification["decisions"][0]["decision"] == "confirmed"
+
+
+@pytest.mark.parametrize(
+    "reply",
+    ["[" * 100_000 + "0" + "]" * 100_000, '{"decisions": []}', '{"decisions": ['],
+    ids=["deep-json", "invalid-schema", "invalid-json"],
+)
+def test_invalid_verification_response_preserves_local_evidence(
+    tmp_path: Path, isolated_appdata: Path, json_server: Any, reply: str
+) -> None:
+    result, provider = _verify_local_hypothesis(
+        tmp_path,
+        json_server,
+        "Эта ошыбка.\n\nЭтот текст верен.",
+        {"ошыбка": ["ошибка"]},
+        verification_reply=reply,
+    )
+    llm = next(e for e in result.engines if e.name == "llm")
+    verification = llm.details["analysis"]["passes"][1]
+    assert result.status == "partial" and len(provider.calls) == 2
+    assert llm.request_failures == 1
+    assert verification["status"] == "failed"
+    assert verification["reason"] == "verification_invalid_response"
+    [decision] = verification["decisions"]
+    assert decision["decision"] == "uncertain"
+    assert decision["hypothesis"]["excerpt"] == "ошыбка"
+    assert decision["hypothesis"]["engine"] == "languagetool"
+    [found] = result.documents[0].findings
+    assert found.suggestions[0].engine_replacement == "ошибка"
+    assert len(found.candidates) == 1
+
+
+def test_recursive_verification_validation_is_diagnostic(
+    tmp_path: Path, isolated_appdata: Path, json_server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def validate(*args: Any) -> None:
+        raise RecursionError("Синтетическое превышение глубины валидации ответа.")
+
+    monkeypatch.setattr(
+        "language_review.analysis.jsonschema.Draft202012Validator.validate", validate
+    )
+    result, _provider = _verify_local_hypothesis(
+        tmp_path, json_server, "Эта ошыбка.\n\nЭтот текст верен.", {"ошыбка": ["ошибка"]}
+    )
+    llm = next(e for e in result.engines if e.name == "llm")
+    assert result.status == "partial" and llm.request_failures == 1
+    verification = llm.details["analysis"]["passes"][1]
+    assert verification["reason"] == "verification_invalid_response"
+    assert verification["decisions"][0]["decision"] == "uncertain"
+    assert result.documents[0].findings[0].suggestions[0].engine_replacement == "ошибка"
+
+
+@pytest.mark.parametrize("allow_memory", [False, True])
+def test_verifier_context_preserves_terms_and_consented_memory_at_boundary(
+    tmp_path: Path,
+    isolated_appdata: Path,
+    json_server: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    allow_memory: bool,
+) -> None:
+    terms = {"термин": "предпочтительное слово"}
+    memory = [{"id": "rule", "text": "Проверяйте точную цитату.", "state": "rejected"}]
+    limit = len(json.dumps(terms, ensure_ascii=False)) + len(json.dumps(memory, ensure_ascii=False))
+
+    class Session:
+        def prepare(self, units: Any) -> None:
+            for unit in units:
+                unit.memory_context = memory
+
+        def finish(self, result: Any) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "language_review.memory.pipeline.MemorySession.open", lambda *a, **kw: Session()
+    )
+    result, provider = _verify_local_hypothesis(
+        tmp_path,
+        json_server,
+        "Эта ошыбка.",
+        {"ошыбка": ["ошибка"]},
+        terms=terms,
+        analysis_max_context_chars=limit,
+        llm_provider="chatgpt",
+        llm_chatgpt_allow_cloud=True,
+        llm_chatgpt_allow_memory=allow_memory,
+    )
+    llm = next(e for e in result.engines if e.name == "llm")
+    assert result.status == "findings"
+    assert llm.details["analysis"]["memory_withheld"] == (0 if allow_memory else 1)
+    assert len(provider.calls) == 2
+    verification_input = provider.calls[1][1]
+    assert verification_input["terms"] == terms
+    assert verification_input["memory_context"] == (memory if allow_memory else [])
+    assert llm.details["analysis"]["passes"][1]["status"] == "checked"
 
 
 @pytest.mark.parametrize("event", [{"type": []}, {"type": {}}])

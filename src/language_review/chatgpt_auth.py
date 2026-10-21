@@ -1,4 +1,4 @@
-"""Собственная SIWC OAuth-регистрация; credentials Codex никогда не читаются."""
+"""Собственная SIWC OAuth-регистрация; учётные данные Codex никогда не читаются."""
 
 from __future__ import annotations
 
@@ -134,7 +134,7 @@ class LoginAttempt:
             or (self.client != "dynamic_agent_client" and client != self.client)
         ):
             raise CloudError("oauth_client_mismatch")
-        self.client = client  # retain issued registration even if exchange needs a fresh code
+        self.client = client  # Сохраняем регистрацию, даже если для обмена нужен новый код.
         code = values.get("code", [""])[0]
         if not code:
             raise CloudError("oauth_code_missing")
@@ -314,7 +314,7 @@ class ChatGptAuth:
     def login(
         self, label: str | None = None, *, timeout: float = 300, consent: bool = False
     ) -> str:
-        # Only a genuinely user-invoked login opens a browser. No URLs/tokens in diagnostics.
+        # Только явный вызов login открывает браузер. Диагностика не содержит URL и токенов.
         try:
             import jwt  # noqa: F401
         except ImportError:
@@ -343,7 +343,9 @@ class ChatGptAuth:
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("Content-Security-Policy", "default-src 'none'")
                 self.end_headers()
-                self.wfile.write(b"Return to Language Review to see the sign-in result.")
+                self.wfile.write(
+                    "Вернитесь в Language Review, чтобы узнать результат входа.".encode()
+                )
 
             def log_message(self, format: str, *args: Any) -> None:
                 pass
@@ -370,7 +372,7 @@ class ChatGptAuth:
                 except CloudError as exc:
                     if exc.code != "invalid_grant" or retry:
                         raise
-                    # A new code, state/nonce/PKCE, same issued client and callback.
+                    # Новые код, state/nonce/PKCE; прежние выданный клиент и адрес возврата.
                     attempt = LoginAttempt(
                         host,
                         attempt.redirect_uri,

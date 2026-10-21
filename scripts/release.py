@@ -32,7 +32,9 @@ from language_review.release_contract import (
 def run(*args: str, cwd: Path | None = None) -> str:
     process = subprocess.run(args, cwd=cwd, capture_output=True, text=True, encoding="utf-8")
     if process.returncode:
-        raise ReleaseError("Не выполнена команда: " + args[0] + " " + args[1])
+        command = " ".join(args[:3])
+        detail = process.stderr.strip()[-2000:]
+        raise ReleaseError("Не выполнена команда: " + command + (": " + detail if detail else ""))
     return process.stdout.strip()
 
 

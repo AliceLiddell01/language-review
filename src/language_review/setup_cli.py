@@ -120,12 +120,16 @@ def setup(arguments: argparse.Namespace) -> int:
     current = deployment.state(root)
     if not arguments.non_interactive:
         for name, prompt in (
-            ("codex", "Установить глобальный skill Codex? [д/Н] "),
-            ("claude", "Установить опциональный skill Claude Code? [д/Н] "),
+            ("codex", "Глобальный skill Codex? "),
+            ("claude", "Опциональный skill Claude Code? "),
         ):
             if getattr(arguments, name) is None:
+                installed = name in current.get("skills", {})
+                answer = input(prompt + ("[Д/н] " if installed else "[д/Н] ")).strip().casefold()
                 setattr(
-                    arguments, name, input(prompt).strip().casefold() in {"д", "да", "y", "yes"}
+                    arguments,
+                    name,
+                    installed if not answer else answer in {"д", "да", "y", "yes"},
                 )
         for name, prompt in (
             ("ollama_endpoint", "Локальный endpoint Ollama (Enter — оставить): "),

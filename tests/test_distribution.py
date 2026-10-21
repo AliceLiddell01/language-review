@@ -4,6 +4,8 @@ import importlib.util
 import io
 import json
 import os
+import shutil
+import subprocess
 import tarfile
 import zipfile
 from pathlib import Path
@@ -12,6 +14,7 @@ from typing import Any
 import pytest
 
 from language_review import distribution as deploy
+from language_review import setup_cli
 from language_review.cli import main
 from language_review.release_contract import (
     REPOSITORY,
@@ -264,6 +267,117 @@ def test_setup_refuses_remote_without_mutation(isolated_appdata: Path) -> None:
     with pytest.raises(ReleaseError, match="локальные"):
         configure_endpoints({"ollama": "https://user:password@remote.test"})
     assert (user_config_path().read_bytes() if user_config_path().exists() else None) == before
+
+
+@pytest.mark.parametrize(
+    ("skills", "answers", "expected", "prompt_suffix"),
+    [
+        ({"codex": "a" * 64}, ["", "", "", "", ""], ["codex"], "[Д/н] "),
+        ({"codex": "a" * 64}, ["н", "", "", "", ""], [], "[Д/н] "),
+        ({}, ["", "", "", "", ""], [], "[д/Н] "),
+    ],
+)
+def test_interactive_setup_preserves_unspecified_skills(
+    tmp_path: Path,
+    monkeypatch: Any,
+    skills: dict[str, str],
+    answers: list[str],
+    expected: list[str],
+    prompt_suffix: str,
+) -> None:
+    from language_review import doctor
+
+    current = {"extras": "core", "skills": skills}
+    selected: list[str] = []
+    prompts: list[str] = []
+    answer_iterator = iter(answers)
+
+    def fake_input(prompt: str) -> str:
+        prompts.append(prompt)
+        return next(answer_iterator)
+
+    monkeypatch.setattr(setup_cli.deployment, "managed_root", lambda: tmp_path)
+    monkeypatch.setattr(setup_cli.deployment, "state", lambda _root: current)
+    monkeypatch.setattr(
+        setup_cli.deployment, "setup_skills", lambda _root, agents: selected.extend(agents)
+    )
+    monkeypatch.setattr(setup_cli, "configure_endpoints", lambda _values: None)
+    monkeypatch.setattr(setup_cli, "load_config", lambda: object())
+    monkeypatch.setattr(doctor, "run_doctor", lambda *_args: {})
+    monkeypatch.setattr(doctor, "doctor_human", lambda _report: "")
+    monkeypatch.setattr("builtins.input", fake_input)
+
+    assert main(["setup"]) == 0
+    assert selected == expected
+    assert prompts[0].endswith(prompt_suffix)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Контракт PowerShell Windows")
+def test_uninstall_cleanup_reports_deferred_when_lock_is_busy(tmp_path: Path) -> None:
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 не найден.")
+    root = tmp_path / "application"
+    root.mkdir()
+    lock = root / ".install-lock"
+    lock.write_text("another operation", encoding="utf-8")
+    script = Path("src/language_review/distribution_assets/uninstall-cleanup.ps1").resolve()
+
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-File", str(script), "-Root", str(root)],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    outcome = json.loads((root / "uninstall-result.json").read_text(encoding="utf-8"))
+    assert outcome["status"] == "cleanup_deferred"
+    assert outcome["reason"] == "install_lock_busy"
+    assert lock.is_file()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-установки")
+def test_idempotent_install_applies_new_path_request(
+    bundle: Path, tmp_path: Path, monkeypatch: Any
+) -> None:
+    root = tmp_path / "application"
+    home = tmp_path / "home"
+    active = "a" * 32
+    (root / "releases" / active).mkdir(parents=True)
+    data = validate_bundle(bundle)
+    initial = {
+        "owner": deploy.OWNER,
+        "root": str(root),
+        "active": active,
+        "version": data["version"],
+        "package_version": data["package_version"],
+        "commit": data["commit"],
+        "manifest_sha256": digest(bundle / "release.json"),
+        "extras": "core",
+        "skills": {},
+        "home": str(home),
+        "path_added": False,
+        "path_requested": False,
+        "launchers": {},
+    }
+    deploy.atomic(root / "installation.json", deploy.json_bytes(initial))
+    monkeypatch.setattr(deploy, "probe", lambda *_args: None)
+    monkeypatch.setattr(deploy, "path_conflict", lambda *_args: None)
+    path_changes: list[bool] = []
+
+    def change_path(_bin_path: Path, *, add: bool) -> bool:
+        path_changes.append(add)
+        return add
+
+    monkeypatch.setattr(deploy, "change_path", change_path)
+
+    current = deploy.install(bundle, root, uv="unused", home=home, add_path=True)
+
+    assert path_changes == [True]
+    assert current["path_added"] is True
+    assert current["path_requested"] is True
+    assert deploy.state(root)["path_added"] is True
 
 
 def release_module() -> Any:

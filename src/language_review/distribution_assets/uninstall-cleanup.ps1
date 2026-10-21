@@ -4,7 +4,13 @@ if ($WaitForPid) { Wait-Process -Id $WaitForPid -ErrorAction SilentlyContinue }
 $rootPath = [IO.Path]::GetFullPath($Root)
 $lockPath = Join-Path $rootPath '.install-lock'
 try { $lock = [IO.File]::Open($lockPath, 'CreateNew', 'Write', 'None') }
-catch { throw 'Очистка не начата: установка занята. Повторите внешнюю очистку после завершения операции.' }
+catch {
+    try {
+        @{status = 'cleanup_deferred'; reason = 'install_lock_busy'; data = 'Runtime не очищен; повторите очистку после завершения операции'} |
+            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $rootPath 'uninstall-result.json') -Encoding utf8NoBOM
+    } catch { }
+    throw 'Очистка не начата: установка занята. Повторите внешнюю очистку после завершения операции.'
+}
 try {
 $statePath = Join-Path $rootPath 'installation.json'
 $state = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json

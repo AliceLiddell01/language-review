@@ -360,10 +360,21 @@ def install(
             and old.get("extras") == extras
         ):
             probe(root / "releases" / old["active"], data["package_version"])
-            current = {**old, "skills": skills}
+            added = change_path(root / "bin", add=True) if add_path else False
+            current = {
+                **old,
+                "skills": skills,
+                "path_added": added or old.get("path_added", False),
+                "path_requested": add_path,
+            }
             writes.update(launchers)
             writes[root / "installation.json"] = json_bytes(current)
-            transaction(root, writes)
+            try:
+                transaction(root, writes)
+            except BaseException:
+                if added:
+                    change_path(root / "bin", add=False)
+                raise
             return current
         identifier = uuid.uuid4().hex
         release = root / "releases" / identifier

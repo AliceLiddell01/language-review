@@ -16,7 +16,7 @@ import uuid
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from language_review.release_contract import ReleaseError, digest, read_json, validate_bundle
 
@@ -139,8 +139,9 @@ def _has_live_runtime_lease(release: Path) -> bool:
         if not lease.is_file() or lease.suffix != ".lock":
             return True
         try:
-            import msvcrt
+            from importlib import import_module
 
+            msvcrt = cast(Any, import_module("msvcrt"))
             with lease.open("r+b") as stream:
                 try:
                     msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)

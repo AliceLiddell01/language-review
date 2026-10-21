@@ -7,6 +7,7 @@ import functools
 import http.server
 import json
 import os
+import queue
 import shutil
 import subprocess
 import tempfile
@@ -42,7 +43,78 @@ def snapshot(root: Path) -> dict[str, str]:
     return {str(p.relative_to(root)): digest(p) for p in root.rglob("*") if p.is_file()}
 
 
-def verify(candidate: Path) -> dict[str, Any]:
+def codex_discovery(executable: Path, home: Path, cwd: Path, env: dict[str, str]) -> None:
+    """Только skills/list app-server: ни thread/start, ни turn/start, ни вызова модели."""
+    isolated = {**env, "CODEX_HOME": str(home / ".codex")}
+    (home / ".codex").mkdir(exist_ok=True)
+    messages: queue.Queue[dict[str, Any]] = queue.Queue()
+    with (home / "codex-server.stderr").open("w", encoding="utf-8") as errors:
+        process = subprocess.Popen(
+            [str(executable), "app-server", "--stdio"],
+            cwd=cwd,
+            env=isolated,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=errors,
+            text=True,
+            encoding="utf-8",
+        )
+        assert process.stdin is not None and process.stdout is not None
+
+        def receive() -> None:
+            assert process.stdout is not None
+            for line in process.stdout:
+                try:
+                    messages.put(json.loads(line))
+                except ValueError:
+                    pass
+
+        reader = threading.Thread(target=receive, daemon=True)
+        reader.start()
+
+        def request(identifier: int, method: str, params: dict[str, Any]) -> dict[str, Any]:
+            assert process.stdin is not None
+            process.stdin.write(
+                json.dumps({"id": identifier, "method": method, "params": params}) + "\n"
+            )
+            process.stdin.flush()
+            while True:
+                response = messages.get(timeout=30)
+                if response.get("id") == identifier:
+                    if "error" in response:
+                        raise RuntimeError("Codex app-server отказал в read-only skills/list.")
+                    return dict(response["result"])
+
+        try:
+            request(
+                1,
+                "initialize",
+                {
+                    "clientInfo": {"name": "language-review-acceptance", "version": "1"},
+                    "capabilities": {"experimentalApi": True},
+                },
+            )
+            process.stdin.write('{"method":"initialized"}\n')
+            process.stdin.flush()
+            result = request(2, "skills/list", {"cwds": [str(cwd)], "forceReload": True})
+            skills = [skill for entry in result["data"] for skill in entry["skills"]]
+            expected = home / ".agents/skills/language-review/SKILL.md"
+            assert any(
+                skill["name"] == "language-review"
+                and Path(skill["path"]).resolve() == expected.resolve()
+                for skill in skills
+            ), "Codex не обнаружил глобальный skill из постороннего репозитория."
+        finally:
+            process.stdin.close()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                process.wait(timeout=10)
+            reader.join(timeout=5)
+
+
+def verify(candidate: Path, codex_executable: Path | None = None) -> dict[str, Any]:
     if os.name != "nt":
         raise RuntimeError("Приёмка требует Windows/PowerShell 7.")
     manifest = validate_bundle(candidate)
@@ -182,6 +254,9 @@ def verify(candidate: Path) -> dict[str, Any]:
             == current["active"]
         )
         checks["idempotent_install_setup"] = "PASS"
+        if codex_executable:
+            codex_discovery(codex_executable, home, inputs / "repo-b", env)
+            checks["codex_live_discovery"] = "PASS (app-server skills/list, модель не запускалась)"
         for agent, directory in (("codex", ".agents"), ("claude", ".claude")):
             skill = home / directory / "skills/language-review/SKILL.md"
             assert skill.is_file() and manifest["package_version"] in skill.read_text("utf-8")
@@ -285,8 +360,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--codex-executable", type=Path)
     args = parser.parse_args()
-    result = verify(args.candidate.absolute())
+    result = verify(args.candidate.absolute(), args.codex_executable)
     args.output.write_text(
         json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )

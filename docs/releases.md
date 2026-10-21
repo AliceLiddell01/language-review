@@ -52,11 +52,15 @@ skill. `uv_build` остаётся закреплённым в pyproject; runtim
 и исходный checkout не меняются. Детерминированная идентичность не означает обещания
 побайтово одинаковых gzip/zip timestamps при разных запусках сборки.
 
-Комплект: wheel, sdist, `install.ps1`, закреплённые requirements с hashes,
+Комплект: wheel, sdist, `install.ps1`, закреплённые requirements с hashes, Windows wheelhouse,
 существующие memory runtime scripts/compose, `release-notes.md`, `release.json`,
 `SHA256SUMS`. Skill упакован в wheel/sdist. В manifest находятся tag/version/PEP
 version/SHA/предыдущий stable, Python и skill contract, размеры и SHA-256 assets.
 Manifest не содержит локальных путей и пользовательских данных.
+Зависимости без готовых CPython 3.15 wheels собираются издателем из hash-locked
+источников через pip/setuptools/wheel из `uv.lock`, без build isolation с плавающими
+backend dependencies. Компилятор нужен только Windows builder. Клиент устанавливает
+зависимости только из проверенного `wheelhouse.zip`, с `--no-index` и hashes.
 
 Notes должны содержать версию, SHA, предыдущий stable и заполненные разделы:
 `## Изменения`, `## Совместимость`, `## Миграции и откат`, `## Ограничения`.

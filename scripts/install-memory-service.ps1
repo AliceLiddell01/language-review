@@ -118,7 +118,28 @@ try {
     & $uv venv --python 3.15 (Join-Path $release 'venv')
     if ($LASTEXITCODE -ne 0) { throw 'Не удалось создать окружение runtime.' }
     $python = Join-Path $release 'venv\Scripts\python.exe'
-    & $uv pip install --python $python --require-hashes -r (Join-Path $release 'requirements.txt')
+    $dependencyArgs = @()
+    if ($ReleaseDirectory) {
+        $wheelhouse = Join-Path $release 'wheelhouse'
+        # Фиксированный плоский набор проверенных wheels; произвольные zip paths не извлекаются.
+        $archive = [IO.Compression.ZipFile]::OpenRead((Join-Path $source 'wheelhouse.zip'))
+        try {
+            $totalSize = 0L
+            $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            foreach ($entry in $archive.Entries) {
+                $totalSize += $entry.Length
+                if ($entry.FullName -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,180}\.whl$' -or
+                    $entry.FullName.Contains('..') -or -not $seen.Add($entry.FullName) -or
+                    $entry.Length -gt 100000000 -or $totalSize -gt 500000000) { throw 'Небезопасный wheelhouse.' }
+            }
+            New-Item -ItemType Directory -Path $wheelhouse | Out-Null
+            foreach ($entry in $archive.Entries) {
+                [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $wheelhouse $entry.FullName))
+            }
+        } finally { $archive.Dispose() }
+        $dependencyArgs = @('--no-index', '--find-links', $wheelhouse, '--only-binary', ':all:')
+    }
+    & $uv pip install --python $python --require-hashes @dependencyArgs -r (Join-Path $release 'requirements.txt')
     if ($LASTEXITCODE -ne 0) { throw 'Не удалось установить закреплённые зависимости.' }
     $wheel = @(Get-ChildItem -LiteralPath $release -Filter '*.whl')
     if ($wheel.Count -ne 1) { throw 'Ожидался ровно один собранный wheel.' }

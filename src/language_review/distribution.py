@@ -296,7 +296,7 @@ def install(
     extras: str = "core",
     home: Path | None = None,
     agents: list[str] | None = None,
-    add_path: bool = True,
+    add_path: bool | None = None,
     allow_downgrade: bool = False,
 ) -> dict[str, Any]:
     from language_review.release_contract import version_key
@@ -312,6 +312,8 @@ def install(
         old = state(root)
         if "active" not in old or old.get("uninstalled"):
             old = {}
+        if add_path is None:
+            add_path = old.get("path_requested", True)
         path_conflict(root)
         if (
             old
@@ -345,6 +347,9 @@ def install(
             shutil.copyfile(shutil.which(uv) or uv, private_uv)
             execute([uv, "venv", "--no-config", "--python", "3.15", str(release / "venv")])
             python = str(python_at(release))
+            from language_review.release_contract import unpack_wheelhouse
+
+            unpack_wheelhouse(release / "bundle", release / "wheelhouse")
             execute(
                 [
                     uv,
@@ -354,6 +359,9 @@ def install(
                     "--python",
                     python,
                     "--require-hashes",
+                    "--no-index",
+                    "--find-links",
+                    str(release / "wheelhouse"),
                     "--only-binary",
                     ":all:",
                     "-r",
@@ -395,6 +403,7 @@ def install(
                 "skills": skills,
                 "home": str(home),
                 "path_added": added or old.get("path_added", False),
+                "path_requested": add_path,
                 "uv": str(private_uv),
             }
             writes.update(launcher_files(root))

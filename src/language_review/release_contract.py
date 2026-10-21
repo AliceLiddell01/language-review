@@ -101,6 +101,7 @@ def validate_manifest(data: dict[str, Any]) -> None:
         ):
             raise ReleaseError("Недопустимый hash или размер asset.")
     required = {
+        "wheelhouse.zip",
         "install.ps1",
         "release-notes.md",
         "requirements-core.txt",
@@ -168,3 +169,31 @@ def validate_bundle(directory: Path) -> dict[str, Any]:
     if any(path.name not in expected_files or not path.is_file() for path in directory.iterdir()):
         raise ReleaseError("Комплект содержит посторонние файлы.")
     return data
+
+
+def unpack_wheelhouse(bundle: Path, target: Path) -> None:
+    """Извлекает только плоский набор wheel, без ссылок, traversal и zip bomb."""
+    with zipfile.ZipFile(bundle / "wheelhouse.zip") as archive:
+        total = 0
+        names: set[str] = set()
+        for entry in archive.infolist():
+            total += entry.file_size
+            if (
+                not ASSET.fullmatch(entry.filename)
+                or not entry.filename.endswith(".whl")
+                or ".." in entry.filename
+                or entry.filename.casefold() in names
+                or total > 500_000_000
+                or entry.file_size > 100_000_000
+                or (entry.external_attr >> 16) & 0o170000 == 0o120000
+            ):
+                raise ReleaseError("Небезопасный архив зависимостей.")
+            names.add(entry.filename.casefold())
+        if not names:
+            raise ReleaseError("Архив зависимостей пуст.")
+        target.mkdir()
+        for entry in archive.infolist():
+            with archive.open(entry) as source, (target / entry.filename).open("xb") as destination:
+                import shutil
+
+                shutil.copyfileobj(source, destination)

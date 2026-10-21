@@ -8,9 +8,11 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import tomllib
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -57,7 +59,10 @@ def check_target(version: str, commit: str, previous: str, history: list[dict[st
     for release in published:
         other = version_key(release["tag_name"].removeprefix("v"))
         # Prerelease следующей версии не превращает последний stable в prerelease.
-        if release["tag_name"] == "v" + version or other >= key:
+        same_channel = bool(release["prerelease"]) == ("-" in version)
+        if release["tag_name"] == "v" + version or (
+            other >= key and (same_channel or not release["prerelease"])
+        ):
             raise ReleaseError("Повторный или более старый выпуск запрещён.")
 
 
@@ -79,6 +84,8 @@ def notes_valid(text: str, version: str, commit: str, previous: str) -> None:
 
 
 def prepare(args: argparse.Namespace) -> None:
+    if os.name != "nt" or sys.version_info[:2] != (3, 15):
+        raise ReleaseError("Кандидат Windows требует нативный Windows builder с Python 3.15.")
     source = Path.cwd()
     history = release_history()
     check_target(args.version, args.commit, args.previous, history)
@@ -146,6 +153,43 @@ def prepare(args: argparse.Namespace) -> None:
                 str(output / f"requirements-{name}.txt"),
                 cwd=export_tree,
             )
+        # У Python 3.15 часть закреплённых native зависимостей имеет только sdist.
+        # Сборка выполняется у издателя, инструменты взяты из uv.lock; на клиенте
+        # разрешены только поставленные wheels без компилятора и обращения к index.
+        wheelhouse = root / "wheelhouse"
+        wheelhouse.mkdir()
+        run(
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            "--no-deps",
+            "--require-hashes",
+            "--no-build-isolation",
+            "--wheel-dir",
+            str(wheelhouse),
+            "-r",
+            str(output / "requirements-all.txt"),
+        )
+        built_hashes = {
+            p.name.split("-", 1)[0].lower().replace("_", "-"): digest(p)
+            for p in wheelhouse.glob("*.whl")
+        }
+        for requirement in output.glob("requirements-*.txt"):
+            lines = []
+            for line in requirement.read_text("utf-8").splitlines():
+                lines.append(line)
+                match = re.match(r"([A-Za-z0-9_-]+)(?:\[[^]]+\])?==", line)
+                if match and line.rstrip().endswith("\\"):
+                    checksum = built_hashes.get(match[1].lower().replace("_", "-"))
+                    if checksum:
+                        lines.append("    --hash=sha256:" + checksum + " \\")
+            requirement.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        with zipfile.ZipFile(
+            output / "wheelhouse.zip", "w", compression=zipfile.ZIP_DEFLATED
+        ) as wheels:
+            for wheel in sorted(wheelhouse.glob("*.whl")):
+                wheels.write(wheel, wheel.name)
         # Build backend закреплён pyproject; разрешение runtime не изменяется.
         run("uv", "build", "--no-sources", "--out-dir", str(output), cwd=tree)
         # uv создаёт служебный .gitignore в out-dir; это не release asset.
@@ -253,6 +297,13 @@ def publish(args: argparse.Namespace) -> None:
         "--draft=false",
         "--latest=" + ("true" if data["channel"] == "stable" else "false"),
     )
+    from language_review.release_transport import fetch_bundle
+
+    with tempfile.TemporaryDirectory(prefix="language-review-public-readback-") as temp:
+        fetch_bundle(Path(temp), data["tag"])
+        validate_bundle(Path(temp))
+        if digest(Path(temp) / "release.json") != digest(args.candidate / "release.json"):
+            raise ReleaseError("Публичный manifest после публикации не совпадает.")
     print("GitHub Release опубликован; автоматическое перемещение тегов запрещено.")
 
 

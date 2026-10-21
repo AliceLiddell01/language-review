@@ -63,6 +63,8 @@ def bundle(tmp_path: Path) -> Path:
         *RUNTIME_ASSETS,
     ):
         (root / name).write_text("Синтетический контрактный вход\n", encoding="utf-8")
+    with zipfile.ZipFile(root / "wheelhouse.zip", "w") as wheels:
+        wheels.writestr("synthetic-1.0-py3-none-any.whl", b"synthetic")
     manifest = {
         "schema": "language-review.release/1",
         "repository": REPOSITORY,
@@ -144,6 +146,17 @@ def test_manifest_blocks_path_traversal(bundle: Path, name: str) -> None:
 def test_transport_blocks_unexpected_hosts(url: str) -> None:
     with pytest.raises(ReleaseError):
         check_url(url)
+
+
+@pytest.mark.parametrize("name", ["../bad.whl", "directory/bad.whl", "bad.ps1", "C:bad.whl"])
+def test_wheelhouse_zip_traversal_refused(tmp_path: Path, name: str) -> None:
+    from language_review.release_contract import unpack_wheelhouse
+
+    with zipfile.ZipFile(tmp_path / "wheelhouse.zip", "w") as archive:
+        archive.writestr(name, b"unsafe")
+    with pytest.raises(ReleaseError, match="Небезопасный"):
+        unpack_wheelhouse(tmp_path, tmp_path / "extracted")
+    assert not (tmp_path / "extracted").exists()
 
 
 def test_skill_conflict_and_transaction_rollback(tmp_path: Path, monkeypatch: Any) -> None:
@@ -264,9 +277,10 @@ def test_release_history_guards_previous_stable_and_repeated_versions() -> None:
         {"tag_name": "v0.2.0-rc.1", "published_at": "date", "prerelease": True},
     ]
     module.check_target("0.2.0", "a" * 40, "v0.1.0", history)
+    module.check_target("0.1.1", "a" * 40, "v0.1.0", history)
     for version, commit, previous in (
         ("0.2.0-rc.1", "a" * 40, "v0.1.0"),
-        ("0.1.1", "a" * 40, "v0.1.0"),
+        ("0.0.9", "a" * 40, "v0.1.0"),
         ("0.2.0", "main", "v0.1.0"),
         ("0.2.0", "a" * 40, "v0.2.0-rc.1"),
     ):

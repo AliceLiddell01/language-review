@@ -41,6 +41,11 @@ def command(args: list[str], env: dict[str, str], cwd: Path, codes: set[int] | N
     return process.stdout.strip()
 
 
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise RuntimeError("FAIL: " + message)
+
+
 def snapshot(root: Path) -> dict[str, str]:
     return {str(p.relative_to(root)): digest(p) for p in root.rglob("*") if p.is_file()}
 
@@ -89,11 +94,13 @@ def codex_discovery(executable: Path, home: Path, cwd: Path, env: dict[str, str]
             text=True,
             encoding="utf-8",
         )
-        assert process.stdin is not None and process.stdout is not None
+        stdin = process.stdin
+        stdout = process.stdout
+        if stdin is None or stdout is None:
+            raise RuntimeError("FAIL: Codex app-server не создал каналы ввода и вывода.")
 
         def receive() -> None:
-            assert process.stdout is not None
-            for line in process.stdout:
+            for line in stdout:
                 try:
                     messages.put(json.loads(line))
                 except ValueError:
@@ -103,11 +110,8 @@ def codex_discovery(executable: Path, home: Path, cwd: Path, env: dict[str, str]
         reader.start()
 
         def request(identifier: int, method: str, params: dict[str, Any]) -> dict[str, Any]:
-            assert process.stdin is not None
-            process.stdin.write(
-                json.dumps({"id": identifier, "method": method, "params": params}) + "\n"
-            )
-            process.stdin.flush()
+            stdin.write(json.dumps({"id": identifier, "method": method, "params": params}) + "\n")
+            stdin.flush()
             while True:
                 response = messages.get(timeout=30)
                 if response.get("id") == identifier:
@@ -124,28 +128,32 @@ def codex_discovery(executable: Path, home: Path, cwd: Path, env: dict[str, str]
                     "capabilities": {"experimentalApi": True},
                 },
             )
-            process.stdin.write('{"method":"initialized"}\n')
-            process.stdin.flush()
+            stdin.write('{"method":"initialized"}\n')
+            stdin.flush()
             result = request(2, "skills/list", {"cwds": [str(cwd)], "forceReload": True})
             skills = [skill for entry in result["data"] for skill in entry["skills"]]
-            assert any(
-                skill["name"] == "language-review"
-                and Path(skill["path"]).resolve() == expected.resolve()
-                for skill in skills
-            ), "Codex skills/list: " + json.dumps(
-                {
-                    "expected": str(expected),
-                    "matches": [s for s in skills if s["name"] == "language-review"],
-                    "errors": [entry.get("errors", []) for entry in result["data"]],
-                    "discovered": [
-                        {"name": s["name"], "path": s["path"], "scope": s.get("scope")}
-                        for s in skills
-                    ],
-                },
-                ensure_ascii=False,
+            require(
+                any(
+                    skill["name"] == "language-review"
+                    and Path(skill["path"]).resolve() == expected.resolve()
+                    for skill in skills
+                ),
+                "Codex skills/list: "
+                + json.dumps(
+                    {
+                        "expected": str(expected),
+                        "matches": [s for s in skills if s["name"] == "language-review"],
+                        "errors": [entry.get("errors", []) for entry in result["data"]],
+                        "discovered": [
+                            {"name": s["name"], "path": s["path"], "scope": s.get("scope")}
+                            for s in skills
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
             )
         finally:
-            process.stdin.close()
+            stdin.close()
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
@@ -184,7 +192,10 @@ def verify(
                         f"http://127.0.0.1:{server.server_port}/{source.name}", timeout=10
                     ) as response:
                         (received / source.name).write_bytes(response.read())
-            assert digest(received / "release.json") == digest(candidate / "release.json")
+            require(
+                digest(received / "release.json") == digest(candidate / "release.json"),
+                "Loopback manifest отличается от выбранного кандидата.",
+            )
             validate_bundle(received)
         finally:
             server.shutdown()
@@ -257,28 +268,38 @@ def verify(
         current = json.loads((install_root / "installation.json").read_text("utf-8"))
         python = install_root / "releases" / current["active"] / "venv/Scripts/python.exe"
         cli = [str(python), "-I", "-m", "language_review"]
-        assert (
+        require(
             command([*cli, "--version"], env, inputs / "repo-b")
-            == "language-review " + manifest["package_version"]
+            == "language-review " + manifest["package_version"],
+            "Установленный CLI сообщил неверную версию.",
         )
         report = json.loads(
             command([*cli, "doctor", "--format", "json"], env, inputs / "repo-b", {0, 3})
         )
-        assert report["package"]["version"] == manifest["package_version"]
-        assert not (home / ".claude/skills/language-review").exists()
+        require(
+            report["package"]["version"] == manifest["package_version"],
+            "Диагностика сообщает неверную версию пакета.",
+        )
+        require(
+            not (home / ".claude/skills/language-review").exists(),
+            "Claude skill появился без явного выбора.",
+        )
         checks["claude_not_selected_absent"] = "PASS"
         command(
             [*cli, "config", "show", "--environment", "--format", "json"], env, inputs / "repo-b"
         )
         command([*cli, "setup", "--non-interactive", "--codex"], env, inputs / "repo-b")
-        assert snapshot(inputs) == before
+        require(snapshot(inputs) == before, "Команды чтения изменили входные репозитории.")
         checks["core_foreign_cwd_readonly"] = "PASS"
         # Extras включаются явно отдельным проверяемым upgrade той же поставки.
         bootstrap[bootstrap.index("core")] = "all"
         bootstrap.append("-Claude")
         command(bootstrap, env, inputs / "repo-b")
         updated = json.loads((install_root / "installation.json").read_text("utf-8"))
-        assert updated["active"] != current["active"] and updated["previous"] == current["active"]
+        require(
+            updated["active"] != current["active"] and updated["previous"] == current["active"],
+            "Обновление extras не переключило runtime атомарно.",
+        )
         current = updated
         python = install_root / "releases" / current["active"] / "venv/Scripts/python.exe"
         cli = [str(python), "-I", "-m", "language_review"]
@@ -320,11 +341,12 @@ def verify(
             env,
             root,
         )
-        assert (
+        require(
             command(
                 [sdist_python, "-I", "-m", "language_review", "--version"], env, inputs / "repo-b"
             )
-            == "language-review " + manifest["package_version"]
+            == "language-review " + manifest["package_version"],
+            "Sdist CLI сообщил неверную версию.",
         )
         checks["release_sdist_independent_install"] = "PASS"
         # Проверяем реальную пользовательскую регистрацию PATH и новый pwsh; затем
@@ -350,21 +372,25 @@ def verify(
                 launch_env,
                 inputs / "repo-b",
             )
-            assert result == "language-review " + manifest["package_version"]
+            require(
+                result == "language-review " + manifest["package_version"],
+                "Команда из PATH запустила неверную версию.",
+            )
             evaluator = command(
                 ["pwsh", "-NoProfile", "-Command", "language-review-eval --help"],
                 launch_env,
                 inputs / "repo-b",
             )
-            assert "language-review-eval" in evaluator
+            require("language-review-eval" in evaluator, "Evaluator launcher отсутствует в PATH.")
         finally:
             if added:
                 change_path(install_root / "bin", add=False)
         checks["user_path_new_powershell"] = "PASS"
         command(bootstrap, env, inputs / "repo-b")
-        assert (
+        require(
             json.loads((install_root / "installation.json").read_text("utf-8"))["active"]
-            == current["active"]
+            == current["active"],
+            "Повторная установка неожиданно сменила active runtime.",
         )
         checks["idempotent_install_setup"] = "PASS"
         if codex_executable:
@@ -377,7 +403,10 @@ def verify(
             checks["codex_live_discovery"] = "PASS (app-server skills/list, модель не запускалась)"
         for agent, directory in (("codex", ".agents"), ("claude", ".claude")):
             skill = home / directory / "skills/language-review/SKILL.md"
-            assert skill.is_file() and manifest["package_version"] in skill.read_text("utf-8")
+            require(
+                skill.is_file() and manifest["package_version"] in skill.read_text("utf-8"),
+                f"Установленный skill не соответствует версии пакета: {agent}.",
+            )
             original = skill.read_bytes()
             skill.write_bytes(original + b"\nuser edit\n")
             command(
@@ -386,7 +415,10 @@ def verify(
                 inputs / "repo-b",
                 {2},
             )
-            assert skill.read_bytes() == original + b"\nuser edit\n"
+            require(
+                skill.read_bytes() == original + b"\nuser edit\n",
+                f"Setup перезаписал пользовательский skill: {agent}.",
+            )
             skill.write_bytes(original)
             checks[agent + "_skill_ownership"] = "PASS"
         command(
@@ -395,13 +427,13 @@ def verify(
             root,
             {2},
         )
-        assert snapshot(inputs) == before
+        require(snapshot(inputs) == before, "Проверка без YAML изменила входные репозитории.")
         checks["missing_yaml_no_creation"] = "PASS"
         command([*cli, "init", str(inputs / "repo-a")], env, root)
         policy = inputs / "repo-a/.language-review.yaml"
         policy_before = policy.read_bytes()
         command([*cli, "init", str(inputs / "repo-a")], env, root, {2})
-        assert policy.read_bytes() == policy_before
+        require(policy.read_bytes() == policy_before, "Повторная init перезаписала YAML.")
         command([*cli, "config", "validate", str(inputs / "repo-a")], env, root)
         command(
             [
@@ -420,7 +452,7 @@ def verify(
             {0, 1, 4, 5},
         )
         review = json.loads((root / "review.json").read_text("utf-8"))
-        assert review["schema"] == "language-review.review"
+        require(review["schema"] == "language-review.review", "Review вернул неверную схему.")
         checks["explicit_init_check"] = "PASS (статус движков: " + review["status"] + ")"
         if shutil.which("vale", path=env["PATH"]):
             policy.write_text(
@@ -448,7 +480,10 @@ def verify(
                 {1},
             )
             positive = json.loads((root / "positive.json").read_text("utf-8"))
-            assert positive["status"] == "findings" and positive["items"]
+            require(
+                positive["status"] == "findings" and positive["items"],
+                "Vale не обнаружил синтетическую языковую ошибку.",
+            )
             command(
                 [
                     *cli,
@@ -482,7 +517,7 @@ def verify(
                     [*cli, "check", str(source), "--view", "review", "--format", "json"], env, root
                 )
             )
-            assert clean["status"] == "clean"
+            require(clean["status"] == "clean", "Vale оставил finding после восстановления входа.")
             checks["real_vale_findings_clean_stale_hash"] = "PASS"
         if upgrade_candidate:
             upgrade = validate_bundle(upgrade_candidate)
@@ -511,8 +546,29 @@ def verify(
                 damaged / "release.json"
             )
             state_before = (install_root / "installation.json").read_bytes()
-            command(failure, env, root, {1})
-            assert (install_root / "installation.json").read_bytes() == state_before
+            failure_output = subprocess.run(
+                failure,
+                env=env,
+                cwd=root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=300,
+            )
+            failure_details = failure_output.stdout + failure_output.stderr
+            require(
+                failure_output.returncode == 1,
+                "Bootstrap должен отклонить кандидата с ошибкой readiness.",
+            )
+            require(
+                "synthetic candidate failure" in failure_details,
+                "Кандидат должен запуститься и завершиться синтетической ошибкой readiness.",
+            )
+            require(
+                (install_root / "installation.json").read_bytes() == state_before,
+                "Неудачный кандидат изменил текущий installation pointer.",
+            )
             checks["real_failing_candidate_preserves_previous"] = "PASS"
             success = bootstrap.copy()
             success[success.index(str(received))] = str(upgrade_candidate)
@@ -520,16 +576,22 @@ def verify(
                 upgrade_candidate / "release.json"
             )
             command(success, env, root)
-            assert (
+            require(
                 json.loads((install_root / "installation.json").read_text("utf-8"))["version"]
-                == upgrade["version"]
+                == upgrade["version"],
+                "Upgrade не установил ожидаемую версию.",
             )
             command([*cli, "installation", "rollback"], env, root)
             current = json.loads((install_root / "installation.json").read_text("utf-8"))
-            assert current["version"] == manifest["version"]
+            require(
+                current["version"] == manifest["version"], "Rollback не восстановил прежнюю версию."
+            )
             python = install_root / "releases" / current["active"] / "venv/Scripts/python.exe"
             cli = [str(python), "-I", "-m", "language_review"]
-            assert command([*cli, "--version"], env, root).endswith(manifest["package_version"])
+            require(
+                command([*cli, "--version"], env, root).endswith(manifest["package_version"]),
+                "CLI после rollback сообщил неверную версию.",
+            )
             checks["controlled_version_upgrade_rollback"] = "PASS"
         altered = root / "altered"
         shutil.copytree(received, altered)
@@ -538,11 +600,15 @@ def verify(
         bad = bootstrap.copy()
         bad[bad.index(str(received))] = str(altered)
         command(bad, env, root, {1})
-        assert (
+        require(
             json.loads((install_root / "installation.json").read_text("utf-8"))["active"]
-            == current["active"]
+            == current["active"],
+            "Повреждённый bundle изменил active runtime.",
         )
-        assert command([*cli, "--version"], env, root).endswith(manifest["package_version"])
+        require(
+            command([*cli, "--version"], env, root).endswith(manifest["package_version"]),
+            "CLI после отказа повреждённого bundle сообщил неверную версию.",
+        )
         checks["tampered_asset_preserves_install"] = "PASS"
         # Uninstall сохраняет неизвестные и изменённые файлы, OAuth/TOML/DB не обходятся.
         user_file = python.parent.parent / "user-note.txt"
@@ -560,30 +626,50 @@ def verify(
             if time.monotonic() > deadline:
                 raise RuntimeError("Внешняя очистка uninstall не завершена.")
             time.sleep(0.2)
-        assert (
+        require(
             json.loads((install_root / "uninstall-result.json").read_text("utf-8"))["status"]
-            == "uninstalled"
+            == "uninstalled",
+            "Внешняя очистка не подтвердила uninstall.",
         )
-        assert user_file.read_bytes() == b"preserve" and codex.is_file()
-        assert not (home / ".claude/skills/language-review/SKILL.md").exists()
-        assert not (install_root / "bin/language-review.cmd").exists()
+        require(
+            user_file.read_bytes() == b"preserve" and codex.is_file(),
+            "Uninstall удалил пользовательский файл или изменённый Codex skill.",
+        )
+        require(
+            not (home / ".claude/skills/language-review/SKILL.md").exists(),
+            "Uninstall оставил неизменённый управляемый Claude skill.",
+        )
+        require(
+            not (install_root / "bin/language-review.cmd").exists(),
+            "Uninstall оставил управляемый launcher.",
+        )
         checks["uninstall_ownership"] = "PASS"
         # Пользователь сам сохраняет/перемещает конфликтный skill до переустановки.
         codex.rename(codex.with_name("SKILL.saved.md"))
         command(bootstrap, env, root)
         checks["safe_reinstall"] = "PASS"
-        assert account_file.read_bytes() == protected_session
-        assert (
-            dpapi(account_file.read_bytes(), decrypt=True)
-            == b"synthetic encrypted session; no real OAuth"
+        require(
+            account_file.read_bytes() == protected_session,
+            "Установка изменила синтетическую DPAPI-сессию.",
         )
-        assert user_config.read_bytes() == user_environment
+        require(
+            dpapi(account_file.read_bytes(), decrypt=True)
+            == b"synthetic encrypted session; no real OAuth",
+            "Синтетическая DPAPI-сессия не расшифровывается прежним ключом.",
+        )
+        require(
+            user_config.read_bytes() == user_environment,
+            "Установка изменила пользовательский TOML.",
+        )
         checks["dpapi_environment_preserved"] = (
             "PASS (синтетический DPAPI payload, без OAuth login)"
         )
         for name, value in before.items():
-            assert digest(inputs / name) == value
-        assert not (inputs / "repo-b/.language-review.yaml").exists()
+            require(digest(inputs / name) == value, f"Изменился внешний вход: {name}.")
+        require(
+            not (inputs / "repo-b/.language-review.yaml").exists(),
+            "Установка создала конфигурацию во внешнем репозитории.",
+        )
     return {
         "status": "PASS",
         "commit": manifest["commit"],

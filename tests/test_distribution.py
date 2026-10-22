@@ -2262,6 +2262,29 @@ def test_publish_complete_acceptance_reaches_intercepted_write_boundary(
     assert "POST" in calls[-1]
 
 
+def test_publish_accepts_default_bootstrap_preservation_check(
+    publication: tuple[Any, Any, dict[str, Any], list[Any]],
+) -> None:
+    module, args, evidence, calls = publication
+    evidence["checks"]["default_bootstrap_preserves_extras_and_path"] = {"status": "PASS"}
+    args.evidence.write_text(json.dumps(evidence), encoding="utf-8")
+    with pytest.raises(WriteBoundaryReached):
+        module.publish(args)
+    assert calls[-1][:3] == ("gh", "api", "repos/" + REPOSITORY + "/git/refs")
+    assert "POST" in calls[-1]
+
+
+def test_publish_requires_default_bootstrap_preservation_check(
+    publication: tuple[Any, Any, dict[str, Any], list[Any]],
+) -> None:
+    module, args, evidence, calls = publication
+    evidence["checks"].pop("default_bootstrap_preserves_extras_and_path", None)
+    args.evidence.write_text(json.dumps(evidence), encoding="utf-8")
+    with pytest.raises(ReleaseError, match="набор проверок"):
+        module.publish(args)
+    assert not any("POST" in call or call[:3] == ("gh", "release", "create") for call in calls)
+
+
 @pytest.mark.parametrize("previous", ["none", "v1.0.0"])
 def test_prepare_acceptance_uses_real_previous_candidate(
     tmp_path: Path,

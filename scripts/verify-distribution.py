@@ -863,10 +863,17 @@ def verify(
             if time.monotonic() > deadline:
                 raise RuntimeError("Внешняя очистка uninstall не завершена.")
             time.sleep(0.2)
+        cleanup_result = json.loads((install_root / "uninstall-result.json").read_text("utf-8"))
         require(
-            json.loads((install_root / "uninstall-result.json").read_text("utf-8"))["status"]
-            == "uninstalled",
-            "Внешняя очистка не подтвердила uninstall.",
+            cleanup_result["status"] == "uninstalled",
+            "Внешняя очистка не подтвердила uninstall: "
+            + json.dumps(
+                {
+                    key: cleanup_result.get(key)
+                    for key in ("status", "reason", "stage", "error_id", "script_line")
+                },
+                ensure_ascii=False,
+            ),
         )
         require(
             user_file.read_bytes() == b"preserve" and codex.is_file(),

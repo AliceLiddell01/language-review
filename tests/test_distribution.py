@@ -575,6 +575,35 @@ def test_uninstall_cleanup_reports_deferred_when_lock_is_busy(tmp_path: Path) ->
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Контракт PowerShell Windows")
+def test_uninstall_cleanup_failure_has_path_free_diagnostics(tmp_path: Path) -> None:
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 не найден.")
+    root = tmp_path / "application"
+    root.mkdir()
+    (root / "installation.json").write_text(
+        json.dumps({"owner": "other", "root": str(root), "uninstalled": True}), encoding="utf-8"
+    )
+    script = Path("src/language_review/distribution_assets/uninstall-cleanup.ps1").resolve()
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-File", str(script), "-Root", str(root)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode != 0
+    outcome_text = (root / "uninstall-result.json").read_text("utf-8")
+    outcome = json.loads(outcome_text)
+    assert outcome["status"] == "cleanup_failed"
+    assert outcome["reason"] == "RuntimeException"
+    assert outcome["stage"] == "validate_ownership"
+    assert outcome["error_id"]
+    assert outcome["script_line"] > 0
+    assert str(root) not in outcome_text
+    assert not (root / ".install-lock").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Контракт PowerShell Windows")
 def test_uninstall_cleanup_retries_removing_locked_owned_file(tmp_path: Path) -> None:
     pwsh = shutil.which("pwsh")
     if pwsh is None:

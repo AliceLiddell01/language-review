@@ -13,6 +13,7 @@ catch {
     throw 'Очистка не начата: установка занята. Повторите внешнюю очистку после завершения операции.'
 }
 try {
+$cleanupStage = 'validate_ownership'
 $statePath = Join-Path $rootPath 'installation.json'
 $state = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json
 if ($state.owner -ne 'language-review.installer/1' -or -not $state.uninstalled -or $state.root -ne $rootPath) {
@@ -32,10 +33,12 @@ function Assert-NoLink([string]$Path) {
         $current = if ($parent) { $parent.FullName } else { $null }
     }
 }
+$cleanupStage = 'validate_paths'
 Assert-NoLink $rootPath
 $preserved = [Collections.Generic.List[string]]::new()
 $releasesPath = Join-Path $rootPath 'releases'
 foreach ($release in Get-ChildItem -LiteralPath $releasesPath -Directory) {
+    $cleanupStage = 'inspect_release'
     Assert-NoLink $release.FullName
     $leaseDirectory = Join-Path $release.FullName '.run-leases'
     $liveLease = $false
@@ -59,6 +62,7 @@ foreach ($release in Get-ChildItem -LiteralPath $releasesPath -Directory) {
     $index = Get-Content -Raw -LiteralPath $indexPath | ConvertFrom-Json
     if ($index.owner -ne 'language-review.installer/1') { continue }
     foreach ($entry in $index.files.PSObject.Properties) {
+        $cleanupStage = 'remove_owned_file'
         $path = [IO.Path]::GetFullPath((Join-Path $release.FullName $entry.Name))
         if (-not $path.StartsWith($release.FullName + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Путь inventory выходит за release.' }
         Assert-NoLink $path
@@ -78,25 +82,29 @@ foreach ($release in Get-ChildItem -LiteralPath $releasesPath -Directory) {
         }
     }
     if (Test-Path -LiteralPath $leaseDirectory -PathType Container) {
+        $cleanupStage = 'remove_stale_leases'
         foreach ($staleLease in Get-ChildItem -LiteralPath $leaseDirectory -Filter '*.lock' -File) {
             Remove-Item -LiteralPath $staleLease.FullName -ErrorAction SilentlyContinue
         }
     }
     # Удаляются только пустые каталоги. Неизвестные файлы и изменённые байты остаются.
+    $cleanupStage = 'remove_empty_directories'
     foreach ($directory in Get-ChildItem -LiteralPath $release.FullName -Directory -Recurse | Sort-Object { $_.FullName.Length } -Descending) {
         Assert-NoLink $directory.FullName
         if (-not @(Get-ChildItem -LiteralPath $directory.FullName -Force).Count) { Remove-Item -LiteralPath $directory.FullName }
     }
     if (@(Get-ChildItem -LiteralPath $release.FullName -Force).Count -eq 1) {
+        $cleanupStage = 'remove_empty_release'
         Remove-Item -LiteralPath $indexPath
         Remove-Item -LiteralPath $release.FullName
     }
 }
+$cleanupStage = 'write_result'
 @{status = 'uninstalled'; preserved = @($preserved); data = 'Пользовательские данные, OAuth и memory deployment сохранены'} |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $rootPath 'uninstall-result.json') -Encoding utf8NoBOM
 Remove-Item -LiteralPath $PSCommandPath
 } catch {
-    @{status = 'cleanup_failed'; reason = $_.Exception.GetType().Name; data = 'Пользовательские данные сохранены; проверьте остатки runtime'} |
+    @{status = 'cleanup_failed'; reason = $_.Exception.GetType().Name; stage = $cleanupStage; error_id = $_.FullyQualifiedErrorId; script_line = $_.InvocationInfo.ScriptLineNumber; data = 'Пользовательские данные сохранены; проверьте остатки runtime'} |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $rootPath 'uninstall-result.json') -Encoding utf8NoBOM
     throw
 } finally { $lock.Dispose(); Remove-Item -LiteralPath $lockPath }

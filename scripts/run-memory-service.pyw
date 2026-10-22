@@ -5,7 +5,6 @@ import json
 import os
 import subprocess
 import sys
-import traceback
 from ctypes import wintypes
 from pathlib import Path
 
@@ -69,32 +68,28 @@ def main():
         try:
             deployment = json.loads((runtime / "deployment.json").read_text("utf-8"))
             job = own_process_tree()
-            # PowerShell из MSIX-пакета создаётся вне job; supervisor сам следит за владельцем.
-            environment = {
-                **os.environ,
-                "POWERSHELL_UPDATECHECK": "Off",
-                "LANGUAGE_REVIEW_SERVICE_OWNER_PID": str(os.getpid()),
-            }
             result = subprocess.run(
                 [
-                    deployment["pwsh"],
-                    "-NoLogo",
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-File",
-                    str(runtime / "run-memory-service.ps1"),
+                    deployment["python"],
+                    "-I",
+                    "-m",
+                    "language_review.memory.service",
+                    "supervise",
+                    "--runtime-directory",
+                    str(runtime),
                 ],
                 creationflags=subprocess.CREATE_NO_WINDOW,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=errors,
-                env=environment,
+                env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"},
                 check=False,
             )
             assert job
             return result.returncode if 0 <= result.returncode <= 255 else 1
-        except Exception:
-            traceback.print_exc(file=errors)
+        except Exception as exc:
+            # Исключения не раскрывают окружение, DSN и содержимое credential.
+            print(f"Безоконный запуск не выполнен: {type(exc).__name__}.", file=errors)
             return 1
 
 

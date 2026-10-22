@@ -21,6 +21,7 @@ from typing import Any, cast
 from language_review.release_contract import ReleaseError, digest, read_json, validate_bundle
 
 OWNER = "language-review.installer/1"
+LEGACY_LAUNCHERS = ("language-review.cmd", "language-review-eval.cmd", "language-review-launch.ps1")
 
 
 def default_root() -> Path:
@@ -135,6 +136,7 @@ def _has_live_runtime_lease(release: Path) -> bool:
         return True
     protocol = lease_directory / "protocol"
     try:
+        safe_path(protocol)
         safe_path(release / "owned-files.json")
         index = read_json(release / "owned-files.json")
         expected = index.get("files", {}).get(str(Path(".run-leases") / "protocol"))
@@ -168,7 +170,7 @@ def _has_live_runtime_lease(release: Path) -> bool:
     return False
 
 
-def _remove_owned_release(release: Path) -> bool:
+def _remove_owned_release(release: Path, *, attempts: int = 1) -> bool:
     safe_path(release)
     index_path = release / "owned-files.json"
     safe_path(index_path)
@@ -204,7 +206,18 @@ def _remove_owned_release(release: Path) -> bool:
             if not path.is_file() or digest(path) != expected:
                 complete = False
                 continue
-            path.unlink()
+            for attempt in range(attempts):
+                try:
+                    safe_path(path)
+                    if digest(path) != expected:
+                        complete = False
+                        break
+                    path.unlink()
+                    break
+                except OSError:
+                    if attempt + 1 == attempts:
+                        raise
+                    time.sleep(0.2)
         except OSError:
             complete = False
     for directory in sorted(
@@ -387,6 +400,23 @@ def python_at(release: Path) -> Path:
     return release / "venv/Scripts/python.exe"
 
 
+def remove_activation_scripts(release: Path) -> None:
+    """Убирает стандартные shell-активаторы из собственного изолированного venv."""
+    for name in (
+        "activate",
+        "activate.bat",
+        "activate.csh",
+        "activate.fish",
+        "activate.nu",
+        "activate.ps1",
+        "deactivate.bat",
+        "pydoc.bat",
+    ):
+        path = release / "venv/Scripts" / name
+        safe_path(path)
+        path.unlink(missing_ok=True)
+
+
 def probe(release: Path, version: str) -> None:
     python = str(python_at(release))
     if (
@@ -464,82 +494,114 @@ def path_conflict(root: Path) -> None:
             )
 
 
-def launcher_files(root: Path) -> dict[Path, bytes]:
-    # Стабильные launcher читают единственный active pointer при каждом запуске.
-    script = """$ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent $PSScriptRoot
-$file = Join-Path $root 'installation.json'
-$gatePath = Join-Path $root '.launch-lock'
-$gate = $null
-$lease = $null
-$leasePath = $null
-$module = switch ($args[0]) {
-    'review' { 'language_review' }
-    'eval' { 'language_review.evaluation' }
-    default { throw 'Неизвестный launcher Language Review.' }
-}
-$forward = @($args | Select-Object -Skip 1)
-for ($attempt = 0; $attempt -lt 300; $attempt++) {
-    try {
-        $gate = [IO.File]::Open($gatePath, 'OpenOrCreate', 'ReadWrite', 'ReadWrite')
-        $gate.Lock(0, 1)
-        break
-    } catch [IO.IOException] {
-        if ($gate) { $gate.Dispose(); $gate = $null }
-        Start-Sleep -Milliseconds 100
-    }
-}
-if (-not $gate) { throw 'Не удалось дождаться переключения active runtime.' }
-try {
-    $installation = Get-Content -Raw -LiteralPath $file | ConvertFrom-Json
-    if ($installation.active -notmatch '^[a-f0-9]{32}$') { throw 'Некорректный active runtime.' }
-    $release = Join-Path $root ('releases/' + $installation.active)
-    $leaseDirectory = Join-Path $release '.run-leases'
-    if (-not (Test-Path -LiteralPath (Join-Path $leaseDirectory 'protocol') -PathType Leaf)) {
-        throw 'Runtime не поддерживает безопасное управление lease.'
-    }
-    $leasePath = Join-Path $leaseDirectory ([guid]::NewGuid().ToString('N') + '.lock')
-    $lease = [IO.File]::Open($leasePath, 'CreateNew', 'ReadWrite', 'None')
-    $lease.SetLength(1)
-    $lease.Lock(0, 1)
-    $lease.Write([Text.Encoding]::ASCII.GetBytes([string]$PID))
-    $lease.Flush()
-} catch {
-    if ($lease) { $lease.Dispose() }
-    if ($leasePath -and (Test-Path -LiteralPath $leasePath)) {
-        Remove-Item -LiteralPath $leasePath -Force
-    }
-    throw
-} finally {
-    $gate.Dispose()
-    Remove-Item -LiteralPath $gatePath -Force -ErrorAction SilentlyContinue
-}
-$python = Join-Path $release 'venv/Scripts/python.exe'
-$exitCode = 1
-$env:LANGUAGE_REVIEW_LAUNCHER_PID = [string]$PID
-try {
-    & $python -I -m $module @forward
-    $exitCode = $LASTEXITCODE
-} finally {
-    $lease.Unlock(0, 1)
-    $lease.Dispose()
-    Remove-Item -LiteralPath $leasePath -Force
-}
-exit $exitCode
-"""
-    cmd = (
-        "@echo off\r\n"
-        'pwsh.exe -NoProfile -File "%~dp0language-review-launch.ps1" review %* & exit /b\r\n'
+def launcher_paths(root: Path) -> tuple[Path, Path]:
+    return root / "bin/language-review.exe", root / "bin/language-review-eval.exe"
+
+
+def launcher_files(root: Path, *, bootstrap: Path | None = None) -> dict[Path, bytes]:
+    """Две копии проверенного автономного загрузчика; код оболочки не генерируется."""
+    if bootstrap is None:
+        current = state(root)
+        bootstrap = root / "releases" / current["active"] / "bundle/install.exe"
+    safe_path(bootstrap)
+    content = bootstrap.read_bytes()
+    return dict.fromkeys(launcher_paths(root), content)
+
+
+def launcher_writes(
+    root: Path, old: dict[str, Any], bootstrap: Path
+) -> tuple[dict[Path, bytes | None], dict[str, str]]:
+    writes: dict[Path, bytes | None] = {}
+    hashes: dict[str, str] = {}
+    recorded = old.get("launchers", {})
+    # Локальная установка до первого выпуска может иметь прежние программы запуска.
+    # Их удаление фиксируется в одном журнале с новыми EXE и указателем активной версии.
+    for name in LEGACY_LAUNCHERS:
+        path = root / "bin" / name
+        safe_path(path)
+        if path.exists():
+            if not recorded.get(name) or digest(path) != recorded[name]:
+                raise ReleaseError(
+                    "Прежний launcher изменён или чужой; миграция остановлена: " + name
+                )
+            writes[path] = None
+    for path, content in launcher_files(root, bootstrap=bootstrap).items():
+        safe_path(path)
+        if path.exists():
+            if digest(path) != recorded.get(path.name):
+                raise ReleaseError(
+                    "Launcher изменён пользователем или принадлежит другой установке."
+                )
+            # Windows удерживает EXE работающей программы запуска. Протокол 1 неизменен:
+            # прежний проверенный загрузчик запускает новую активную среду.
+            hashes[path.name] = recorded[path.name]
+        else:
+            writes[path] = content
+            hashes[path.name] = hashlib.sha256(content).hexdigest()
+    return writes, hashes
+
+
+def verify_x64_executable(path: Path) -> None:
+    """Проверяет PE-заголовок, не выполняя потенциально чужую программу."""
+    import struct
+
+    safe_path(path)
+    with path.open("rb") as stream:
+        header = stream.read(64)
+        if len(header) != 64 or header[:2] != b"MZ":
+            raise ReleaseError("Ожидался исполняемый файл Windows x64.")
+        stream.seek(struct.unpack_from("<I", header, 60)[0])
+        signature = stream.read(6)
+        if signature != b"PE\0\0\x64\x86":
+            raise ReleaseError("Ожидался исполняемый файл Windows x64.")
+
+
+def cleanup_interpreter(release: Path, root: Path) -> dict[str, str]:
+    information = json.loads(
+        execute(
+            [
+                str(python_at(release)),
+                "-I",
+                "-c",
+                "import json, sys; print(json.dumps({'executable': sys._base_executable}))",
+            ]
+        )
     )
-    evaluator = (
-        "@echo off\r\n"
-        'pwsh.exe -NoProfile -File "%~dp0language-review-launch.ps1" eval %* & exit /b\r\n'
+    # uv может представить управляемый им Python как junction на среду конкретной версии.
+    # Манифест очистки хранит физический путь к интерпретатору вне удаляемой установки.
+    executable = Path(information["executable"]).resolve()
+    if executable.is_relative_to(root.absolute()):
+        raise ReleaseError("Базовый Python очистки не должен находиться в удаляемой установке.")
+    verify_x64_executable(executable)
+    return {"executable": str(executable), "sha256": digest(executable)}
+
+
+def check_installation_migration(root: Path) -> None:
+    """Прежняя активная версия работает до явного завершения её установки."""
+    current = state(root)
+    if not current.get("active") or current.get("uninstalled"):
+        return
+    recorded = current.get("launchers", {})
+    legacy = any(name in recorded for name in LEGACY_LAUNCHERS)
+    manifest = root / "releases" / current["active"] / "bundle/release.json"
+    safe_path(manifest)
+    if manifest.exists():
+        assets = read_json(manifest).get("assets", {})
+        legacy = legacy or "install.ps1" in assets
+    if not legacy:
+        return
+    for name in LEGACY_LAUNCHERS:
+        path = root / "bin" / name
+        safe_path(path)
+        if path.exists() and (not recorded.get(name) or digest(path) != recorded[name]):
+            raise ReleaseError("Прежний launcher изменён или чужой; миграция остановлена: " + name)
+    raise ReleaseError(
+        "Действующая локальная установка использует прежний формат; она сохранена вместе "
+        "с откатом. Установите новый CLI в пустой --root с --no-path и вызывайте EXE по "
+        "полному пути. Для повторного использования этого root сначала явно завершите "
+        "прежнюю установку её командой installation uninstall и дождитесь очистки. "
+        "OAuth, TOML, worker и БД сохраняются."
     )
-    return {
-        root / "bin/language-review.cmd": cmd.encode(),
-        root / "bin/language-review-eval.cmd": evaluator.encode(),
-        root / "bin/language-review-launch.ps1": script.encode("utf-8"),
-    }
 
 
 def install(
@@ -560,8 +622,11 @@ def install(
     root = root.absolute()
     home = home or Path.home()
     data = validate_bundle(bundle)
+    check_installation_migration(root)
     with locked(root):
+        check_installation_migration(root)
         old = state(root)
+        launcher_owner = old
         if "active" not in old or old.get("uninstalled"):
             old = {}
         extras = extras if extras is not None else old.get("extras", "core")
@@ -575,14 +640,9 @@ def install(
             raise ReleaseError(
                 "Содержимое уже установленной версии изменилось; требуется новый tag/version."
             )
-        path_conflict(root)
-        launchers = launcher_files(root)
-        for path in launchers:
-            safe_path(path)
-            if path.exists() and digest(path) != old.get("launchers", {}).get(path.name):
-                raise ReleaseError(
-                    "Launcher изменён пользователем или принадлежит другой установке."
-                )
+        if add_path:
+            path_conflict(root)
+        launchers, launcher_hashes = launcher_writes(root, launcher_owner, bundle / "install.exe")
         if (
             old
             and version_key(data["version"]) < version_key(old["version"])
@@ -606,6 +666,8 @@ def install(
                 "skills": skills,
                 "path_added": added or old.get("path_added", False),
                 "path_requested": add_path,
+                "launchers": launcher_hashes,
+                "cleanup_python": cleanup_interpreter(root / "releases" / old["active"], root),
             }
             writes.update(launchers)
             writes[root / "installation.json"] = json_bytes(current)
@@ -631,6 +693,7 @@ def install(
             lease_directory.mkdir()
             (lease_directory / "protocol").write_text("1\n", encoding="ascii")
             execute([uv, "venv", "--no-config", "--python", "3.15", str(release / "venv")])
+            remove_activation_scripts(release)
             python = str(python_at(release))
             from language_review.release_contract import unpack_wheelhouse
 
@@ -692,9 +755,8 @@ def install(
                 "path_added": added or old.get("path_added", False),
                 "path_requested": add_path,
                 "uv": str(private_uv),
-                "launchers": {
-                    p.name: hashlib.sha256(content).hexdigest() for p, content in launchers.items()
-                },
+                "launchers": launcher_hashes,
+                "cleanup_python": cleanup_interpreter(release, root),
             }
             writes.update(launchers)
             writes[root / "installation.json"] = json_bytes(current)
@@ -774,7 +836,7 @@ def status(root: Path) -> dict[str, Any]:
         path = skill_path(agent, Path(old["home"]))
         skills[agent] = "current" if path.is_file() and digest(path) == checksum else "drift"
     launchers = {}
-    for path in launcher_files(root):
+    for path in launcher_paths(root):
         safe_path(path)
         try:
             launchers[path.name] = (
@@ -812,6 +874,7 @@ def uninstall(root: Path) -> list[str]:
         old = state(root)
         if not old:
             raise ReleaseError("Управляемая установка отсутствует.")
+        verified_cleanup_python(root, old)
         writes: dict[Path, bytes | None] = {}
         for agent, checksum in old["skills"].items():
             path = skill_path(agent, Path(old["home"]))
@@ -820,9 +883,13 @@ def uninstall(root: Path) -> list[str]:
                 writes[path] = None
             elif path.exists():
                 preserved.append("Изменённый skill сохранён: " + agent)
-        for path in launcher_files(root):
+        for path in launcher_paths(root):
+            safe_path(path)
             if path.exists() and digest(path) == old.get("launchers", {}).get(path.name):
-                writes[path] = None
+                # Текущая программа запуска удерживает свой PE-образ до выхода процесса.
+                # Внешний помощник удаляет проверенные EXE после завершения процессов
+                # и освобождения блокировок использования.
+                pass
             elif path.exists():
                 preserved.append("Изменённый launcher сохранён: " + path.name)
         with launch_locked(root):
@@ -839,42 +906,180 @@ def uninstall(root: Path) -> list[str]:
     return preserved
 
 
+def _wait_for_processes(pids: list[int]) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    deadline = time.monotonic() + 60
+    for pid in sorted(set(pids)):
+        if not 0 < pid <= 0x7FFFFFFF or pid == os.getpid():
+            continue
+        handle = kernel.OpenProcess(0x100000, False, pid)
+        if handle:
+            try:
+                milliseconds = max(0, int((deadline - time.monotonic()) * 1000))
+                kernel.WaitForSingleObject(handle, milliseconds)
+            finally:
+                kernel.CloseHandle(handle)
+
+
+def cleanup(root: Path, *, wait_pids: list[int] | None = None) -> dict[str, Any]:
+    """Внешняя очистка только неизменённых файлов установки после выхода процессов."""
+    if sys.platform != "win32":
+        raise ReleaseError("Внешняя очистка поддерживается только в Windows.")
+    root = root.absolute()
+    safe_path(root)
+    current = state(root)
+    if not current.get("uninstalled"):
+        raise ReleaseError("Внешняя очистка требует ownership и завершённый uninstall.")
+    _wait_for_processes(wait_pids or [])
+    lock_path = root / ".install-lock"
+    safe_path(lock_path)
+    result: dict[str, Any]
+    try:
+        lock = lock_path.open("x")
+    except FileExistsError:
+        result = {"status": "cleanup_deferred", "reason": "install_lock_busy"}
+        atomic(root / "uninstall-result.json", json_bytes(result))
+        return result
+    try:
+        current = state(root)
+        if not current.get("uninstalled"):
+            raise ReleaseError("После ожидания установка снова активна; очистка отменена.")
+        preserved: list[str] = []
+        with launch_locked(root):
+            for path in launcher_paths(root):
+                safe_path(path)
+                expected = current.get("launchers", {}).get(path.name)
+                for attempt in range(25):
+                    try:
+                        safe_path(path)
+                        if not path.exists():
+                            break
+                        if digest(path) != expected:
+                            preserved.append("Изменённый launcher: " + path.name)
+                            break
+                        path.unlink()
+                        break
+                    except OSError:
+                        if attempt == 24:
+                            preserved.append("Занятый launcher: " + path.name)
+                        else:
+                            # Windows может кратко удерживать EXE после выхода процесса.
+                            time.sleep(0.2)
+            releases = root / "releases"
+            safe_path(releases)
+            if releases.exists():
+                for release in releases.iterdir():
+                    safe_path(release)
+                    if not release.is_dir() or not re_identifier(release.name):
+                        preserved.append("Неизвестное поколение: " + release.name)
+                        continue
+                    if _has_live_runtime_lease(release):
+                        preserved.append("Runtime занят или не поддерживает lease: " + release.name)
+                    elif not _remove_owned_release(release, attempts=5):
+                        preserved.append("Изменённые или занятые файлы runtime: " + release.name)
+        result = {
+            "status": "uninstalled",
+            "preserved": preserved,
+            "data": "Пользовательские данные, OAuth и memory deployment сохранены",
+        }
+    except (OSError, ReleaseError, ValueError) as exc:
+        result = {"status": "cleanup_failed", "reason": type(exc).__name__}
+    finally:
+        lock.close()
+        lock_path.unlink(missing_ok=True)
+    atomic(root / "uninstall-result.json", json_bytes(result))
+    return result
+
+
+def cleanup_archive(target: Path) -> None:
+    """Помощник на стандартной библиотеке; содержимое проверяется при приёмке пакета."""
+    from importlib.resources import files
+
+    entry = """import sys
+from pathlib import Path
+from language_review.bootstrap import main
+try:
+    raise SystemExit(main())
+finally:
+    Path(sys.argv[0]).unlink(missing_ok=True)
+"""
+    with zipfile.ZipFile(target, "x", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("__main__.py", entry)
+        archive.writestr("language_review/__init__.py", "")
+        for name in (
+            "bootstrap.py",
+            "distribution.py",
+            "release_contract.py",
+            "release_transport.py",
+        ):
+            archive.writestr(
+                "language_review/" + name, files("language_review").joinpath(name).read_bytes()
+            )
+
+
+def verified_cleanup_python(root: Path, current: dict[str, Any]) -> Path:
+    information = current.get("cleanup_python", {})
+    if not isinstance(information, dict):
+        raise ReleaseError(
+            "Базовый Python очистки недоступен; runtime сохранён для ручной очистки."
+        )
+    executable_value = information.get("executable", "")
+    if not isinstance(executable_value, str) or not executable_value:
+        raise ReleaseError(
+            "Базовый Python очистки недоступен; runtime сохранён для ручной очистки."
+        )
+    executable = Path(executable_value).absolute()
+    if executable.is_relative_to(root.absolute()):
+        raise ReleaseError("Интерпретатор очистки находится в удаляемом runtime.")
+    try:
+        verify_x64_executable(executable)
+        checksum = digest(executable)
+    except OSError as exc:
+        raise ReleaseError(
+            "Базовый Python очистки недоступен; runtime сохранён для ручной очистки."
+        ) from exc
+    if checksum != information.get("sha256"):
+        raise ReleaseError("Базовый Python очистки изменён; runtime сохранён.")
+    return executable
+
+
 def schedule_cleanup(root: Path) -> None:
     if sys.platform != "win32":
         raise ReleaseError("Внешняя очистка поддерживается только в Windows.")
-    from importlib.resources import files
-
-    script = Path(tempfile.gettempdir()) / ("language-review-cleanup-" + uuid.uuid4().hex + ".ps1")
-    script.write_bytes(
-        files("language_review").joinpath("distribution_assets/uninstall-cleanup.ps1").read_bytes()
-    )
+    current = state(root)
+    executable = verified_cleanup_python(root, current)
+    script = Path(tempfile.gettempdir()) / ("language-review-cleanup-" + uuid.uuid4().hex + ".pyz")
+    cleanup_archive(script)
     try:
         launcher_pid = int(os.environ.get("LANGUAGE_REVIEW_LAUNCHER_PID", "0"))
     except ValueError:
         launcher_pid = 0
-    if not 0 < launcher_pid <= 0x7FFFFFFF:
-        launcher_pid = 0
-    subprocess.Popen(
-        [
-            "pwsh",
-            "-NoProfile",
-            "-File",
-            str(script),
-            "-Root",
-            str(root),
-            "-WaitForPid",
-            str(os.getpid()),
-            "-WaitForParentPid",
-            str(os.getppid()),
-            "-WaitForLauncherPid",
-            str(launcher_pid),
-        ],
-        creationflags=subprocess.CREATE_NO_WINDOW,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        close_fds=True,
-    )
+    pids = {os.getpid(), os.getppid(), launcher_pid}
+    arguments = [str(executable), "-I", str(script), "--cleanup", "--root", str(root)]
+    for pid in sorted(pids):
+        if 0 < pid <= 0x7FFFFFFF:
+            arguments.extend(["--wait-for-pid", str(pid)])
+    try:
+        subprocess.Popen(
+            arguments,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+    except BaseException:
+        script.unlink(missing_ok=True)
+        raise
 
 
 def main() -> int:

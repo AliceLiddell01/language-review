@@ -25,9 +25,9 @@ RESERVED = {
     *(f"lpt{n}" for n in range(1, 10)),
 }
 RUNTIME_ASSETS = (
-    "install-memory-service.ps1",
-    "connect-memory.ps1",
-    "run-memory-service.ps1",
+    "install-memory-service.py",
+    "connect-memory.py",
+    "run-memory-service.py",
     "run-memory-service.pyw",
     "compose.memory.yml",
 )
@@ -132,7 +132,7 @@ def validate_manifest(data: dict[str, Any]) -> None:
     required = {
         "INSTALL.md",
         "wheelhouse.zip",
-        "install.ps1",
+        "install.exe",
         "release-notes.md",
         "requirements-core.txt",
         "requirements-chatgpt.txt",
@@ -142,6 +142,12 @@ def validate_manifest(data: dict[str, Any]) -> None:
     }
     if (
         not required <= assets.keys()
+        or any(
+            name.casefold().endswith(
+                (".ps1", ".psm1", ".psd1", ".cmd", ".bat", ".sh", ".bash", ".zsh")
+            )
+            for name in assets
+        )
         or sum(n.endswith(".whl") for n in assets) != 1
         or sum(n.endswith(".tar.gz") for n in assets) != 1
     ):

@@ -22,15 +22,15 @@ Python/uv из манифестов и явно настроенная лока�
 
 Для установленного релизного продукта checkout не требуется:
 `language-review setup --memory-service` передаёт проверенный release directory
-этому же владельцу через `-ReleaseDirectory`. Он использует релизные wheel,
+этому же владельцу. Он использует релизные wheel,
 hash-locked requirements и Windows wheelhouse, сохраняя прежние task/volume/DPAPI,
 readiness и rollback. Пользовательский путь и явные параметры моделей описаны
 в [руководстве установки](installation.md#memory-worker-без-checkout).
-Без `-ReleaseDirectory` действует описанный ниже путь сборки из клона.
+Без release directory действует описанный ниже путь сборки из клона.
 
 Одинаковый deployment не требует файлов автора: Compose и digest образа находятся
-в репозитории, зависимости устанавливаются из `uv.lock`. Нужны Windows,
-PowerShell 7, Git, uv, Docker Desktop (Linux containers) и локальная Ollama.
+в репозитории, зависимости устанавливаются из `uv.lock`. Нужны Windows, Git, uv,
+Docker Desktop (Linux containers) и локальная Ollama. Служебная автоматизация Language Review не зависит от PowerShell.
 Включите запуск Docker Desktop и Ollama при входе в Windows в настройках этих
 приложений. Для этих пользовательских сервисов автозапуск worker означает
 **после перезагрузки и входа того же пользователя**, а не до входа в систему.
@@ -40,7 +40,8 @@ git clone https://github.com/AliceLiddell01/language-review.git
 Set-Location language-review
 ollama pull qwen3.5:4b
 ollama pull embeddinggemma:300m
-.\scripts\install-memory-service.ps1
+uv sync --locked --extra memory
+uv run --locked --extra memory python scripts/install-memory-service.py
 ```
 
 Установщик проверяет модель/digest/размерность, создаёт новый случайный пароль
@@ -55,16 +56,14 @@ credentials/volume. Для переноса данных используйте 
 Создаётся задача `LanguageReview-Memory-language-review-memory`: текущий пользователь,
 logon trigger, без ограничения времени, `IgnoreNew`, повтор после аварии через минуту
 и контрольный trigger каждую минуту, пропускаемый при уже работающем процессе.
-Она запускается сразу. `pythonw.exe` и `CreateNoWindow` исключают всплывающие консоли.
-В окружении дочернего PowerShell отключены update notifications; пользовательское
-окружение установщик не меняет. Это также обходит ошибку форматирования локализованного
-уведомления в PowerShell 7.6 (отрицательная ширина `PadRight` при старте).
+Она запускается сразу. `pythonw.exe` и `CreateNoWindow` исключают всплывающие консоли;
+дочерний Python не активирует окружение и не зависит от PowerShell.
 Задача владеет реальным Python-процессом и Windows Job Object с `KILL_ON_JOB_CLOSE`:
 остановка/обновление задачи завершает всё дерево, включая launcher-процессы venv.
-PowerShell 7 из Microsoft Store (MSIX) создаётся вне этого Job Object, поэтому supervisor
-дополнительно следит за процессом wrapper и при его завершении сам останавливает
-worker с потомками и выходит. Установщик после остановки задачи дожидается выхода
-supervisor своего runtime, а supervisor release без этого контроля завершает явно.
+Wrapper запускается в принадлежащем задаче Job Object; supervisor контролирует его
+процесс и завершает worker с потомками при закрытии wrapper. Установщик после остановки
+задачи дожидается выхода supervisor своего runtime, а supervisor release без этого
+контроля завершает явно.
 Супервизор каждые пять секунд вызывает bounded worker всей очереди этой БД:
 новые UUID проектов не требуют новых задач. LLM/embedding digest проверяются до
 захвата заданий; недоступность/замена модели оставляет очередь ожидающей. Отказ worker
@@ -79,7 +78,7 @@ PostgreSQL этого project остановлен или отсутствует
 Ошибки отдельных заданий сохраняют ограниченные retry и диагностику `memory status`.
 Исчерпанные задания требуют осмысленного устранения причины и `memory retry`.
 
-Повторный запуск установщика обновляет установленный пакет и задачу, сохраняя пароль,
+Повторный запуск `scripts/install-memory-service.py` обновляет установленный пакет и задачу, сохраняя пароль,
 идентичность БД и volume. При существующем volume без исходного credential-файла
 установка отказывается угадывать или сбрасывать пароль. Старые releases сохраняются
 для диагностики; работающий release указан в manifest. Новые config, manifest и
@@ -95,9 +94,7 @@ PostgreSQL этого project остановлен или отсутствует
 
 ```powershell
 $runtime = Join-Path $HOME '.language-review\memory'
-. (Join-Path $runtime 'connect-memory.ps1')
 $deployment = Get-Content (Join-Path $runtime 'deployment.json') -Raw | ConvertFrom-Json
-Get-ScheduledTask -TaskName $deployment.task
 Get-Content (Join-Path $runtime 'logs\service-state.json')
 # Один раз задайте постоянный UUID своего проекта и сохраняйте его при следующих check.
 $projectId = [guid]::NewGuid().ToString()
@@ -106,17 +103,28 @@ $projectId = [guid]::NewGuid().ToString()
 & $deployment.python -I -m language_review --config $deployment.config `
     memory status --project $projectId
 # Управление worker; данные БД эти команды не удаляют.
-Stop-ScheduledTask -TaskName $deployment.task
-Start-ScheduledTask -TaskName $deployment.task
+schtasks.exe /End /TN $deployment.task
+schtasks.exe /Run /TN $deployment.task
+```
+
+Чтобы выполнить CLI с DPAPI-паролем в окружении только дочернего процесса, оберните
+команду через Python helper:
+
+Команда запускается из клона репозитория, где доступны `pyproject.toml` и `uv.lock`.
+
+```powershell
+uv run --locked --extra memory python scripts/connect-memory.py --runtime-directory $runtime -- `
+    uv run --locked --extra memory language-review --config $deployment.config `
+    check $source --memory-project $projectId --view review --format json
 ```
 
 Вместо `--memory-project` можно сохранить UUID в `[memory.projects]` пользовательского
 конфига, как ниже. Сбор инициирует `check`; worker самостоятельно консолидирует
 наблюдения и индексирует их, сохраняя статус гипотезы. Его полный доступ ограничен
 собственной БД оператора, а не отдельным UUID. Для независимой установки задайте
-`-RuntimeDirectory`, `-Project`, `-Port`; чужие контейнеры и volumes не используются.
+`--runtime-directory`, `--project`, `--port`; чужие контейнеры и volumes не используются.
 Теги Ollama могут изменяться: сверяйте `/api/tags`, передавайте явный
-`-EmbeddingRevision` и соответствующие `-EmbeddingDimensions`; другая модель
+`--embedding-revision` и соответствующие `--embedding-dimensions`; другая модель
 не подставляется автоматически. При осознанном обновлении LLM повторно запустите
 установщик, чтобы зафиксировать новый digest.
 
@@ -124,7 +132,7 @@ Start-ScheduledTask -TaskName $deployment.task
 пустым APPDATA, портом, volume и временной задачей:
 
 ```powershell
-.\scripts\verify-memory-service.ps1
+uv run --locked --extra memory python scripts/verify-memory-service.py
 ```
 
 Она запускает установленный CLI на собственном синтетическом тексте, ожидает
@@ -146,7 +154,7 @@ uv sync --locked --extra memory
 # Сохраните пароль в своём менеджере секретов, а UUID — в пользовательском конфиге.
 $env:LANGUAGE_REVIEW_DB_PASSWORD = [guid]::NewGuid().ToString('N')
 $env:LANGUAGE_REVIEW_MEMORY_DSN = "postgresql://language_review:$($env:LANGUAGE_REVIEW_DB_PASSWORD)@127.0.0.1:54329/language_review"
-.\scripts\memory-db.ps1 -Action Up
+uv run --locked --extra memory python scripts/memory-db.py up --project language-review-memory
 uv run --locked --extra memory language-review memory migrate
 uv run --locked --extra memory language-review memory health
 ```
@@ -205,10 +213,9 @@ uv run --locked --extra memory language-review --config $config check $source --
 
 ```powershell
 uv run --locked --extra memory language-review --config $config memory work --project $projectId --watch
-# Либо отдельный скрытый Windows-процесс; вернётся PID для контролируемой остановки.
-.venv\Scripts\Activate.ps1
-$workerProcessId = .\scripts\start-memory-worker.ps1 `
-    -Config $config -Project $projectId -LogDirectory $externalLogDirectory
+# Отдельный безоконный Windows-процесс; команда вернёт PID.
+$workerProcessId = uv run --locked --extra memory python scripts/start-memory-worker.py `
+    --config $config --project $projectId --log-directory $externalLogDirectory
 # Остановка собственного worker вместе с Python launcher-процессами:
 taskkill /PID $workerProcessId /T /F
 ```
@@ -320,8 +327,8 @@ uv run --locked --extra memory language-review --config $config memory import $r
 ## Обновление, backup и восстановление
 
 ```powershell
-.\scripts\memory-db.ps1 -Action Backup -BackupPath $newExternalBackup
-.\scripts\memory-db.ps1 -Action Stop
+uv run --locked --extra memory python scripts/memory-db.py backup --backup-path $newExternalBackup --project language-review-memory
+uv run --locked --extra memory python scripts/memory-db.py stop --project language-review-memory
 ```
 
 Stop и обычный `docker compose -f compose.memory.yml down` сохраняют volume.
@@ -332,18 +339,18 @@ Stop и обычный `docker compose -f compose.memory.yml down` сохран�
 и `memory health`: миграции сериализованы advisory lock и проверяют checksum; неизвестный
 или изменённый migration history отклоняется. Автоматического downgrade нет.
 
-`memory-db.ps1 -Action Restore -BackupPath ... -Project ...` принимает только пустую
+`scripts/memory-db.py restore --backup-path ... --project language-review-memory` принимает только пустую
 целевую БД. Используйте новый проект/порт и прежний пароль из внешнего окружения.
 Восстановление выполняется `pg_restore --single-transaction --exit-on-error`; затем
 проверьте health, row/digest integrity, FTS и векторный поиск. Бинарный dump передаётся
-через `docker cp`, не через текстовый PowerShell pipeline.
+между Docker и файлом без текстового преобразования.
 
 ## Приёмка и независимая оценка
 
 ```powershell
-.\scripts\verify-memory.ps1 -LiveLlmModel 'qwen3.5:4b' `
-    -EmbeddingModel 'embeddinggemma:300m' `
-    -EmbeddingRevision '85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1'
+uv run --locked --extra memory python scripts/verify-memory.py --live-llm-model qwen3.5:4b `
+    --embedding-model embeddinggemma:300m `
+    --embedding-revision 85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1
 uv run --locked --extra memory python scripts/benchmark-memory.py `
     --model embeddinggemma:300m --model qwen3-embedding:0.6b --output $newExternalJson
 ```

@@ -58,22 +58,42 @@ def _without_path_directories(path: str, excluded: set[Path]) -> str:
 
 
 def isolated_environments(env: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
-    uv = shutil.which("uv", path=env.get("PATH"))
     checkout_scripts = (Path(sys.prefix) / "Scripts").resolve()
     runtime_path = _without_path_directories(env["PATH"], {checkout_scripts})
     runtime_env = {**env, "PATH": runtime_path}
-    bootstrap_excluded = {Path(uv).resolve().parent} if uv else set()
+    tools = (
+        "python",
+        "python3",
+        "pythonw",
+        "uv",
+        "pwsh",
+        "powershell",
+        "bash",
+        "sh",
+        "zsh",
+        "cmd",
+    )
+    excluded = {
+        Path(part)
+        for part in runtime_path.split(os.pathsep)
+        if part and any(shutil.which(name, path=part) for name in tools)
+    }
     bootstrap_env = {
         **env,
-        "PATH": _without_path_directories(runtime_path, bootstrap_excluded),
+        "PATH": _without_path_directories(runtime_path, excluded),
     }
+    require(
+        not any(shutil.which(name, path=bootstrap_env["PATH"]) for name in tools),
+        "Bootstrap PATH содержит системный Python, uv или shell.",
+    )
     return runtime_env, bootstrap_env
 
 
 def bootstrap_for_bundle(bootstrap: list[str], bundle: Path) -> list[str]:
     result = bootstrap.copy()
-    result[result.index("-BundleDirectory") + 1] = str(bundle)
-    result[result.index("-TrustedManifestSha256") + 1] = digest(bundle / "release.json")
+    result[0] = str(bundle / "install.exe")
+    result[result.index("--bundle-directory") + 1] = str(bundle)
+    result[result.index("--trusted-manifest-sha256") + 1] = digest(bundle / "release.json")
     return result
 
 
@@ -247,31 +267,35 @@ def verify_registered_path(
         user_path_contains(install_root / "bin"),
         "Установщик не зарегистрировал пользовательский PATH.",
     )
-    pwsh = shutil.which("pwsh")
-    require(pwsh is not None, "PowerShell 7 не найден.")
-    # Новый процесс получает PATH только из постоянных областей Windows.
-    # Тестируемый каталог не добавляется ни здесь, ни в окружении родителя.
-    script = """$ErrorActionPreference = 'Stop'
-$machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-$user = [Environment]::GetEnvironmentVariable('Path', 'User')
-$env:Path = $machine + ';' + $user
-$review = (Get-Command language-review -CommandType Application -ErrorAction Stop).Source
-$evaluator = (Get-Command language-review-eval -CommandType Application -ErrorAction Stop).Source
-$version = & $review --version
-if ($LASTEXITCODE -ne 0) { throw 'CLI из PATH завершился с ошибкой.' }
-$help = & $evaluator --help
-if ($LASTEXITCODE -ne 0) { throw 'Evaluator из PATH завершился с ошибкой.' }
-@{review=$review; evaluator=$evaluator; version=$version; help=($help -join "`n")} |
-    ConvertTo-Json -Compress
+    # Новый дочерний процесс читает постоянные области Windows. Родитель не
+    # добавляет тестовый bin в PATH и не подменяет результат поиска программы.
+    probe = r"""import json, os, shutil, subprocess, winreg
+parts = []
+machine = r'SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
+for hive, path in ((winreg.HKEY_LOCAL_MACHINE, machine), (winreg.HKEY_CURRENT_USER, 'Environment')):
+    try:
+        with winreg.OpenKey(hive, path) as key:
+            parts.append(os.path.expandvars(winreg.QueryValueEx(key, 'Path')[0]))
+    except FileNotFoundError:
+        pass
+os.environ['PATH'] = os.pathsep.join(parts)
+review = shutil.which('language-review.exe')
+evaluator = shutil.which('language-review-eval.exe')
+if not review or not evaluator:
+    raise RuntimeError('CLI/evaluator отсутствует в постоянном PATH')
+options = dict(check=True, capture_output=True, text=True, encoding='utf-8', timeout=300)
+version = subprocess.run([review, '--version'], **options).stdout.strip()
+help_text = subprocess.run([evaluator, '--help'], **options).stdout
+print(json.dumps(dict(review=review, evaluator=evaluator, version=version, help=help_text)))
 """
-    result = json.loads(command([str(pwsh), "-NoProfile", "-Command", script], env, cwd))
+    result = json.loads(command([sys.executable, "-I", "-c", probe], env, cwd))
     require(
-        Path(result["review"]).resolve() == (install_root / "bin/language-review.cmd").resolve(),
+        Path(result["review"]).resolve() == (install_root / "bin/language-review.exe").resolve(),
         "PATH выбрал посторонний CLI.",
     )
     require(
         Path(result["evaluator"]).resolve()
-        == (install_root / "bin/language-review-eval.cmd").resolve(),
+        == (install_root / "bin/language-review-eval.exe").resolve(),
         "PATH выбрал посторонний evaluator.",
     )
     require(
@@ -430,8 +454,7 @@ def verify_version_cycle(
     )
     current = json.loads((install_root / "installation.json").read_text("utf-8"))
     require(current["version"] == manifest["version"], "Rollback не восстановил прежнюю версию.")
-    python = install_root / "releases" / current["active"] / "venv/Scripts/python.exe"
-    cli = [str(python), "-I", "-m", "language_review"]
+    cli = [str(install_root / "bin/language-review.exe")]
     require(
         command([*cli, "--version"], env, root).endswith(manifest["package_version"]),
         "CLI после rollback сообщил неверную версию.",
@@ -447,7 +470,7 @@ def verify(
     previous_candidate: Path | None = None,
 ) -> dict[str, Any]:
     if os.name != "nt":
-        raise RuntimeError("Приёмка требует Windows/PowerShell 7.")
+        raise RuntimeError("Приёмка требует Windows/Python 3.15.")
     manifest = validate_bundle(candidate)
     checks: dict[str, dict[str, str]] = {}
     predecessor = None
@@ -522,10 +545,8 @@ def verify(
         user_config.parent.mkdir(parents=True)
         user_environment = b'[check.llm.ollama]\nendpoint = "http://127.0.0.1:11434"\n'
         user_config.write_bytes(user_environment)
-        # Исключаем checkout venv из runtime checks; uv скрыт только от bootstrap.
+        # Bootstrap запускается без системных Python, uv и shell в PATH.
         env, bootstrap_env = isolated_environments(env)
-        pwsh = shutil.which("pwsh", path=env["PATH"])
-        require(pwsh is not None, "PowerShell 7 не найден.")
         inputs = root / "foreign"
         for name in ("repo-a", "repo-b"):
             repo = inputs / name
@@ -535,18 +556,15 @@ def verify(
         before = snapshot(inputs)
         install_root = Path(env["LOCALAPPDATA"]) / "LanguageReview/application"
         bootstrap = [
-            str(pwsh),
-            "-NoProfile",
-            "-File",
-            str(received / "install.ps1"),
-            "-BundleDirectory",
+            str(received / "install.exe"),
+            "--bundle-directory",
             str(received),
-            "-TrustedManifestSha256",
+            "--trusted-manifest-sha256",
             digest(candidate / "release.json"),
-            "-Extras",
+            "--extras",
             "core",
-            "-NonInteractive",
-            "-Codex",
+            "--non-interactive",
+            "--codex",
         ]
         from language_review.distribution import change_path
 
@@ -556,6 +574,45 @@ def verify(
         )
         cleanup.callback(change_path, install_root / "bin", add=False)
         command(bootstrap, bootstrap_env, inputs / "repo-a")
+        shell_extensions = {".ps1", ".psm1", ".psd1", ".cmd", ".bat", ".sh", ".bash", ".zsh"}
+        active_runtime = (
+            install_root
+            / "releases"
+            / json.loads((install_root / "installation.json").read_text("utf-8"))["active"]
+        )
+        require(
+            not any(
+                path.suffix.casefold() in shell_extensions
+                for directory in (
+                    install_root / "bin",
+                    active_runtime / "bundle",
+                    active_runtime / "venv/Scripts",
+                )
+                for path in directory.rglob("*")
+            ),
+            "Установка создала shell-сценарий.",
+        )
+        for name in ("language-review.exe", "language-review-eval.exe"):
+            require(
+                (install_root / "bin" / name).read_bytes()
+                == (received / "install.exe").read_bytes(),
+                "Launcher не соответствует проверенному автономному bootstrap.",
+            )
+        checks["shell_free_bootstrap_and_launchers"] = {"status": "PASS"}
+        require(
+            command(
+                [str(install_root / "bin/language-review.exe"), "--version"],
+                bootstrap_env,
+                inputs / "repo-b",
+            )
+            == "language-review " + manifest["package_version"],
+            "Автономный launcher сообщил неверную версию.",
+        )
+        command(
+            [str(install_root / "bin/language-review-eval.exe"), "--help"],
+            bootstrap_env,
+            inputs / "repo-b",
+        )
         verify_registered_path(install_root, env, inputs / "repo-b", manifest["package_version"])
         require(
             change_path(install_root / "bin", add=False), "Не удалось снять тестовую запись PATH."
@@ -575,7 +632,7 @@ def verify(
         verify_registered_path(install_root, env, inputs / "repo-b", manifest["package_version"])
         current = json.loads((install_root / "installation.json").read_text("utf-8"))
         python = install_root / "releases" / current["active"] / "venv/Scripts/python.exe"
-        cli = [str(python), "-I", "-m", "language_review"]
+        cli = [str(install_root / "bin/language-review.exe")]
         require(
             command([*cli, "--version"], env, inputs / "repo-b")
             == "language-review " + manifest["package_version"],
@@ -601,7 +658,7 @@ def verify(
         checks["core_foreign_cwd_readonly"] = {"status": "PASS"}
         # Extras включаются явно отдельным проверяемым upgrade той же поставки.
         bootstrap[bootstrap.index("core")] = "all"
-        bootstrap.append("-Claude")
+        bootstrap.append("--claude")
         command(bootstrap, bootstrap_env, inputs / "repo-b")
         updated = json.loads((install_root / "installation.json").read_text("utf-8"))
         require(
@@ -610,9 +667,9 @@ def verify(
         )
         current = updated
         python = install_root / "releases" / current["active"] / "venv/Scripts/python.exe"
-        cli = [str(python), "-I", "-m", "language_review"]
+        cli = [str(install_root / "bin/language-review.exe")]
         checks["controlled_extras_upgrade"] = {"status": "PASS"}
-        codex_only = [arg for arg in bootstrap if arg != "-Claude"]
+        codex_only = [arg for arg in bootstrap if arg != "--claude"]
         command(codex_only, bootstrap_env, inputs / "repo-b")
         require(
             json.loads((install_root / "installation.json").read_text("utf-8"))["skills"]
@@ -620,17 +677,17 @@ def verify(
             "Повторный выбор Codex снял ранее выбранный Claude skill.",
         )
         no_path_bootstrap = bootstrap.copy()
-        no_path_bootstrap.append("-NoPath")
+        no_path_bootstrap.append("--no-path")
         command(no_path_bootstrap, bootstrap_env, inputs / "repo-b")
         no_path_state = json.loads((install_root / "installation.json").read_text("utf-8"))
         require(
             no_path_state["extras"] == "all" and no_path_state["path_requested"] is False,
-            "Явный -NoPath не сохранил состояние установки.",
+            "Явный --no-path не сохранил состояние установки.",
         )
         default_bootstrap = no_path_bootstrap.copy()
-        for flag in ("-Codex", "-Claude", "-NoPath"):
+        for flag in ("--codex", "--claude", "--no-path"):
             default_bootstrap.remove(flag)
-        extras_index = default_bootstrap.index("-Extras")
+        extras_index = default_bootstrap.index("--extras")
         del default_bootstrap[extras_index : extras_index + 2]
         command(default_bootstrap, bootstrap_env, inputs / "repo-b")
         default_state = json.loads((install_root / "installation.json").read_text("utf-8"))
@@ -643,7 +700,7 @@ def verify(
         )
         current = default_state
         python = install_root / "releases" / current["active"] / "venv/Scripts/python.exe"
-        cli = [str(python), "-I", "-m", "language_review"]
+        cli = [str(install_root / "bin/language-review.exe")]
         checks["default_bootstrap_preserves_extras_and_path"] = {"status": "PASS"}
         # Sdist того же релизного SHA устанавливается отдельно и сверяет тот же CLI.
         uv = current["uv"]
@@ -691,7 +748,7 @@ def verify(
         )
         checks["release_sdist_independent_install"] = {"status": "PASS"}
         verify_registered_path(install_root, env, inputs / "repo-b", manifest["package_version"])
-        checks["installer_user_path_new_powershell"] = {"status": "PASS"}
+        checks["installer_user_path_new_process"] = {"status": "PASS"}
         command(bootstrap, bootstrap_env, inputs / "repo-b")
         require(
             json.loads((install_root / "installation.json").read_text("utf-8"))["active"]
@@ -787,29 +844,23 @@ def verify(
                 cycle_bootstrap_env[key] = cycle_env[key]
             cycle_root = Path(cycle_env["LOCALAPPDATA"]) / "LanguageReview/application"
             previous_bootstrap = [
-                str(pwsh),
-                "-NoProfile",
-                "-File",
-                str(previous_candidate / "install.ps1"),
-                "-BundleDirectory",
+                str(previous_candidate / "install.exe"),
+                "--bundle-directory",
                 str(previous_candidate),
-                "-TrustedManifestSha256",
+                "--trusted-manifest-sha256",
                 digest(previous_candidate / "release.json"),
-                "-NonInteractive",
-                "-NoPath",
+                "--non-interactive",
+                "--no-path",
             ]
             command(previous_bootstrap, cycle_bootstrap_env, root)
             cycle_bootstrap = [
-                str(pwsh),
-                "-NoProfile",
-                "-File",
-                str(received / "install.ps1"),
-                "-BundleDirectory",
+                str(received / "install.exe"),
+                "--bundle-directory",
                 str(received),
-                "-TrustedManifestSha256",
+                "--trusted-manifest-sha256",
                 digest(received / "release.json"),
-                "-NonInteractive",
-                "-NoPath",
+                "--non-interactive",
+                "--no-path",
             ]
             checks.update(
                 verify_version_cycle(
@@ -829,7 +880,7 @@ def verify(
             )
             current = json.loads((install_root / "installation.json").read_text("utf-8"))
             python = install_root / "releases" / current["active"] / "venv/Scripts/python.exe"
-            cli = [str(python), "-I", "-m", "language_review"]
+            cli = [str(install_root / "bin/language-review.exe")]
         altered = root / "altered"
         shutil.copytree(received, altered)
         with next(altered.glob("*.whl")).open("ab") as stream:
@@ -877,7 +928,7 @@ def verify(
             "Uninstall оставил неизменённый управляемый Claude skill.",
         )
         require(
-            not (install_root / "bin/language-review.cmd").exists(),
+            not (install_root / "bin/language-review.exe").exists(),
             "Uninstall оставил управляемый launcher.",
         )
         checks["uninstall_ownership"] = {"status": "PASS"}

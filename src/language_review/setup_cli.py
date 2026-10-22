@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import tempfile
 import urllib.parse
 from pathlib import Path
@@ -228,36 +227,29 @@ def setup(arguments: argparse.Namespace) -> int:
         from language_review.release_contract import validate_bundle
 
         validate_bundle(bundle)
-        command = [
-            "pwsh",
-            "-NoProfile",
-            "-File",
-            str(bundle / "install-memory-service.ps1"),
-            "-ReleaseDirectory",
-            str(bundle),
-            "-Project",
-            arguments.memory_project,
-            "-LlmModel",
-            arguments.memory_llm_model,
-            "-EmbeddingModel",
-            arguments.memory_embedding_model,
-            "-EmbeddingRevision",
-            arguments.memory_embedding_revision,
-            "-EmbeddingDimensions",
-            str(arguments.memory_embedding_dimensions),
-        ]
-        if arguments.memory_runtime:
-            command += ["-RuntimeDirectory", str(arguments.memory_runtime)]
-        import os
+        from language_review.memory.service import ServiceError, install_service
 
-        environment = dict(os.environ)
-        environment["PATH"] = str(Path(current["uv"]).parent) + os.pathsep + environment["PATH"]
-        result = subprocess.run(command, check=False, env=environment)
-        if result.returncode:
+        try:
+            install_service(
+                release_directory=bundle,
+                runtime_directory=arguments.memory_runtime,
+                project=arguments.memory_project,
+                llm_model=arguments.memory_llm_model,
+                embedding_model=arguments.memory_embedding_model,
+                embedding_revision=arguments.memory_embedding_revision,
+                embedding_dimensions=arguments.memory_embedding_dimensions,
+                uv=current["uv"],
+            )
+        except ServiceError as exc:
             raise ReleaseError(
                 "Worker не готов; CLI установлен. "
-                "Прежний worker/БД проверяются владельцем deployment."
-            )
+                "Прежний worker/БД проверяются владельцем deployment: " + str(exc)
+            ) from exc
+        except Exception as exc:
+            raise ReleaseError(
+                "Worker не готов; CLI установлен. Служебная операция не выполнена: "
+                + type(exc).__name__
+            ) from exc
     print("Ядро настроено. Проект требует отдельного language-review init по вашей команде.")
     print("Codex/Claude: перезапустите сессию после изменения глобальных skills.")
     from language_review.doctor import doctor_human, run_doctor

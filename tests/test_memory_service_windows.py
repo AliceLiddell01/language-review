@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import shutil
@@ -7,43 +8,101 @@ import socket
 import subprocess
 import sys
 import time
-import urllib.request
+import venv
+from ctypes import wintypes
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="NOT_RUN: точка входа Windows Scheduler")
 
 
-def test_windowless_entrypoint_creates_no_console_and_returns_supervisor_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_scrub_preserves_port_digits_inside_serialized_state() -> None:
+    from language_review.memory.service import scrub
+
+    port = "54329"
+    record = {
+        "at": "2026-10-23T12:34:56.543290+00:00",
+        "supervisor_created_at": 154329,
+    }
+    payload = json.dumps(record)
+
+    assert scrub(payload, {"LANGUAGE_REVIEW_DB_PORT": port}) == payload
+
+
+@pytest.mark.parametrize("encoding", ["console", "utf-16"])
+def test_scheduler_query_parses_xml_from_schtasks(
+    tmp_path: Path, monkeypatch, encoding: str
 ) -> None:
-    monkeypatch.setenv("POWERSHELL_UPDATECHECK", "Default")
-    pwsh = shutil.which("pwsh")
-    assert pwsh, "Для разработки в Windows нужен PowerShell 7"
+    from language_review.memory.service import Scheduler, task_xml
+
+    runtime = tmp_path / "runtime with spaces"
+    scheduler = Scheduler(runtime, "lr-scheduler-query-test")
+    definition = task_xml(runtime, tmp_path / "pythonw.exe", "S-1-5-21-123")
+    response = '<?xml version="1.0" encoding="UTF-16"?>\r\r\n' + definition
+    if encoding == "utf-16":
+        output = response.encode("utf-16")
+    else:
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        codepage = kernel.GetConsoleOutputCP() or kernel.GetACP()
+        output = response.encode(f"cp{codepage}")
+    monkeypatch.setattr(
+        scheduler,
+        "_call",
+        lambda *args: subprocess.CompletedProcess(args, 0, output, b""),
+    )
+
+    result = scheduler.query()
+
+    assert result is not None
+    assert result["description"] == scheduler.description
+    assert result["actions"] == [
+        {
+            "execute": str(tmp_path / "pythonw.exe"),
+            "arguments": f'-I "{runtime / "run-memory-service.pyw"}"',
+            "working_directory": str(runtime),
+        }
+    ]
+
+
+def isolated_wrapper(tmp_path: Path, module: str) -> tuple[Path, Path]:
+    """Настоящие pythonw и wrapper, независимый Python child вместо shell-фикстуры."""
     runtime = tmp_path / "runtime with spaces"
     runtime.mkdir()
+    interpreter = tmp_path / "probe-python"
+    venv.EnvBuilder(with_pip=False).create(interpreter)
+    package = interpreter / "Lib/site-packages/language_review/memory"
+    package.mkdir(parents=True)
+    package.parent.joinpath("__init__.py").write_text("", encoding="utf-8")
+    package.joinpath("__init__.py").write_text("", encoding="utf-8")
+    package.joinpath("service.py").write_text(module, encoding="utf-8")
     wrapper = runtime / "run-memory-service.pyw"
     shutil.copyfile(Path(__file__).parents[1] / "scripts" / wrapper.name, wrapper)
-    (runtime / "deployment.json").write_text(json.dumps({"pwsh": pwsh}), encoding="utf-8")
-    (runtime / "run-memory-service.ps1").write_text(
+    (runtime / "deployment.json").write_text(
+        json.dumps({"python": str(interpreter / "Scripts/python.exe")}), encoding="utf-8"
+    )
+    return runtime, wrapper
+
+
+def test_windowless_entrypoint_creates_no_console_and_returns_supervisor_failure(
+    tmp_path: Path,
+) -> None:
+    runtime, wrapper = isolated_wrapper(
+        tmp_path,
         """
-Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-public static class ServiceConsoleProbe {
-    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
-}
-'@
-$handle = [ServiceConsoleProbe]::GetConsoleWindow().ToInt64().ToString()
-[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'console.txt'), $handle)
-[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'updatecheck.txt'), $env:POWERSHELL_UPDATECHECK)
-exit 17
+import ctypes
+import pathlib
+import sys
+runtime = pathlib.Path(sys.argv[sys.argv.index('--runtime-directory') + 1])
+kernel = ctypes.WinDLL('kernel32')
+kernel.GetConsoleWindow.restype = ctypes.c_void_p
+(runtime / 'console.txt').write_text(str(kernel.GetConsoleWindow() or 0))
+raise SystemExit(17)
 """,
-        encoding="utf-8",
     )
     completed = subprocess.run(
-        [str(Path(sys.executable).with_name("pythonw.exe")), "-I", str(wrapper)],
+        [str(Path(sys._base_executable).with_name("pythonw.exe")), "-I", str(wrapper)],
         capture_output=True,
         timeout=30,
         check=False,
@@ -51,24 +110,25 @@ exit 17
     assert completed.returncode == 17
     assert (runtime / "console.txt").read_text() == "0"
     assert (runtime / "bootstrap.stderr.log").read_bytes() == b""
-    assert (runtime / "updatecheck.txt").read_text() == "Off"
-    assert os.environ["POWERSHELL_UPDATECHECK"] == "Default"
+    assert not list(runtime.glob("*.ps1"))
 
 
-@pytest.mark.parametrize("project", ["hindsight-memory/..", "project with spaces"])
+@pytest.mark.parametrize(
+    "project", ["hindsight-memory/..", "project with spaces"], ids=["traversal", "spaces"]
+)
 def test_installer_rejects_invalid_compose_identity_before_any_side_effect(
     tmp_path: Path, project: str
 ) -> None:
     runtime = tmp_path / "must-not-exist"
     result = subprocess.run(
         [
-            "pwsh",
-            "-NoProfile",
-            "-File",
-            str(Path(__file__).parents[1] / "scripts" / "install-memory-service.ps1"),
-            "-RuntimeDirectory",
+            sys.executable,
+            "-m",
+            "language_review.memory.service",
+            "install",
+            "--runtime-directory",
             str(runtime),
-            "-Project",
+            "--project",
             project,
         ],
         capture_output=True,
@@ -77,8 +137,8 @@ def test_installer_rejects_invalid_compose_identity_before_any_side_effect(
     )
     assert result.returncode != 0
     stderr = result.stderr.decode(errors="replace")
-    assert "Project" in stderr
-    assert project in stderr
+    assert "usage:" not in stderr.lower()
+    assert "некорректный project:" in stderr.lower()
     assert not runtime.exists()
 
 
@@ -87,13 +147,13 @@ def test_installer_preserves_unrelated_nonempty_directory(tmp_path: Path) -> Non
     marker.write_text("Keep these bytes", encoding="utf-8")
     result = subprocess.run(
         [
-            "pwsh",
-            "-NoProfile",
-            "-File",
-            str(Path(__file__).parents[1] / "scripts" / "install-memory-service.ps1"),
-            "-RuntimeDirectory",
+            sys.executable,
+            "-m",
+            "language_review.memory.service",
+            "install",
+            "--runtime-directory",
             str(tmp_path),
-            "-Project",
+            "--project",
             "language-review-test",
         ],
         capture_output=True,
@@ -106,30 +166,6 @@ def test_installer_preserves_unrelated_nonempty_directory(tmp_path: Path) -> Non
     assert sorted(path.name for path in tmp_path.iterdir()) == ["unrelated.txt"]
 
 
-def _ollama_models() -> list[dict[str, str]]:
-    try:
-        with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=3) as response:
-            return list(json.load(response)["models"])
-    except OSError, ValueError, KeyError:
-        return []
-
-
-def _write_test_credential(pwsh: str, path: Path) -> None:
-    subprocess.run(
-        [
-            pwsh,
-            "-NoProfile",
-            "-Command",
-            "[pscredential]::new('language_review', (ConvertTo-SecureString 'test-only' "
-            "-AsPlainText -Force)) | Export-Clixml -LiteralPath '"
-            + str(path).replace("'", "''")
-            + "'",
-        ],
-        check=True,
-        timeout=60,
-    )
-
-
 VALID_WORKER_CONFIG = (
     '[check]\nengines = ["llm"]\n[memory]\nenabled = true\ndsn_env = "LANGUAGE_REVIEW_MEMORY_DSN"\n'
 )
@@ -138,9 +174,7 @@ VALID_WORKER_CONFIG = (
 @pytest.mark.parametrize(
     "scenario,expected_calls,expected_state",
     [
-        # Ошибка конфигурации: worker завершается кодом 2, Docker не вызывается вовсе.
         ("configuration", [], {"status": "error", "reason": "worker_failed", "exit_code": 2}),
-        # Своя PostgreSQL не запущена по данным самого Docker: только тогда compose up.
         (
             "database_stopped",
             ["ps", "up"],
@@ -152,7 +186,6 @@ VALID_WORKER_CONFIG = (
                 "exit_code": 6,
             },
         ),
-        # Ошибка БД при работающем healthy контейнере не является поводом для recovery.
         (
             "database_running",
             ["ps"],
@@ -164,131 +197,114 @@ VALID_WORKER_CONFIG = (
             },
         ),
     ],
+    ids=["configuration", "own-stopped-database", "running-database"],
 )
 def test_supervisor_requests_docker_recovery_only_for_own_unavailable_database(
-    tmp_path: Path,
-    scenario: str,
-    expected_calls: list[str],
-    expected_state: dict[str, object],
+    tmp_path: Path, scenario: str, expected_calls: list[str], expected_state: dict[str, object]
 ) -> None:
+    from language_review.memory.service import Supervisor, write_password
+
     if scenario != "configuration":
         pytest.importorskip("psycopg", reason="NOT_RUN: memory extra не установлен")
-    models = _ollama_models()
-    if not models:
-        pytest.skip("NOT_RUN: локальная Ollama недоступна для проверки моделей supervisor")
-    pwsh = shutil.which("pwsh")
-    assert pwsh
     runtime = tmp_path / "runtime with spaces"
     runtime.mkdir()
-    scripts = Path(__file__).parents[1] / "scripts"
-    for name in ("run-memory-service.ps1", "connect-memory.ps1"):
-        shutil.copyfile(scripts / name, runtime / name)
-    _write_test_credential(pwsh, runtime / "database.credential.xml")
-    # Поддельный docker только фиксирует вызовы; настоящий CLI классифицирует отказ сам.
-    (runtime / "docker.cmd").write_text(
-        '@echo off\r\n>>"%~dp0docker-calls.txt" echo %6\r\n'
-        'if "%6"=="ps" if exist "%~dp0ps.json" type "%~dp0ps.json"\r\n',
-        encoding="utf-8",
-    )
-    if scenario == "database_running":
-        (runtime / "ps.json").write_text(
-            '{"Service":"postgres","State":"running","Health":"healthy"}\n', encoding="utf-8"
-        )
+    write_password(runtime, "test-only")
     config = runtime / "worker.toml"
     config.write_text(
         VALID_WORKER_CONFIG + ("invalid = = toml\n" if scenario == "configuration" else ""),
         encoding="utf-8",
     )
-    listener = socket.socket()
-    listener.bind(("127.0.0.1", 0))
-    closed_port = listener.getsockname()[1]
-    listener.close()
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        closed_port = listener.getsockname()[1]
+    model_rows = [
+        {"name": "synthetic-llm", "digest": "a" * 64},
+        {"name": "synthetic-embedding", "digest": "b" * 64},
+    ]
     (runtime / "deployment.json").write_text(
         json.dumps(
             {
                 "project": "lr-supervisor-test",
                 "port": closed_port,
                 "python": sys.executable,
-                "docker": str(runtime / "docker.cmd"),
+                "docker": "not-launched-docker",
                 "config": str(config),
                 "release": "test-release",
                 "worker_limit": 1,
-                "llm_model": models[0]["name"],
-                "llm_revision": models[0]["digest"],
-                "embedding_model": models[-1]["name"],
-                "embedding_revision": models[-1]["digest"],
+                "llm_model": model_rows[0]["name"],
+                "llm_revision": model_rows[0]["digest"],
+                "embedding_model": model_rows[1]["name"],
+                "embedding_revision": model_rows[1]["digest"],
             }
         ),
         encoding="utf-8",
     )
-    state_file = runtime / "logs" / "service-state.json"
-    calls = runtime / "docker-calls.txt"
-    process = subprocess.Popen(
-        [
-            pwsh,
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-File",
-            str(runtime / "run-memory-service.ps1"),
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        creationflags=subprocess.CREATE_NO_WINDOW,
+    calls: list[str] = []
+
+    class ObservedDatabase:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            assert args[1] == "lr-supervisor-test"
+
+        def status(self) -> list[dict[str, str]]:
+            calls.append("ps")
+            return (
+                [{"Service": "postgres", "State": "running", "Health": "healthy"}]
+                if scenario == "database_running"
+                else []
+            )
+
+        def up(self, wait_timeout: int) -> None:
+            assert wait_timeout == 30
+            calls.append("up")
+
+    supervisor = Supervisor(
+        runtime, database_factory=ObservedDatabase, models_loader=lambda: model_rows
     )
-    state: dict[str, object] = {}
-    try:
-        deadline = time.monotonic() + 90
-        while time.monotonic() < deadline and process.poll() is None:
-            try:
-                state = json.loads(state_file.read_text("utf-8-sig"))
-            except OSError, ValueError:
-                state = {}
-            if state.get("status") not in {None, "starting"}:
-                # waiting публикуется перед запуском docker up. Не убиваем supervisor,
-                # пока не наблюдаем сам ожидаемый вызов; состояние не доказывает эффект.
-                recorded = calls.read_text("utf-8").split() if calls.exists() else []
-                if recorded == expected_calls or len(recorded) > len(expected_calls):
-                    break
-            time.sleep(0.2)
-    finally:
-        process.kill()
-        _, stderr = process.communicate(timeout=30)
-    assert {key: state.get(key) for key in expected_state} == expected_state, stderr.decode(
-        errors="replace"
-    )
-    recorded = calls.read_text("utf-8").split() if calls.exists() else []
-    assert recorded == expected_calls
+    supervisor.cycle()
+    state = json.loads((runtime / "logs/service-state.json").read_text("utf-8"))
+    assert {key: state.get(key) for key in expected_state} == expected_state
+    assert calls == expected_calls
     assert "test-only" not in json.dumps(state)
+    assert "test-only" not in (runtime / "logs/worker.stderr.log").read_text("utf-8")
+    assert isinstance(state["supervisor_created_at"], int)
 
 
 def test_terminating_actual_windowless_wrapper_kills_supervisor_child(tmp_path: Path) -> None:
-    import ctypes
-    from ctypes import wintypes
+    from language_review.memory.service import write_password
 
-    pwsh = shutil.which("pwsh")
-    assert pwsh
-    # Настоящий supervisor: PowerShell из MSIX-пакета не входит в Job Object wrapper,
-    # поэтому завершение обязано обеспечиваться и его собственным контролем владельца.
-    scripts = Path(__file__).parents[1] / "scripts"
-    for name in ("run-memory-service.pyw", "run-memory-service.ps1", "connect-memory.ps1"):
-        shutil.copyfile(scripts / name, tmp_path / name)
-    wrapper = tmp_path / "run-memory-service.pyw"
-    _write_test_credential(pwsh, tmp_path / "database.credential.xml")
-    (tmp_path / "deployment.json").write_text(
-        json.dumps(
-            {
-                "pwsh": pwsh,
-                "project": "lr-supervisor-test",
-                "port": 1,
-                "release": "test-release",
-                "llm_model": "absent-model",
-                "llm_revision": "absent",
-            }
-        ),
-        encoding="utf-8",
+    source = Path(__file__).parents[1] / "src/language_review/memory/service.py"
+    runtime, wrapper = isolated_wrapper(
+        tmp_path,
+        f"""
+import json
+import os
+import pathlib
+import runpy
+import subprocess
+import sys
+runtime = pathlib.Path(sys.argv[sys.argv.index('--runtime-directory') + 1])
+child = subprocess.Popen([sys.executable, '-I', '-c', 'import time; time.sleep(120)'])
+(runtime / 'children.json').write_text(json.dumps([os.getpid(), child.pid]))
+source = pathlib.Path({str(source)!r})
+sys.path.insert(0, str(source.parents[2]))
+service = runpy.run_path(str(source))
+supervisor = service['Supervisor'](runtime, database_factory=lambda *args, **kwargs: None,
+                                   models_loader=lambda: [])
+raise SystemExit(supervisor.run())
+""",
     )
-    state_file = tmp_path / "logs" / "service-state.json"
+    deployment_path = runtime / "deployment.json"
+    deployment = json.loads(deployment_path.read_text("utf-8"))
+    deployment.update(
+        {
+            "project": "lr-supervisor-test",
+            "port": 1,
+            "docker": "not-launched",
+            "release": "test-release",
+        }
+    )
+    deployment_path.write_text(json.dumps(deployment), encoding="utf-8")
+    write_password(runtime, "test-only")
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel.OpenProcess.restype = wintypes.HANDLE
@@ -296,33 +312,56 @@ def test_terminating_actual_windowless_wrapper_kills_supervisor_child(tmp_path: 
     kernel.WaitForSingleObject.restype = wintypes.DWORD
     kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
-    child = None
-    # Тот же настоящий интерпретатор, что у Scheduler: без перенаправителя venv.
     process = subprocess.Popen(
         [str(Path(sys._base_executable).with_name("pythonw.exe")), "-I", str(wrapper)],
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
+    handles: list[Any] = []
     try:
         deadline = time.monotonic() + 30
-        child_pid = 0
+        children: list[int] = []
         while time.monotonic() < deadline and process.poll() is None:
             try:
-                child_pid = int(json.loads(state_file.read_text("utf-8-sig"))["supervisor_pid"])
+                children = json.loads((runtime / "children.json").read_text("utf-8"))
                 break
-            except OSError, ValueError, KeyError:
+            except OSError, ValueError:
                 time.sleep(0.1)
-        assert child_pid, (tmp_path / "bootstrap.stderr.log").read_text("utf-8")
-        child = kernel.OpenProcess(0x100001, False, child_pid)
-        assert child
+        assert len(children) == 2, (runtime / "bootstrap.stderr.log").read_text("utf-8")
+        while time.monotonic() < deadline:
+            opened: list[Any] = []
+            for pid in children:
+                handle = kernel.OpenProcess(0x100001, False, pid)
+                if handle and kernel.WaitForSingleObject(handle, 0) == 0x102:
+                    opened.append(handle)
+                elif handle:
+                    kernel.CloseHandle(handle)
+            if len(opened) == len(children):
+                handles = opened
+                break
+            for handle in opened:
+                kernel.CloseHandle(handle)
+            if process.poll() is not None:
+                break
+            time.sleep(0.1)
+        else:
+            pytest.fail(
+                "Настоящий supervisor и его потомок не остались запущенными: "
+                f"код wrapper={process.poll()}, children={children}, "
+                f"stderr={(runtime / 'bootstrap.stderr.log').read_text('utf-8')}"
+            )
+        assert len(handles) == len(children), "Не удалось открыть оба живых процесса"
+        assert process.poll() is None, f"Wrapper неожиданно завершился: {process.returncode}"
         process.terminate()
         process.wait(timeout=5)
-        assert kernel.WaitForSingleObject(child, 10000) == 0, "Supervisor пережил своего владельца"
+        for handle in handles:
+            assert kernel.WaitForSingleObject(handle, 10000) == 0, (
+                "Потомок пережил своего владельца"
+            )
     finally:
         if process.poll() is None:
             process.kill()
             process.wait(timeout=5)
-        if child:
-            # Handle указывает именно на этот дочерний процесс, даже если PID переиспользован.
-            if kernel.WaitForSingleObject(child, 0) != 0:
-                kernel.TerminateProcess(child, 1)
-            kernel.CloseHandle(child)
+        for handle in handles:
+            if kernel.WaitForSingleObject(handle, 0) != 0:
+                kernel.TerminateProcess(handle, 1)
+            kernel.CloseHandle(handle)

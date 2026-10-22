@@ -16,10 +16,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Получить содержимое PR
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
       - name: Получить доверенную базу
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -27,10 +23,15 @@ jobs:
           path: trusted-base
           persist-credentials: false
       - name: Проверить фактическое описание PR
+        env:
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        shell: python
         run: |
-          checker=trusted-base/.github/scripts/check_pr_body.py
-          if [[ ! -f "$checker" ]]; then
-            echo "::warning::В базовом коммите ещё нет валидатора описания PR; используется валидатор из этого PR."
-            checker=.github/scripts/check_pr_body.py
-          fi
-          python3 "$checker" --event-path "$GITHUB_EVENT_PATH"
+          import os
+          import subprocess
+          import sys
+          checker = "trusted-base/.github/scripts/check_pr_body.py"
+          raise SystemExit(subprocess.run(
+              [sys.executable, checker, "--event-path", os.environ["GITHUB_EVENT_PATH"]],
+              check=False,
+          ).returncode)

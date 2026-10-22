@@ -1,31 +1,25 @@
 # Установка Windows и глобальная интеграция
 
-Требуются Windows x64 и PowerShell 7 (`pwsh`). Для Windows PowerShell 5 установите
-PowerShell 7, например отдельной пользовательской командой
-`winget install Microsoft.PowerShell`, затем откройте `pwsh`.
-Права администратора для Language Review не нужны. ARM64 пока не проверен.
+Требуются Windows x64 и доступ к GitHub Releases. Установка не требует checkout,
+заранее установленного Python, `uv` или PowerShell. Права администратора не нужны;
+ARM64 пока не проверен.
 
 ## Установка одной командой
 
-Команда ниже обращается к официальному **опубликованному stable** GitHub Release.
-Пока первый релиз не опубликован, API вернёт ошибку; это не обещание существующего
-asset или назначение номера первого релиза. Не заменяйте адрес на `main`.
+После публикации stable Release скачайте `install.exe` из официальных
+[GitHub Releases](https://github.com/AliceLiddell01/language-review/releases/latest).
+Пока первого stable Release нет, ссылка не сработает; не заменяйте адрес на `main`.
+Запустите скачанный файл из Windows Terminal или другого терминала:
 
-```powershell
-& { $r = Invoke-RestMethod 'https://api.github.com/repos/AliceLiddell01/language-review/releases/latest' -MaximumRedirection 0; $a = @($r.assets | Where-Object name -EQ 'install.ps1'); if ($r.draft -or $r.prerelease -or $a.Count -ne 1 -or $a[0].digest -notmatch '^sha256:[a-f0-9]{64}$' -or $a[0].browser_download_url -ne "https://github.com/AliceLiddell01/language-review/releases/download/$($r.tag_name)/install.ps1") { throw 'Нет проверяемого установщика stable' }; $p = Join-Path ([IO.Path]::GetTempPath()) ('language-review-' + [guid]::NewGuid().ToString('N') + '.ps1'); try { Invoke-WebRequest $a[0].browser_download_url -OutFile $p; if ((Get-FileHash -LiteralPath $p).Hash.ToLowerInvariant() -ne $a[0].digest.Substring(7)) { throw 'SHA-256 не совпадает' }; & $p -Tag $r.tag_name } finally { if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p } } }
+```text
+"C:\Users\<имя>\Downloads\install.exe"
 ```
 
-Для просмотра перед выполнением сохраните `install.ps1` выбранного релиза из раздела
-Assets, сравните `Get-FileHash` с `digest` этого asset в GitHub API, прочитайте файл
-в редакторе и запустите `pwsh -NoProfile -File .\install.ps1 -Tag $Tag`.
-Для конкретной версии/prerelease задайте `$Tag` полным именем тега, замените
-`/releases/latest` в загрузке metadata на `/releases/tags/$Tag` и добавьте в условие
-отказа проверку `$r.tag_name -ne $Tag`. В stable-команде удалите проверку
-`$r.prerelease`; для prerelease замените её на
-`($r.prerelease -and $r.tag_name -ne $Tag)`. Так prerelease разрешается только для
-точно запрошенного тега; проверки draft, asset URL и digest остаются обязательными.
-Передавайте тот же `$Tag` установщику. Не используйте скрипт, полученный из другого
-релиза, для первого bootstrap.
+Для выбранной версии или prerelease передайте полный tag: `install.exe --tag vX.Y.Z-rc.1`.
+Bootstrap сверяет официальный GitHub API, TLS, release identity, SHA-256 и размеры
+assets, после чего использует только указанный комплект. `--no-path` отключает
+регистрацию пользовательского PATH; `--non-interactive` выполняет только core setup;
+`--extras`, `--codex` и `--claude` выбирают необязательные зависимости/skills явно.
 
 Модель доверия: TLS/GitHub API официального репозитория и права издателя. GitHub
 asset digest и hashes manifest проверяют integrity в этой границе. Они **не являются
@@ -44,12 +38,12 @@ GitHub hosts, не выполняет команды из metadata и не из�
 только бинарными wheel. Системный Python и чужие uv tools не изменяются.
 Работа uv с Python описана в [официальной документации](https://docs.astral.sh/uv/concepts/python-versions/).
 
-`-Extras core` — базовый CLI; `-Extras chatgpt`, `memory`, `all` включают Python
+`--extras core` — базовый CLI; `--extras chatgpt`, `memory`, `all` включают Python
 зависимости добровольных возможностей. Это не включает согласия на передачу текстов,
-не устанавливает Docker, серверы, Vale или LLM-модели. `-Codex` и `-Claude` явно
-выбирают глобальные skills. `-NonInteractive` исключает вопросы; без него в конце
-предлагается интерактивный setup. `-NoPath` отключает регистрацию PATH.
-Повторная установка с `-Codex` сохраняет ранее выбранный Claude skill и наоборот;
+не устанавливает Docker, серверы, Vale или LLM-модели. `--codex` и `--claude` явно
+выбирают глобальные skills. `--non-interactive` исключает вопросы; без него в конце
+предлагается интерактивный setup. `--no-path` отключает регистрацию PATH.
+Повторная установка с `--codex` сохраняет ранее выбранный Claude skill и наоборот;
 отсутствие положительного переключателя не отключает интеграцию. Для явного отключения
 используйте `language-review setup --non-interactive --no-claude` или `--no-codex`.
 Файлы приложения находятся в `%LOCALAPPDATA%/LanguageReview/application`,
@@ -66,6 +60,24 @@ language-review doctor --format json
 language-review config show --environment --format json
 language-review setup
 ```
+
+### Переход с локальной установки до первого выпуска
+
+Если активная установка создана прежней версией и содержит `.cmd` или PowerShell
+launcher, новый bootstrap откажется менять её. Сначала проверьте новый CLI в отдельном
+пустом каталоге, не добавляя его в PATH:
+
+```text
+"C:\Users\<имя>\Downloads\install.exe" --root "C:\Users\<имя>\AppData\Local\LanguageReview\migration-test" --no-path --non-interactive
+"C:\Users\<имя>\AppData\Local\LanguageReview\migration-test\bin\language-review.exe" --version
+```
+
+После проверки вызовите `language-review installation uninstall` через прежний CLI и
+дождитесь результата в `uninstall-result.json`. Он оставляет пользовательские TOML,
+OAuth, worker, PostgreSQL volume и данные памяти. Затем снова запустите скачанный
+`install.exe` без `--root`, чтобы занять стандартный каталог. Если прежний CLI не может
+завершить свою установку, не удаляйте его файлы вручную: используйте отдельный пустой
+root и сохраните старую установку для ручного восстановления.
 
 Ядро установлено не означает готовности всех движков. Doctor показывает по отдельности
 доступность сервисов и программ; отсутствие выбранного необязательного движка даёт issues,
@@ -137,7 +149,7 @@ check и skill ничего не обновляют. Установщик сох
 следующей операции; при ручном изменении участника незавершённой транзакции операция
 останавливается для разрешения конфликта. `.install-lock` предотвращает параллельные
 операции; после аварийного завершения процесса перед удалением lock проверьте PID.
-Выбор active и очистку поколений сериализует общий для Python и PowerShell
+Выбор active и очистку поколений сериализует общий для launcher и Python CLI
 диапазонный Windows lock файла `.launch-lock`. После гибели владельца Windows
 освобождает дескриптор; оставшееся имя файла не мешает новому захвату. Занятое имя
 не удаляется: оба клиента запрещают совместное удаление открытого файла.
@@ -147,7 +159,7 @@ check и skill ничего не обновляют. Установщик сох
 каждого launcher и skills; диагностика не исправляет изменённые файлы.
 
 Uninstall удаляет только собственные неизменённые launcher/skills и свою запись PATH.
-После завершения CLI отдельная скрытая PowerShell удаляет только файлы runtime с
+После завершения CLI отдельный Python helper удаляет только файлы runtime с
 совпавшим ownership hash; изменённые и неизвестные файлы сохраняются. Результат —
 `%LOCALAPPDATA%/LanguageReview/application/uninstall-result.json`. Пользовательский TOML, OAuth,
 проекты, память, backups, Docker и системные инструменты сохраняются. Служебный
@@ -163,10 +175,10 @@ Docker/Ollama/моделями запускает существующий вл�
 language-review setup --non-interactive --memory-service --memory-llm-model $LocalModel --memory-embedding-model $EmbeddingModel --memory-embedding-revision $Digest --memory-embedding-dimensions $Dimensions
 ```
 
-Релизный `install-memory-service.ps1 -ReleaseDirectory` использует проверенный wheel,
-закреплённые requirements и тот же Scheduler/manifest/DPAPI/volume протокол, что
-checkout-установка. Конкурирующая задача или учётные данные не создаются. Для отдельной
-приёмки доступны `--memory-runtime` и `--memory-project`.
+Релизный `language-review setup --memory-service` использует wheel из проверенного
+release directory и тот же Scheduler/manifest/DPAPI/volume протокол, что установка из
+checkout. Конкурирующая задача или учётные данные не создаются. Для отдельной приёмки
+доступны `--memory-runtime` и `--memory-project`.
 Обновление CLI сохраняет прежний worker; его обновление — отдельный setup с тем же
 runtime/project. Readiness и rollback task/runtime остаются у существующего владельца.
 Миграции БД не откатываются автоматически: владелец проверяет старый worker после
@@ -178,13 +190,13 @@ Uninstall CLI оставляет worker, volume и историю. Эксплу�
 
 `scripts/verify-distribution.py` скачивает test release-like assets через отдельный
 loopback HTTP-сервер, сверяет независимо переданный digest и выполняет настоящий
-PowerShell bootstrap в изолированном профиле Windows. Исходный checkout не является
-runtime. Скрипт проверяет новый PowerShell/PATH, skills, сохранность двух репозиториев,
+frozen Python bootstrap в изолированном профиле Windows без Python, `uv` и shell в PATH.
+Исходный checkout не является runtime. Скрипт проверяет установленные CLI, PATH, skills, сохранность двух репозиториев,
 отказы, повторную установку и удаление. Это не проверка публичной публикации и не
 обнаружение skill живой моделью. Реальные release/tag/OAuth и live worker отмечаются
 отдельно; локальный HTTP используется только приёмочным harness, production policy
 HTTPS не ослабляется.
-PATH регистрирует сам установщик. Новый PowerShell формирует окружение из постоянных
+PATH регистрирует сам установщик. Независимый дочерний Python-процесс читает постоянные
 Machine/User PATH и проверяет путь обоих найденных launcher из другого каталога;
 после удаления тестовой записи этот же сценарий должен отказать. В `finally`
 приёмка удаляет только собственную уникальную запись, сохраняя остальные значения PATH.

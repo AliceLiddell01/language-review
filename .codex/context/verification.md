@@ -10,7 +10,7 @@ uv run --locked ruff check .
 uv run --locked ruff format --check .
 uv run --locked mypy
 uv run --locked pytest -n 8
-.\scripts\verify-package.ps1
+uv run --locked python scripts/verify-package.py
 ```
 
 Скрипт собирает wheel/sdist, устанавливает их в изолированные среды Windows и проверяет настоящий CLI, `python -m language_review`, JSON-вывод `scan`, структурное извлечение через `extract`, `check` со встроенными правилами Vale (без Vale — ожидаемый статус `unavailable` и код 5), review-контракт, `show-review`, `verify-review` и сохранность исходного файла после каждой команды чтения.
@@ -58,19 +58,19 @@ JWT, настоящий loopback callback, DPAPI и межпроцессный r
 inference пользовательского аккаунта требуют отдельной авторизации. CLI и границы
 доказательств — [docs/multistage-analysis.md](../../docs/multistage-analysis.md).
 
-Предметная память: `scripts/verify-memory.ps1` запускает изолированную PostgreSQL/pgvector
+Предметная память: `scripts/verify-memory.py` запускает изолированную PostgreSQL/pgvector
 через Docker Desktop, pytest с восемью workers, restart/recreate и реальный backup →
 потерю volume → restore с digest-проверкой таблиц и vector retrieval. Live LLM/embedding
 включаются отдельными аргументами; без них соответствующие проверки NOT_RUN. Подробности
 и команды — [docs/memory.md](../../docs/memory.md). CI `memory-integration` проверяет
 реальную PostgreSQL в Ubuntu, не заменяя приемку Windows.
 
-`scripts/verify-memory-service.ps1` из чистого клона проверяет собственный независимый
+`scripts/verify-memory-service.py` из чистого клона проверяет собственный независимый
 deployment: установку, Scheduler, реальный `check` → автоматическую очередь/LLM/embedding,
 аварийный restart, откат при управляемых сбоях установки/обновления, отсутствие Docker
 recovery при не-БД ошибке worker и восстановление БД; временные task/volume удаляются в finally.
 Нужны Docker Desktop/Ollama и модели из `docs/memory.md`. Перезагрузка ПК — отдельное
 NOT_RUN, если она не выполнялась. `test_memory_service_windows.py` дополнительно
-проверяет отсутствие консоли у реальной дочерней PowerShell и отказ неверного project.
+проверяет отсутствие консоли у реального дочернего Python и отказ неверного project.
 
 `PASS` — реально запущено и прошло; `FAIL` — запущено и не прошло; `PARTIAL` — проверена лишь часть; `NOT_RUN` — не запускалось. Указывай точную среду и недоказанные аспекты. CI в Ubuntu и анализ CodeQL не подтверждают работу в Windows. После изменения HEAD прежние результаты CI и CodeRabbit автоматически не переносятся.

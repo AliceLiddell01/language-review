@@ -88,14 +88,14 @@ GitHubTypoCorpusRu — public/external test. Рецепты имеют фикс�
 объявлять uncontaminated holdout.
 
 Исполнимый Windows-сценарий
-[`reproduce-reference-pilot.ps1`](../scripts/reproduce-reference-pilot.ps1)
+[`reproduce-reference-pilot.py`](../scripts/reproduce-reference-pilot.py)
 импортирует источники, проверяет совокупный корпус на межсплитовые дубликаты,
 экспортирует слепые пакеты и возвращает untouched-разметку без аттестации человека,
 запускает выбранные доступные движки и дважды оценивает сохранённый результат.
 Команда требует чистый committed checkout и новый каталог **вне checkout**:
 
 ```powershell
-.\scripts\reproduce-reference-pilot.ps1 -Destination "$env:TEMP\lr-reference-pilot" -Engine vale,languagetool -Config C:\local\engines.toml
+uv run --locked python scripts/reproduce-reference-pilot.py --destination "$env:TEMP\lr-reference-pilot" --engine vale --engine languagetool --config C:\local\engines.toml
 ```
 
 Внешний config задаёт реально работающие локальные endpoint; сценарий не запускает

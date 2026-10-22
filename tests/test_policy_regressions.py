@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
+from support import create_junction
 from test_analysis import Provider
 from test_project_config import project
 
@@ -108,11 +108,7 @@ def test_policy_aliases_never_become_source(
                 root / (FILENAME if kind == "configuration_hardlink" else "policy/prompt.md"), alias
             )
         elif kind == "junction":
-            subprocess.run(
-                ["cmd", "/c", "mklink", "/J", str(alias), str(root / "policy")],
-                check=True,
-                capture_output=True,
-            )
+            create_junction(alias, root / "policy")
         else:
             alias.symlink_to(
                 root

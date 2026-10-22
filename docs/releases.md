@@ -112,6 +112,18 @@ Vale и незапрошенное обнаружение Codex. Эти проп
 для этого Environment в настройках репозитория. Ручной dispatch с совпадающим
 разрешением — внешняя предпосылка; manifest не может сам разрешить публикацию.
 
+Перед `operation=publish` и одобрением deployment оператор проверяет
+`GET /repos/{owner}/{repo}/immutable-releases` под учётной записью с
+`Administration: read`. Продолжать можно только при успешном ответе с `enabled: true`.
+Ошибка запроса или любое другое состояние требует остановки до dispatch/approval.
+Это операторская предпосылка: стандартный `GITHUB_TOKEN` job публикации не имеет
+административных полномочий и не проверяет эту настройку автоматически. Настройку
+включают в GitHub, вне продукта; Language Review её не меняет.
+GitHub применяет неизменяемость только к будущим
+релизам, поэтому опубликованные ранее релизы не становятся immutable задним числом.
+Подробности: [предотвращение изменений Release](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/establish-provenance-and-integrity/prevent-release-changes)
+и [API проверки настройки](https://docs.github.com/en/rest/repos/repos#check-if-immutable-releases-are-enabled-for-a-repository).
+
 Publish повторно проверяет manifest, notes, актуальную историю релизов, отсутствие
 тега, успешные CI и CodeQL именно target SHA и привязанную к manifest Windows
 приёмку. Атомарно создаётся новый tag ref на полный target SHA (существующий ref
@@ -119,6 +131,9 @@ Publish повторно проверяет manifest, notes, актуальну�
 затем все assets
 скачиваются обратно и проверяются; только после этого draft публикуется. Это
 совместимо с immutable releases: после публикации assets уже не добавляются.
+После публикации повторно прочитайте объект Release через GitHub API и подтвердите
+`immutable: true`. Иное значение означает `FAIL`; зафиксируйте его и остановите
+работу, не изменяя опубликованный Release или его assets.
 Ошибка после создания ref/draft оставляет их для осмотра; код не удаляет и не
 перезаписывает его автоматическим повтором. Существующий тег блокирует новый запуск.
 

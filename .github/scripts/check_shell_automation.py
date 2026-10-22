@@ -73,7 +73,8 @@ def _looks_like_shell_content(contents: str | bytes) -> bool:
         return True
     if re.search(r"(?im)^\s*param\s*\(", text) and powershell_markers >= 2:
         return True
-    return first.lower().startswith(("set -euo pipefail", "set -e\n")) and any(
+    is_shell_prefix = first.lower() == "set -e" or first.lower().startswith("set -euo pipefail")
+    return is_shell_prefix and any(
         token in lowered for token in ("\nthen", "\nfi", "\ncase ", "\nesac")
     )
 
@@ -486,6 +487,16 @@ def workflow_errors(repository_root: Path) -> list[str]:
         for job_name, job in jobs.items():
             if not isinstance(job, dict):
                 continue
+            runs_on = job.get("runs-on")
+            windows_job = (
+                isinstance(runs_on, str) and runs_on.casefold().startswith("windows")
+            ) or (
+                isinstance(runs_on, list)
+                and any(
+                    isinstance(label, str) and label.casefold().startswith("windows")
+                    for label in runs_on
+                )
+            )
             defaults = job.get("defaults", {})
             default_shell = (
                 defaults.get("run", {}).get("shell") if isinstance(defaults, dict) else None
@@ -508,7 +519,12 @@ def workflow_errors(repository_root: Path) -> list[str]:
                 if not isinstance(run, str):
                     continue
                 lines = run.strip().splitlines()
-                if isinstance(shell, str) and shell.lower() == "python":
+                effective_shell = shell if isinstance(shell, str) else default_shell
+                if windows_job and not (
+                    isinstance(effective_shell, str) and effective_shell.lower() == "python"
+                ):
+                    errors.append(f"{where}: Windows run должен явно использовать shell: python.")
+                if isinstance(effective_shell, str) and effective_shell.lower() == "python":
                     errors.extend(
                         f"{where}: {message}" for message in source_automation_errors(run)
                     )

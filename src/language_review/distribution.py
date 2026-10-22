@@ -1032,8 +1032,14 @@ def schedule_cleanup(root: Path) -> None:
     executable = Path(information.get("executable", "")).absolute()
     if executable.is_relative_to(root.absolute()):
         raise ReleaseError("Интерпретатор очистки находится в удаляемом runtime.")
-    verify_x64_executable(executable)
-    if digest(executable) != information.get("sha256"):
+    try:
+        verify_x64_executable(executable)
+        checksum = digest(executable)
+    except OSError as exc:
+        raise ReleaseError(
+            "Базовый Python очистки недоступен; runtime сохранён для ручной очистки."
+        ) from exc
+    if checksum != information.get("sha256"):
         raise ReleaseError("Базовый Python очистки изменён; runtime сохранён.")
     script = Path(tempfile.gettempdir()) / ("language-review-cleanup-" + uuid.uuid4().hex + ".pyz")
     cleanup_archive(script)

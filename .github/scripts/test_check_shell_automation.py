@@ -69,6 +69,24 @@ class ShellAutomationGateTests(unittest.TestCase):
 
         self.assertEqual(tracked_shell_files(self.root), ["100755 tools/verify"])
 
+    def test_tracked_extensionless_script_with_set_e_is_reported(self):
+        self.initialize_git()
+        script = self.root / "tools" / "verify"
+        script.parent.mkdir(parents=True)
+        script.write_text("set -e\nif true; then\n  echo bad\nfi\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "-C", str(self.root), "add", "--", "tools/verify"],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(self.root), "update-index", "--chmod=+x", "--", "tools/verify"],
+            check=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(tracked_shell_files(self.root), ["100755 tools/verify"])
+
     def test_python_file_writer_that_targets_shell_output_is_reported(self):
         source = 'from pathlib import Path\nPath("bin/launcher.cmd").write_text("content")\n'
 
@@ -125,17 +143,32 @@ class ShellAutomationGateTests(unittest.TestCase):
         workflows = self.root / ".github" / "workflows"
         workflows.mkdir(parents=True)
         (workflows / "ci.yml").write_text(
-            "name: test\njobs:\n  check:\n    steps:\n      - run: uv run --locked pytest -n 8\n",
+            "name: test\njobs:\n  check:\n    runs-on: ubuntu-latest\n"
+            "    steps:\n      - run: uv run --locked pytest -n 8\n",
             encoding="utf-8",
         )
 
         self.assertEqual(workflow_errors(self.root), [])
 
+    def test_windows_workflow_requires_python_shell(self):
+        workflows = self.root / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "ci.yml").write_text(
+            "name: test\njobs:\n  check:\n    runs-on: windows-latest\n"
+            "    steps:\n      - run: uv sync --locked\n",
+            encoding="utf-8",
+        )
+
+        errors = workflow_errors(self.root)
+
+        self.assertTrue(any("shell: python" in error for error in errors))
+
     def test_workflow_accepts_python_launcher_step(self):
         workflows = self.root / ".github" / "workflows"
         workflows.mkdir(parents=True)
         (workflows / "ci.yml").write_text(
-            "name: test\njobs:\n  check:\n    steps:\n"
+            "name: test\njobs:\n  check:\n    runs-on: windows-latest\n"
+            "    steps:\n"
             "      - shell: python\n        run: |\n"
             "          import subprocess\n"
             "          raise SystemExit(subprocess.run("
@@ -186,6 +219,15 @@ class ShellAutomationGateTests(unittest.TestCase):
         artifact = self.root / "content-check.whl"
         with zipfile.ZipFile(artifact, "w") as archive:
             archive.writestr("language_review/bin/launcher", "#!/usr/bin/env sh\nexec app\n")
+
+        with self.assertRaises(_VERIFIER.SmokeFailure):
+            _VERIFIER._assert_no_shell_outputs(artifact)
+
+        artifact = self.root / "set-e-check.whl"
+        with zipfile.ZipFile(artifact, "w") as archive:
+            archive.writestr(
+                "language_review/bin/runner", "set -e\nif true; then\n  echo bad\nfi\n"
+            )
 
         with self.assertRaises(_VERIFIER.SmokeFailure):
             _VERIFIER._assert_no_shell_outputs(artifact)

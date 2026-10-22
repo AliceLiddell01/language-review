@@ -162,7 +162,8 @@ def _looks_like_shell_script(member: str, contents: bytes) -> bool:
         return True
     if re.search(r"(?im)^\s*param\s*\(", text) and powershell_markers >= 2:
         return True
-    return first.lower().startswith("set -euo pipefail") and any(
+    is_shell_prefix = first.lower() == "set -e" or first.lower().startswith("set -euo pipefail")
+    return is_shell_prefix and any(
         token in lowered for token in ("\nthen", "\nfi", "\ncase ", "\nesac")
     )
 

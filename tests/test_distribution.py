@@ -909,6 +909,28 @@ def test_schedule_cleanup_waits_for_runtime_and_launcher(tmp_path: Path, monkeyp
     assert captured["kwargs"]["creationflags"] == subprocess.CREATE_NO_WINDOW
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-планировщика")
+def test_schedule_cleanup_reports_missing_python(tmp_path: Path) -> None:
+    root = tmp_path / "application"
+    deploy.atomic(
+        root / "installation.json",
+        deploy.json_bytes(
+            {
+                "owner": deploy.OWNER,
+                "root": str(root),
+                "uninstalled": True,
+                "cleanup_python": {
+                    "executable": str(tmp_path / "missing-python.exe"),
+                    "sha256": "a" * 64,
+                },
+            }
+        ),
+    )
+
+    with pytest.raises(ReleaseError, match="Базовый Python очистки недоступен"):
+        deploy.schedule_cleanup(root)
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-установки")
 def test_idempotent_install_applies_new_path_request(
     bundle: Path, tmp_path: Path, monkeypatch: Any

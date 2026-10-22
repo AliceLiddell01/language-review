@@ -26,6 +26,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from language_review.distribution import remove_activation_scripts
+
 DEFAULT_EMBEDDING_REVISION = "85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1"
 TASK_NAMESPACE = "http://schemas.microsoft.com/windows/2004/02/mit/task"
 CREDENTIAL = "database.credential.dpapi"
@@ -685,23 +687,6 @@ def _checked(
             f"Операция {Path(command[0]).name} завершилась с кодом {result.returncode}."
         )
     return result.stdout.strip()
-
-
-def remove_activation_scripts(release: Path) -> None:
-    """Runtime использует абсолютные interpreter paths и не нуждается в shell activation."""
-    for name in (
-        "activate",
-        "activate.bat",
-        "activate.csh",
-        "activate.fish",
-        "activate.nu",
-        "activate.ps1",
-        "deactivate.bat",
-        "pydoc.bat",
-    ):
-        path = release / "venv/Scripts" / name
-        safe_path(path)
-        path.unlink(missing_ok=True)
 
 
 def _validate_options(

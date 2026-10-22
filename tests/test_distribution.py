@@ -931,6 +931,29 @@ def test_schedule_cleanup_reports_missing_python(tmp_path: Path) -> None:
         deploy.schedule_cleanup(root)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Контракт uninstall поддерживается в Windows")
+def test_uninstall_validates_cleanup_python_before_mutating_installation(tmp_path: Path) -> None:
+    root = tmp_path / "application"
+    current = {
+        "owner": deploy.OWNER,
+        "root": str(root.absolute()),
+        "active": "a" * 32,
+        "cleanup_python": {
+            "executable": str(tmp_path / "missing-python.exe"),
+            "sha256": "a" * 64,
+        },
+    }
+    deploy.atomic(root / "installation.json", deploy.json_bytes(current))
+    original = (root / "installation.json").read_bytes()
+
+    with pytest.raises(ReleaseError, match="Базовый Python очистки недоступен"):
+        deploy.uninstall(root)
+
+    assert (root / "installation.json").read_bytes() == original
+    assert deploy.state(root) == current
+    assert not (root / ".install-lock").exists()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-установки")
 def test_idempotent_install_applies_new_path_request(
     bundle: Path, tmp_path: Path, monkeypatch: Any

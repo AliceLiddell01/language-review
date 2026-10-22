@@ -874,6 +874,7 @@ def uninstall(root: Path) -> list[str]:
         old = state(root)
         if not old:
             raise ReleaseError("Управляемая установка отсутствует.")
+        verified_cleanup_python(root, old)
         writes: dict[Path, bytes | None] = {}
         for agent, checksum in old["skills"].items():
             path = skill_path(agent, Path(old["home"]))
@@ -1024,12 +1025,18 @@ finally:
             )
 
 
-def schedule_cleanup(root: Path) -> None:
-    if sys.platform != "win32":
-        raise ReleaseError("Внешняя очистка поддерживается только в Windows.")
-    current = state(root)
+def verified_cleanup_python(root: Path, current: dict[str, Any]) -> Path:
     information = current.get("cleanup_python", {})
-    executable = Path(information.get("executable", "")).absolute()
+    if not isinstance(information, dict):
+        raise ReleaseError(
+            "Базовый Python очистки недоступен; runtime сохранён для ручной очистки."
+        )
+    executable_value = information.get("executable", "")
+    if not isinstance(executable_value, str) or not executable_value:
+        raise ReleaseError(
+            "Базовый Python очистки недоступен; runtime сохранён для ручной очистки."
+        )
+    executable = Path(executable_value).absolute()
     if executable.is_relative_to(root.absolute()):
         raise ReleaseError("Интерпретатор очистки находится в удаляемом runtime.")
     try:
@@ -1041,6 +1048,14 @@ def schedule_cleanup(root: Path) -> None:
         ) from exc
     if checksum != information.get("sha256"):
         raise ReleaseError("Базовый Python очистки изменён; runtime сохранён.")
+    return executable
+
+
+def schedule_cleanup(root: Path) -> None:
+    if sys.platform != "win32":
+        raise ReleaseError("Внешняя очистка поддерживается только в Windows.")
+    current = state(root)
+    executable = verified_cleanup_python(root, current)
     script = Path(tempfile.gettempdir()) / ("language-review-cleanup-" + uuid.uuid4().hex + ".pyz")
     cleanup_archive(script)
     try:

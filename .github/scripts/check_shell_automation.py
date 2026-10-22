@@ -360,12 +360,26 @@ def source_automation_errors(source: str, *, scan_writers: bool = True) -> list[
                 errors.append("Python-код генерирует файл shell-сценария.")
             elif node.args and _content_is_shell(node.args[0], assignments, node.func.value):
                 errors.append("Python-код генерирует shell-содержимое.")
-        if scan_writers and name in {"open", "io.open"} and node.args:
-            mode = _constant_string(node.args[1], assignments) if len(node.args) > 1 else "r"
+        is_path_open = (
+            isinstance(node.func, ast.Attribute) and node.func.attr == "open" and name != "io.open"
+        )
+        if scan_writers and (name in {"open", "io.open"} or is_path_open):
+            target = node.func.value if is_path_open else (node.args[0] if node.args else None)
+            mode_position = 0 if is_path_open else 1
+            mode_node = (
+                node.args[mode_position]
+                if len(node.args) > mode_position
+                else next(
+                    (keyword.value for keyword in node.keywords if keyword.arg == "mode"),
+                    None,
+                )
+            )
+            mode = _constant_string(mode_node, assignments) if mode_node is not None else "r"
             if (
-                mode
+                target is not None
+                and mode
                 and any(character in mode for character in "wax+")
-                and _path_targets_shell_file(node.args[0], assignments)
+                and _path_targets_shell_file(target, assignments)
             ):
                 errors.append("Python-код открывает shell-файл для записи.")
         if (

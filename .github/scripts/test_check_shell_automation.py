@@ -112,6 +112,23 @@ class ShellAutomationGateTests(unittest.TestCase):
 
         self.assertTrue(any("генерирует файл shell-сценария" in error for error in errors))
 
+    def test_open_variants_reject_writes_to_shell_files(self):
+        sources = (
+            "open('bin/launcher.cmd', mode='w')\n",
+            "import io\nio.open('bin/launcher.cmd', mode='w')\n",
+            "from pathlib import Path\nPath('bin/launcher.cmd').open(mode='w')\n",
+        )
+
+        for source in sources:
+            with self.subTest(source=source):
+                errors = source_automation_errors(source)
+                self.assertTrue(any("открывает shell-файл для записи" in error for error in errors))
+
+        self.assertEqual(
+            source_automation_errors("from pathlib import Path\nPath('notes.md').open(mode='r')\n"),
+            [],
+        )
+
     def test_launcher_generator_returning_shell_output_is_reported(self):
         source = (
             "def launcher_files(root):\n"

@@ -16,6 +16,7 @@ import tempfile
 import threading
 import urllib.request
 from collections.abc import Iterator
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -864,12 +865,31 @@ def verify(
                 raise RuntimeError("Внешняя очистка uninstall не завершена.")
             time.sleep(0.2)
         cleanup_result = json.loads((install_root / "uninstall-result.json").read_text("utf-8"))
+        cleanup_diagnostic = cleanup_result
+        if cleanup_result["status"] != "uninstalled" and not cleanup_result.get("stage"):
+            # Старый пакет не сохранял место отказа. Диагностический повтор не
+            # меняет исходный FAIL и работает только с синтетическим runtime.
+            diagnostic_script = root / "cleanup-diagnostic.ps1"
+            diagnostic_script.write_bytes(
+                files("language_review")
+                .joinpath("distribution_assets/uninstall-cleanup.ps1")
+                .read_bytes()
+            )
+            command(
+                [str(pwsh), "-NoProfile", "-File", str(diagnostic_script), "-Root", str(install_root)],
+                env,
+                root,
+                {0, 1},
+            )
+            cleanup_diagnostic = json.loads(
+                (install_root / "uninstall-result.json").read_text("utf-8")
+            )
         require(
             cleanup_result["status"] == "uninstalled",
             "Внешняя очистка не подтвердила uninstall: "
             + json.dumps(
                 {
-                    key: cleanup_result.get(key)
+                    key: cleanup_diagnostic.get(key)
                     for key in ("status", "reason", "stage", "error_id", "script_line")
                 },
                 ensure_ascii=False,

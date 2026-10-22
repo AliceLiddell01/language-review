@@ -22,6 +22,7 @@ def build(output: Path) -> None:
     if output.exists():
         raise RuntimeError("Файл bootstrap уже существует; перезапись запрещена.")
     output.parent.mkdir(parents=True, exist_ok=True)
+    source_root = Path(__file__).resolve().parents[1] / "src"
     with tempfile.TemporaryDirectory(prefix="language-review-freeze-") as directory:
         temporary = Path(directory)
         subprocess.run(
@@ -36,7 +37,7 @@ def build(output: Path) -> None:
                 "--name",
                 "install",
                 "--paths",
-                str(Path(__file__).resolve().parents[1] / "src"),
+                str(source_root),
                 "--distpath",
                 str(temporary / "dist"),
                 "--workpath",
@@ -50,6 +51,7 @@ def build(output: Path) -> None:
         )
         import shutil
 
+        sys.path.insert(0, str(source_root))
         from language_review.distribution import verify_x64_executable
 
         verify_x64_executable(temporary / "dist/install.exe")

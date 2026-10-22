@@ -1004,6 +1004,37 @@ def release_module() -> Any:
     return module
 
 
+@pytest.mark.parametrize("template", [True, False], ids=["target-marker", "literal-sha"])
+def test_release_notes_bind_target_without_commit_self_reference(template: bool) -> None:
+    module = release_module()
+    commit = "a" * 40
+    source = Path("docs/release-notes/0.1.0-beta.1.md").read_text("utf-8")
+    if not template:
+        source = source.replace("@TARGET_SHA@", commit)
+    rendered = module.render_notes(source, "0.1.0-beta.1", commit, "none")
+    assert rendered == source.replace("@TARGET_SHA@", commit)
+    assert commit in rendered
+    assert "@TARGET_SHA@" not in rendered
+    module.notes_valid(rendered, "0.1.0-beta.1", commit, "none")
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["wrong-sha", "wrong-version", "missing-section"],
+)
+def test_release_notes_rendering_preserves_validation(change: str) -> None:
+    module = release_module()
+    source = Path("docs/release-notes/0.1.0-beta.1.md").read_text("utf-8")
+    if change == "wrong-sha":
+        source = source.replace("@TARGET_SHA@", "b" * 40)
+    elif change == "wrong-version":
+        source = source.replace("0.1.0-beta.1", "0.2.0-beta.1")
+    else:
+        source = source.replace("## Миграции и откат", "## Другой раздел")
+    with pytest.raises(ReleaseError, match="описании выпуска"):
+        module.render_notes(source, "0.1.0-beta.1", "a" * 40, "none")
+
+
 def distribution_verifier_module() -> Any:
     spec = importlib.util.spec_from_file_location(
         "distribution_verifier", "scripts/verify-distribution.py"

@@ -567,7 +567,9 @@ def cleanup_interpreter(release: Path, root: Path) -> dict[str, str]:
             ]
         )
     )
-    executable = Path(information["executable"]).absolute()
+    # uv может представить managed Python каталогом-junction на versioned runtime.
+    # В cleanup manifest сохраняется физический путь, который можно безопасно удалить вокруг.
+    executable = Path(information["executable"]).resolve()
     if executable.is_relative_to(root.absolute()):
         raise ReleaseError("Базовый Python очистки не должен находиться в удаляемой установке.")
     verify_x64_executable(executable)

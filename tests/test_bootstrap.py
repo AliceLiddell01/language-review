@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from support import create_junction
 
 from language_review import bootstrap
 from language_review import distribution as deploy
@@ -195,6 +196,25 @@ def test_cleanup_interpreter_rejects_modified_pe_and_runtime_local_path(tmp_path
     with pytest.raises(ReleaseError, match="Windows x64"):
         deploy.schedule_cleanup(root)
     assert root.is_dir()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uv managed Python использует Windows junction")
+def test_cleanup_interpreter_resolves_managed_python_junction(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    base = Path(sys._base_executable).resolve()
+    managed = tmp_path / "python/cpython-3.15-windows-x86_64-none"
+    managed.parent.mkdir(parents=True)
+    create_junction(managed, base.parent)
+    monkeypatch.setattr(
+        deploy,
+        "execute",
+        lambda _arguments: json.dumps({"executable": str(managed / base.name)}),
+    )
+
+    result = deploy.cleanup_interpreter(tmp_path / "release", tmp_path / "root")
+
+    assert result == {"executable": str(base), "sha256": digest(base)}
 
 
 def test_cleanup_archive_contains_only_python_and_real_cleanup_entrypoint(tmp_path: Path) -> None:

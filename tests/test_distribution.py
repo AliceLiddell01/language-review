@@ -1173,26 +1173,33 @@ def test_distribution_verifier_isolates_checkout_and_bootstrap_paths(
     module = distribution_verifier_module()
     checkout_scripts = tmp_path / "checkout" / "Scripts"
     tools = tmp_path / "shared-tools"
+    shell_tools = tmp_path / "shell-tools"
     other = tmp_path / "other"
-    for directory in (checkout_scripts, tools, other):
+    for directory in (checkout_scripts, tools, shell_tools, other):
         directory.mkdir(parents=True)
     uv = tools / "uv.exe"
     uv.write_bytes(b"synthetic uv")
+    (shell_tools / "bash.exe").write_bytes(b"synthetic shell")
     monkeypatch.setattr(module.sys, "prefix", str(checkout_scripts.parent))
     monkeypatch.setattr(
         module.shutil,
         "which",
         lambda name, path=None: (
-            str(uv) if name == "uv" and str(tools) in (path or "").split(os.pathsep) else None
+            str(uv)
+            if name == "uv" and str(tools) in (path or "").split(os.pathsep)
+            else str(shell_tools / "bash.exe")
+            if name == "bash" and str(shell_tools) in (path or "").split(os.pathsep)
+            else None
         ),
     )
-    source_path = os.pathsep.join(map(str, (checkout_scripts, tools, other)))
+    source_path = os.pathsep.join(map(str, (checkout_scripts, tools, shell_tools, other)))
     runtime, bootstrap = module.isolated_environments({"PATH": source_path, "MARKER": "kept"})
 
     assert runtime["MARKER"] == bootstrap["MARKER"] == "kept"
     assert str(checkout_scripts) not in runtime["PATH"]
     assert str(checkout_scripts) not in bootstrap["PATH"]
     assert str(tools) in runtime["PATH"] and str(tools) not in bootstrap["PATH"]
+    assert str(shell_tools) in runtime["PATH"] and str(shell_tools) not in bootstrap["PATH"]
     assert str(other) in runtime["PATH"] and str(other) in bootstrap["PATH"]
 
 

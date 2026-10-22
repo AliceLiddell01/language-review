@@ -61,7 +61,18 @@ def isolated_environments(env: dict[str, str]) -> tuple[dict[str, str], dict[str
     checkout_scripts = (Path(sys.prefix) / "Scripts").resolve()
     runtime_path = _without_path_directories(env["PATH"], {checkout_scripts})
     runtime_env = {**env, "PATH": runtime_path}
-    tools = ("python", "python3", "pythonw", "uv", "pwsh", "powershell")
+    tools = (
+        "python",
+        "python3",
+        "pythonw",
+        "uv",
+        "pwsh",
+        "powershell",
+        "bash",
+        "sh",
+        "zsh",
+        "cmd",
+    )
     excluded = {
         Path(part)
         for part in runtime_path.split(os.pathsep)

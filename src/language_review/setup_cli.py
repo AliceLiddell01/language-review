@@ -245,6 +245,11 @@ def setup(arguments: argparse.Namespace) -> int:
                 "Worker не готов; CLI установлен. "
                 "Прежний worker/БД проверяются владельцем deployment: " + str(exc)
             ) from exc
+        except Exception as exc:
+            raise ReleaseError(
+                "Worker не готов; CLI установлен. Служебная операция не выполнена: "
+                + type(exc).__name__
+            ) from exc
     print("Ядро настроено. Проект требует отдельного language-review init по вашей команде.")
     print("Codex/Claude: перезапустите сессию после изменения глобальных skills.")
     from language_review.doctor import doctor_human, run_doctor

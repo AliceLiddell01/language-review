@@ -22,8 +22,5 @@
 [установка](../../docs/installation.md). Windows acceptance:
 `scripts/verify-distribution.py`; обычная пакетная проверка остаётся отдельной.
 
-Новый `install.exe` — frozen Python bootstrap. Старая активная установка с `.cmd`/
-PowerShell launcher безопасно отклоняется до изменений: сначала проверьте новую версию
-в пустом отдельном `--root --no-path`, затем завершите старую установку её собственным
-`language-review installation uninstall` и повторно установите в стандартный root.
-Пользовательские OAuth/TOML и deployment памяти остаются вне области удаления.
+Активная установка с legacy launcher отклоняется до изменений. Порядок перехода описан
+в [руководстве по установке](../../docs/installation.md).

@@ -352,6 +352,50 @@ def test_interactive_setup_preserves_unspecified_skills(
     assert prompts[0].endswith(prompt_suffix)
 
 
+def test_setup_reports_unexpected_worker_install_error(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    import urllib.error
+
+    from language_review.memory import service
+
+    root = tmp_path / "application"
+    current = {"active": "a" * 32, "extras": "memory", "skills": {}, "uv": "uv"}
+    monkeypatch.setattr(setup_cli.deployment, "managed_root", lambda: root)
+    monkeypatch.setattr(setup_cli.deployment, "state", lambda _root: current)
+    monkeypatch.setattr(setup_cli.deployment, "setup_skills", lambda _root, _agents: None)
+    monkeypatch.setattr(setup_cli, "configure_endpoints", lambda _values: None)
+    monkeypatch.setattr("language_review.release_contract.validate_bundle", lambda _bundle: None)
+
+    def fail_install(**_kwargs: Any) -> None:
+        raise urllib.error.URLError("локальный сервис недоступен")
+
+    monkeypatch.setattr(service, "install_service", fail_install)
+    arguments = SimpleNamespace(
+        command="setup",
+        non_interactive=True,
+        codex=None,
+        claude=None,
+        ollama_endpoint=None,
+        llama_cpp_endpoint=None,
+        languagetool_endpoint=None,
+        chatgpt_login=False,
+        memory_service=True,
+        memory_runtime=tmp_path / "runtime",
+        memory_project="language-review-memory",
+        memory_llm_model="local-llm",
+        memory_embedding_model="local-embedding",
+        memory_embedding_revision="a" * 64,
+        memory_embedding_dimensions=768,
+    )
+
+    assert setup_cli.run(arguments) == 2
+    captured = capsys.readouterr()
+    assert "URLError" in captured.err
+    assert "локальный сервис недоступен" not in captured.err
+    assert "Traceback" not in captured.err
+
+
 def test_installation_update_uses_inventory_verified_private_uv(
     tmp_path: Path, monkeypatch: Any, capsys: Any
 ) -> None:

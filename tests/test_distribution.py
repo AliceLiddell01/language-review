@@ -820,12 +820,11 @@ def test_generated_launchers_are_verified_binary_copies(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-планировщика")
-def test_schedule_cleanup_waits_for_venv_parent_process(tmp_path: Path, monkeypatch: Any) -> None:
+def test_schedule_cleanup_waits_for_runtime_and_launcher(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setattr(deploy.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(deploy.os, "getpid", lambda: 1234)
     monkeypatch.setattr(deploy.os, "getppid", lambda: 5678)
     monkeypatch.setenv("LANGUAGE_REVIEW_LAUNCHER_PID", "8765")
-    monkeypatch.setenv("LANGUAGE_REVIEW_LAUNCHER_PARENT_PID", "9876")
     root = tmp_path / "application"
     deploy.atomic(
         root / "installation.json",
@@ -856,7 +855,6 @@ def test_schedule_cleanup_waits_for_venv_parent_process(tmp_path: Path, monkeypa
         "1234",
         "5678",
         "8765",
-        "9876",
     }
     assert args[0] == sys.executable
     archive = Path(args[2])

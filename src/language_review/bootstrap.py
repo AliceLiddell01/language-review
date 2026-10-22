@@ -95,9 +95,6 @@ def launch(root: Path, kind: str, arguments: list[str]) -> int:
             python = deployment.python_at(release)
             deployment.safe_path(python)
         environment = {**os.environ, "LANGUAGE_REVIEW_LAUNCHER_PID": str(os.getpid())}
-        environment["LANGUAGE_REVIEW_LAUNCHER_PARENT_PID"] = (
-            str(os.getppid()) if getattr(sys, "frozen", False) else "0"
-        )
         module = "language_review" if kind == "review" else "language_review.evaluation"
         with subprocess.Popen(
             [str(python), "-I", "-m", module, *arguments], env=environment

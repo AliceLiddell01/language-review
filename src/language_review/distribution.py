@@ -1030,11 +1030,7 @@ def schedule_cleanup(root: Path) -> None:
         launcher_pid = int(os.environ.get("LANGUAGE_REVIEW_LAUNCHER_PID", "0"))
     except ValueError:
         launcher_pid = 0
-    try:
-        launcher_parent_pid = int(os.environ.get("LANGUAGE_REVIEW_LAUNCHER_PARENT_PID", "0"))
-    except ValueError:
-        launcher_parent_pid = 0
-    pids = {os.getpid(), os.getppid(), launcher_pid, launcher_parent_pid}
+    pids = {os.getpid(), os.getppid(), launcher_pid}
     arguments = [str(executable), "-I", str(script), "--cleanup", "--root", str(root)]
     for pid in sorted(pids):
         if 0 < pid <= 0x7FFFFFFF:

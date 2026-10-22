@@ -876,7 +876,14 @@ def verify(
                 .read_bytes()
             )
             command(
-                [str(pwsh), "-NoProfile", "-File", str(diagnostic_script), "-Root", str(install_root)],
+                [
+                    str(pwsh),
+                    "-NoProfile",
+                    "-File",
+                    str(diagnostic_script),
+                    "-Root",
+                    str(install_root),
+                ],
                 env,
                 root,
                 {0, 1},

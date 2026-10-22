@@ -271,6 +271,50 @@ def test_cleanup_preserves_unknown_modified_files_and_reports_busy_lock(tmp_path
     assert unknown.read_bytes() == b"user"
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows удерживает EXE до закрытия handle")
+def test_cleanup_retries_launcher_held_by_exclusive_windows_handle(tmp_path: Path) -> None:
+    root = tmp_path / "application"
+    installation(root, uninstalled=True)
+    launcher = deploy.launcher_paths(root)[0]
+    launcher.parent.mkdir(parents=True)
+    launcher.write_bytes(b"synthetic owned executable")
+    current = deploy.state(root)
+    current["launchers"] = {launcher.name: digest(launcher)}
+    deploy.atomic(root / "installation.json", deploy.json_bytes(current))
+    ready = tmp_path / "launcher-held"
+    child_code = (
+        "import ctypes,sys,time; from pathlib import Path; "
+        "k=ctypes.WinDLL('kernel32',use_last_error=True); "
+        "k.CreateFileW.argtypes=[ctypes.c_wchar_p,ctypes.c_uint32,ctypes.c_uint32,"
+        "ctypes.c_void_p,ctypes.c_uint32,ctypes.c_uint32,ctypes.c_void_p]; "
+        "k.CreateFileW.restype=ctypes.c_void_p; "
+        "k.CloseHandle.argtypes=[ctypes.c_void_p]; "
+        "h=k.CreateFileW(sys.argv[1],0x80000000,0,None,3,0x80,None); "
+        "assert h != ctypes.c_void_p(-1).value,ctypes.get_last_error(); "
+        "Path(sys.argv[2]).touch(); time.sleep(0.8); k.CloseHandle(ctypes.c_void_p(h))"
+    )
+    owner = subprocess.Popen(
+        [sys.executable, "-I", "-c", child_code, str(launcher), str(ready)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not ready.exists():
+            assert owner.poll() is None, owner.communicate()
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        result = deploy.cleanup(root)
+        assert result["status"] == "uninstalled"
+        assert result["preserved"] == []
+        assert not launcher.exists()
+        assert owner.wait(timeout=10) == 0, owner.communicate()
+    finally:
+        if owner.poll() is None:
+            owner.kill()
+        owner.communicate(timeout=10)
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows msvcrt lease")
 def test_cleanup_waits_for_owned_lease_process_before_deleting_runtime(tmp_path: Path) -> None:
     root = tmp_path / "application"

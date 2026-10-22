@@ -955,14 +955,23 @@ def cleanup(root: Path, *, wait_pids: list[int] | None = None) -> dict[str, Any]
         with launch_locked(root):
             for path in launcher_paths(root):
                 safe_path(path)
-                if path.exists():
-                    if digest(path) == current.get("launchers", {}).get(path.name):
-                        try:
-                            path.unlink()
-                        except OSError:
+                expected = current.get("launchers", {}).get(path.name)
+                for attempt in range(25):
+                    try:
+                        safe_path(path)
+                        if not path.exists():
+                            break
+                        if digest(path) != expected:
+                            preserved.append("Изменённый launcher: " + path.name)
+                            break
+                        path.unlink()
+                        break
+                    except OSError:
+                        if attempt == 24:
                             preserved.append("Занятый launcher: " + path.name)
-                    else:
-                        preserved.append("Изменённый launcher: " + path.name)
+                        else:
+                            # Windows может кратко удерживать EXE после выхода процесса.
+                            time.sleep(0.2)
             releases = root / "releases"
             safe_path(releases)
             if releases.exists():

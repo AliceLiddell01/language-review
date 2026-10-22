@@ -69,8 +69,8 @@ class PrBodyRunnerTests(unittest.TestCase):
 
     def test_invalid_body_does_not_appear_in_workflow_logs(self):
         self.write_checker(self.trusted_base, "valid")
-        secret_text = "secret-like-review-body"
-        self.write_event(secret_text, login="reviewer", branch="feature/test")
+        marker_text = "marker-review-body-7d6b"
+        self.write_event(marker_text, login="reviewer", branch="feature/test")
         output = io.StringIO()
         errors = io.StringIO()
 
@@ -78,7 +78,7 @@ class PrBodyRunnerTests(unittest.TestCase):
             status = run_check(self.event, self.repository, self.trusted_base)
 
         self.assertEqual(status, 1)
-        self.assertNotIn(secret_text, output.getvalue() + errors.getvalue())
+        self.assertNotIn(marker_text, output.getvalue() + errors.getvalue())
         self.assertIn("не соответствует обязательной структуре", errors.getvalue())
 
     def test_dependency_bot_exemption_uses_event_metadata(self):
@@ -88,15 +88,15 @@ class PrBodyRunnerTests(unittest.TestCase):
         self.assertEqual(run_check(self.event, self.repository, self.trusted_base), 0)
 
     def test_malformed_event_does_not_echo_payload(self):
-        secret_text = "secret-like-invalid-event"
-        self.event.write_text(secret_text, encoding="utf-8")
+        marker_text = "marker-invalid-event-7d6b"
+        self.event.write_text(marker_text, encoding="utf-8")
         errors = io.StringIO()
 
         with contextlib.redirect_stderr(errors):
             status = run_check(self.event, self.repository, self.trusted_base)
 
         self.assertEqual(status, 2)
-        self.assertNotIn(secret_text, errors.getvalue())
+        self.assertNotIn(marker_text, errors.getvalue())
 
 
 if __name__ == "__main__":

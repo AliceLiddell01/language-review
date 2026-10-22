@@ -8,11 +8,6 @@ import json
 import sys
 from pathlib import Path
 
-TRUSTED_BASE_WARNING = (
-    "::warning::В базовом коммите ещё нет валидатора описания PR; "
-    "используется валидатор из этого PR."
-)
-
 
 def choose_checker(repository_root: Path, trusted_base_root: Path) -> tuple[Path, bool]:
     trusted_checker = trusted_base_root / ".github" / "scripts" / "check_pr_body.py"
@@ -22,9 +17,7 @@ def choose_checker(repository_root: Path, trusted_base_root: Path) -> tuple[Path
 
 
 def run_check(event_path: Path, repository_root: Path, trusted_base_root: Path) -> int:
-    checker, trusted = choose_checker(repository_root, trusted_base_root)
-    if not trusted:
-        print(TRUSTED_BASE_WARNING)
+    checker, _ = choose_checker(repository_root, trusted_base_root)
     try:
         spec = importlib.util.spec_from_file_location("trusted_pr_body_checker", checker)
         if spec is None or spec.loader is None:

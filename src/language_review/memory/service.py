@@ -299,6 +299,28 @@ class Scheduler:
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
 
+    @staticmethod
+    def _parse_xml(output: bytes) -> ET.Element:
+        try:
+            return ET.fromstring(output)
+        except ET.ParseError:
+            if output.startswith((b"\xff\xfe", b"\xfe\xff")):
+                text = output.decode("utf-16")
+            elif output[:64].count(b"\0") > 8:
+                sample = output[:64]
+                encoding = (
+                    "utf-16-le"
+                    if sample[1::2].count(b"\0") > sample[0::2].count(b"\0")
+                    else "utf-16-be"
+                )
+                text = output.decode(encoding)
+            else:
+                kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+                codepage = kernel.GetConsoleOutputCP() or kernel.GetACP()
+                text = output.decode(f"cp{codepage}")
+            text = re.sub(r"^\s*<\?xml[^?]*\?>\s*", "", text, count=1)
+            return ET.fromstring(text)
+
     def query(self) -> dict[str, Any] | None:
         result = self._call("/Query", "/TN", self.name, "/XML", "/HRESULT")
         if result.returncode in {1, 0x80070002, -2147024894}:
@@ -306,8 +328,8 @@ class Scheduler:
         if result.returncode:
             raise ServiceError("Не удалось прочитать задачу Windows Scheduler.")
         try:
-            root = ET.fromstring(result.stdout)
-        except ET.ParseError:
+            root = self._parse_xml(result.stdout)
+        except ET.ParseError, UnicodeError:
             raise ServiceError("Windows Scheduler вернул повреждённое описание задачи.") from None
         namespace = {"t": TASK_NAMESPACE}
         description = root.findtext("t:RegistrationInfo/t:Description", namespaces=namespace)

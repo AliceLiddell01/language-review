@@ -18,6 +18,41 @@ import pytest
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="NOT_RUN: точка входа Windows Scheduler")
 
 
+@pytest.mark.parametrize("encoding", ["console", "utf-16"])
+def test_scheduler_query_parses_xml_from_schtasks(
+    tmp_path: Path, monkeypatch, encoding: str
+) -> None:
+    from language_review.memory.service import Scheduler, task_xml
+
+    runtime = tmp_path / "runtime with spaces"
+    scheduler = Scheduler(runtime, "lr-scheduler-query-test")
+    definition = task_xml(runtime, tmp_path / "pythonw.exe", "S-1-5-21-123")
+    response = '<?xml version="1.0" encoding="UTF-16"?>\r\r\n' + definition
+    if encoding == "utf-16":
+        output = response.encode("utf-16")
+    else:
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        codepage = kernel.GetConsoleOutputCP() or kernel.GetACP()
+        output = response.encode(f"cp{codepage}")
+    monkeypatch.setattr(
+        scheduler,
+        "_call",
+        lambda *args: subprocess.CompletedProcess(args, 0, output, b""),
+    )
+
+    result = scheduler.query()
+
+    assert result is not None
+    assert result["description"] == scheduler.description
+    assert result["actions"] == [
+        {
+            "execute": str(tmp_path / "pythonw.exe"),
+            "arguments": f'-I "{runtime / "run-memory-service.pyw"}"',
+            "working_directory": str(runtime),
+        }
+    ]
+
+
 def isolated_wrapper(tmp_path: Path, module: str) -> tuple[Path, Path]:
     """Настоящие pythonw и wrapper, независимый Python child вместо shell-фикстуры."""
     runtime = tmp_path / "runtime with spaces"

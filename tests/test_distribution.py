@@ -916,6 +916,29 @@ def test_idempotent_install_applies_new_path_request(
     assert deploy.state(root)["path_added"] is True
 
 
+def test_distribution_cli_leaves_unspecified_install_preferences_unset(
+    bundle: Path, tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(deploy, "default_root", lambda: tmp_path / "application")
+
+    def capture_install(*_args: Any, **kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"version": "1.2.3"}
+
+    monkeypatch.setattr(deploy, "install", capture_install)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["language_review.distribution", "--bundle", str(bundle), "--uv", "uv.exe"],
+    )
+    assert deploy.main() == 0
+    capsys.readouterr()
+
+    assert captured["extras"] is None
+    assert captured["add_path"] is None
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-установки")
 def test_install_compiles_bytecode_before_recording_inventory(
     bundle: Path, tmp_path: Path, monkeypatch: Any
@@ -1741,6 +1764,21 @@ def isolated_install(bundle: Path, tmp_path: Path, monkeypatch: Any) -> tuple[Pa
     python.parent.mkdir(parents=True, exist_ok=True)
     python.write_bytes(b"synthetic runtime")
     return root, home, str(uv)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-установки")
+def test_install_retains_unspecified_extras_and_path_preference(
+    bundle: Path, isolated_install: tuple[Path, Path, str]
+) -> None:
+    root, home, uv = isolated_install
+    selected = deploy.install(bundle, root, uv=uv, extras="all", home=home, add_path=False)
+
+    repeated = deploy.install(bundle, root, uv=uv, extras=None, home=home, add_path=None)
+
+    assert repeated["active"] == selected["active"]
+    assert repeated["extras"] == "all"
+    assert repeated["path_requested"] is False
+    assert repeated["path_added"] is False
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-установки")

@@ -547,7 +547,7 @@ def install(
     root: Path,
     *,
     uv: str,
-    extras: str = "core",
+    extras: str | None = None,
     home: Path | None = None,
     agents: list[str] | None = None,
     add_path: bool | None = None,
@@ -557,8 +557,6 @@ def install(
 
     if os.name != "nt":
         raise ReleaseError("Установщик поддерживает Windows.")
-    if extras not in {"core", "chatgpt", "memory", "all"}:
-        raise ReleaseError("Неизвестный набор extras.")
     root = root.absolute()
     home = home or Path.home()
     data = validate_bundle(bundle)
@@ -566,6 +564,9 @@ def install(
         old = state(root)
         if "active" not in old or old.get("uninstalled"):
             old = {}
+        extras = extras if extras is not None else old.get("extras", "core")
+        if extras not in {"core", "chatgpt", "memory", "all"}:
+            raise ReleaseError("Неизвестный набор extras.")
         if add_path is None:
             add_path = old.get("path_requested", True)
         if old.get("version") == data["version"] and old.get("manifest_sha256") != digest(
@@ -881,7 +882,7 @@ def main() -> int:
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--root", type=Path, default=default_root())
     parser.add_argument("--uv", required=True)
-    parser.add_argument("--extras", default="core", choices=("core", "chatgpt", "memory", "all"))
+    parser.add_argument("--extras", choices=("core", "chatgpt", "memory", "all"))
     parser.add_argument("--agent", action="append", choices=("codex", "claude"))
     parser.add_argument("--no-path", action="store_true")
     args = parser.parse_args()
@@ -892,7 +893,7 @@ def main() -> int:
             uv=args.uv,
             extras=args.extras,
             agents=args.agent,
-            add_path=not args.no_path,
+            add_path=False if args.no_path else None,
         )
         print(
             json.dumps(

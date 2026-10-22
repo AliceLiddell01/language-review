@@ -2,7 +2,7 @@
 param(
     [string]$Tag,
     [string]$Root = (Join-Path $env:LOCALAPPDATA 'LanguageReview/application'),
-    [ValidateSet('core', 'chatgpt', 'memory', 'all')][string]$Extras = 'core',
+    [ValidateSet('core', 'chatgpt', 'memory', 'all')][string]$Extras,
     [switch]$Codex,
     [switch]$Claude,
     [switch]$NonInteractive,
@@ -166,7 +166,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Не удалось установить проверенный seed wheel.' }
     # Установщик копирует собственный uv внутрь кандидата и учитывает его принадлежность.
     $uvInstalled = $uvPath
-    $installArgs = @('-I', '-m', 'language_review.distribution', '--bundle', $bundle, '--root', $Root, '--uv', $uvInstalled, '--extras', $Extras)
+    $installArgs = @('-I', '-m', 'language_review.distribution', '--bundle', $bundle, '--root', $Root, '--uv', $uvInstalled)
+    if ($Extras) { $installArgs += @('--extras', $Extras) }
     if ($Codex) { $installArgs += @('--agent', 'codex') }
     if ($Claude) { $installArgs += @('--agent', 'claude') }
     if ($NoPath) { $installArgs += '--no-path' }

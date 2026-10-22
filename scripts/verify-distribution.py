@@ -619,6 +619,34 @@ def verify(
             == current["skills"],
             "Повторный выбор Codex снял ранее выбранный Claude skill.",
         )
+        no_path_bootstrap = bootstrap.copy()
+        no_path_bootstrap.append("-NoPath")
+        command(no_path_bootstrap, bootstrap_env, inputs / "repo-b")
+        no_path_state = json.loads((install_root / "installation.json").read_text("utf-8"))
+        require(
+            no_path_state["extras"] == "all"
+            and no_path_state["path_requested"] is False
+            and no_path_state["path_added"] is False,
+            "Явный -NoPath не сохранил состояние установки.",
+        )
+        default_bootstrap = no_path_bootstrap.copy()
+        for flag in ("-Codex", "-Claude", "-NoPath"):
+            default_bootstrap.remove(flag)
+        extras_index = default_bootstrap.index("-Extras")
+        del default_bootstrap[extras_index : extras_index + 2]
+        command(default_bootstrap, bootstrap_env, inputs / "repo-b")
+        default_state = json.loads((install_root / "installation.json").read_text("utf-8"))
+        require(
+            default_state["active"] == no_path_state["active"]
+            and default_state["extras"] == "all"
+            and default_state["path_requested"] is False
+            and default_state["path_added"] is False,
+            "Повторный bootstrap без параметров изменил extras или регистрацию PATH.",
+        )
+        current = default_state
+        python = install_root / "releases" / current["active"] / "venv/Scripts/python.exe"
+        cli = [str(python), "-I", "-m", "language_review"]
+        checks["default_bootstrap_preserves_extras_and_path"] = {"status": "PASS"}
         # Sdist того же релизного SHA устанавливается отдельно и сверяет тот же CLI.
         uv = current["uv"]
         sdist_env = root / "sdist-env"

@@ -406,7 +406,7 @@ def publish(args: argparse.Namespace) -> None:
 
 
 def workflow_prepare() -> None:
-    """Проверяет ручной target и извлекает notes без shell-интерполяции."""
+    """Проверяет заданный вручную коммит и извлекает примечания к выпуску без оболочки."""
     commit = os.environ.get("LR_COMMIT", "")
     if not SHA.fullmatch(commit):
         raise ReleaseError("Нужен полный SHA.")

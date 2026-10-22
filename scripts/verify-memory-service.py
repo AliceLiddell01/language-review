@@ -53,7 +53,7 @@ def wait_state(
 
 
 def owned_process(pid: int, runtime: Path, created_at: int) -> Any:
-    """Открытый handle и точная argv защищают от чужого процесса и повторного PID."""
+    """Открытый дескриптор и точные аргументы защищают от чужого процесса и повторного PID."""
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel.OpenProcess.restype = wintypes.HANDLE
@@ -202,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
             check=False,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
-        # Только собственные синтетические входы, DSN/password не добавляются к argv.
+        # Только собственные синтетические входы; DSN и пароль не добавляются к аргументам.
         password = (env or environment).get("LANGUAGE_REVIEW_DB_PASSWORD", "")
         for suffix, content in (("stdout", result.stdout), ("stderr", result.stderr)):
             (scratch / f"{name}.{suffix}.log").write_text(
@@ -557,7 +557,7 @@ def main(argv: list[str] | None = None) -> int:
             }
         )
     except Exception as error:
-        # Runtime errors содержат только имена проверок; произвольные исключения — только тип.
+        # RuntimeError содержит диагностику проверок; у прочих исключений выводим только тип.
         summary["failure"] = str(error) if isinstance(error, RuntimeError) else type(error).__name__
     finally:
         removable = True

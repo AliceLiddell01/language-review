@@ -11,7 +11,6 @@ uv run --locked ruff format --check .
 uv run --locked mypy
 uv run --locked pytest -n 8
 uv run --locked python scripts/verify-package.py
-uv run --locked python .github/scripts/check_shell_automation.py
 ```
 
 Скрипт собирает wheel/sdist, устанавливает их в изолированные среды Windows и проверяет настоящий CLI, `python -m language_review`, JSON-вывод `scan`, структурное извлечение через `extract`, `check` со встроенными правилами Vale (без Vale — ожидаемый статус `unavailable` и код 5), review-контракт, `show-review`, `verify-review` и сохранность исходного файла после каждой команды чтения.

@@ -499,7 +499,7 @@ def launcher_paths(root: Path) -> tuple[Path, Path]:
 
 
 def launcher_files(root: Path, *, bootstrap: Path | None = None) -> dict[Path, bytes]:
-    """Две копии проверенного frozen bootstrap; shell-код не генерируется."""
+    """Две копии проверенного автономного загрузчика; код оболочки не генерируется."""
     if bootstrap is None:
         current = state(root)
         bootstrap = root / "releases" / current["active"] / "bundle/install.exe"
@@ -514,8 +514,8 @@ def launcher_writes(
     writes: dict[Path, bytes | None] = {}
     hashes: dict[str, str] = {}
     recorded = old.get("launchers", {})
-    # Локальная установка до первого выпуска может иметь прежние launchers.
-    # Удаление входит в тот же журнал, что новые EXE и active pointer.
+    # Локальная установка до первого выпуска может иметь прежние программы запуска.
+    # Их удаление фиксируется в одном журнале с новыми EXE и указателем активной версии.
     for name in LEGACY_LAUNCHERS:
         path = root / "bin" / name
         safe_path(path)
@@ -532,8 +532,8 @@ def launcher_writes(
                 raise ReleaseError(
                     "Launcher изменён пользователем или принадлежит другой установке."
                 )
-            # Windows удерживает EXE живого launcher. Протокол 1 неизменен:
-            # прежний проверенный bootstrap запускает новый active runtime.
+            # Windows удерживает EXE работающей программы запуска. Протокол 1 неизменен:
+            # прежний проверенный загрузчик запускает новую активную среду.
             hashes[path.name] = recorded[path.name]
         else:
             writes[path] = content
@@ -567,8 +567,8 @@ def cleanup_interpreter(release: Path, root: Path) -> dict[str, str]:
             ]
         )
     )
-    # uv может представить managed Python каталогом-junction на versioned runtime.
-    # В cleanup manifest сохраняется физический путь, который можно безопасно удалить вокруг.
+    # uv может представить управляемый им Python как junction на среду конкретной версии.
+    # Манифест очистки хранит физический путь к интерпретатору вне удаляемой установки.
     executable = Path(information["executable"]).resolve()
     if executable.is_relative_to(root.absolute()):
         raise ReleaseError("Базовый Python очистки не должен находиться в удаляемой установке.")
@@ -577,7 +577,7 @@ def cleanup_interpreter(release: Path, root: Path) -> dict[str, str]:
 
 
 def check_installation_migration(root: Path) -> None:
-    """Прежний active остаётся работоспособным до явного завершения его установки."""
+    """Прежняя активная версия работает до явного завершения её установки."""
     current = state(root)
     if not current.get("active") or current.get("uninstalled"):
         return
@@ -886,8 +886,9 @@ def uninstall(root: Path) -> list[str]:
         for path in launcher_paths(root):
             safe_path(path)
             if path.exists() and digest(path) == old.get("launchers", {}).get(path.name):
-                # Текущий launcher удерживает свой PE image до выхода процесса.
-                # Внешний helper удаляет проверенные EXE после PID/lease ожидания.
+                # Текущая программа запуска удерживает свой PE-образ до выхода процесса.
+                # Внешний помощник удаляет проверенные EXE после завершения процессов
+                # и освобождения блокировок использования.
                 pass
             elif path.exists():
                 preserved.append("Изменённый launcher сохранён: " + path.name)
@@ -930,7 +931,7 @@ def _wait_for_processes(pids: list[int]) -> None:
 
 
 def cleanup(root: Path, *, wait_pids: list[int] | None = None) -> dict[str, Any]:
-    """Внешняя очистка только неизменённых owned файлов после выхода процессов."""
+    """Внешняя очистка только неизменённых файлов установки после выхода процессов."""
     if sys.platform != "win32":
         raise ReleaseError("Внешняя очистка поддерживается только в Windows.")
     root = root.absolute()
@@ -1000,7 +1001,7 @@ def cleanup(root: Path, *, wait_pids: list[int] | None = None) -> dict[str, Any]
 
 
 def cleanup_archive(target: Path) -> None:
-    """Самодостаточный stdlib helper; содержимое доступно проверке package gate."""
+    """Помощник на стандартной библиотеке; содержимое проверяется при приёмке пакета."""
     from importlib.resources import files
 
     entry = """import sys

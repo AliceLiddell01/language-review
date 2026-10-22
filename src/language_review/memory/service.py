@@ -42,7 +42,7 @@ DATABASE_ENVIRONMENT = (
 
 
 class ServiceError(ValueError):
-    """Диагностируемый отказ без секретов и содержимого subprocess."""
+    """Диагностируемый отказ без секретов и вывода дочернего процесса."""
 
 
 def require_windows() -> None:
@@ -197,7 +197,7 @@ def read_password(runtime: Path) -> str:
         password = dpapi(bytes.fromhex(secret.text), decrypt=True).decode("utf-16-le")
     except OSError, ValueError, UnicodeError, ET.ParseError:
         raise ServiceError("Нужны исходные DPAPI-учётные данные БД этого пользователя.") from None
-    # Старый ciphertext сохраняется; ни временных plaintext файлов, ни PowerShell.
+    # Прежние зашифрованные данные сохраняются; временные файлы с открытым текстом не создаются.
     write_password(runtime, password)
     return password
 
@@ -234,7 +234,7 @@ def scrub(text: str, environment: Mapping[str, str]) -> str:
 
 
 def process_creation_time(pid: int) -> int:
-    """FILETIME рождения из handle защищает операторскую проверку от повторного PID."""
+    """Время создания FILETIME из дескриптора защищает проверку от повторного PID."""
     require_windows()
     from ctypes import wintypes
 
@@ -258,7 +258,7 @@ def process_creation_time(pid: int) -> int:
 
 @contextlib.contextmanager
 def install_lock(runtime: Path) -> Iterator[None]:
-    """Mutex не создаёт каталог и сериализует проверки/публикацию одной установки."""
+    """Мьютекс не создаёт каталог и сериализует проверки и публикацию одной установки."""
     require_windows()
     from ctypes import wintypes
 
@@ -371,7 +371,7 @@ class Scheduler:
     def stop(self) -> None:
         if self.query() is not None:
             self._owned("/End")
-        # .pyw владеет Job Object: завершение task закрывает весь принадлежащий ей job.
+        # .pyw владеет Job Object: завершение задачи закрывает всю группу её процессов.
         deadline = time.monotonic() + 30
         while service_locked(self.runtime):
             if time.monotonic() >= deadline:
@@ -469,7 +469,7 @@ def service_locked(runtime: Path) -> bool:
         with service_lock(runtime) as acquired:
             return not acquired
     except OSError:
-        # Старый supervisor держал файл с FileShare.None, запрещавшим даже open.
+        # Прежний супервизор держал файл с FileShare.None, запрещавшим даже открытие.
         return True
 
 
@@ -483,7 +483,7 @@ def database_state(containers: list[dict[str, Any]]) -> str:
     if not containers:
         return "absent"
     states = {row.get("State") for row in containers}
-    # Unhealthy/restarting не доказывают остановку: recovery запрещён.
+    # Состояния unhealthy/restarting не доказывают остановку: восстановление запрещено.
     if "running" in states:
         return "running"
     if states <= {"exited", "dead", "created", "stopped"}:
@@ -542,7 +542,7 @@ class Supervisor:
     def run_process(
         self, command: list[str], *, env: dict[str, str], timeout: float | None = None
     ) -> subprocess.CompletedProcess[str]:
-        # communicate одновременно читает оба pipe и предотвращает взаимную блокировку.
+        # communicate одновременно читает оба канала и предотвращает взаимную блокировку.
         with subprocess.Popen(
             command,
             env=env,

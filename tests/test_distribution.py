@@ -682,16 +682,17 @@ def test_uninstall_cleanup_preserves_runtime_with_live_cli_lease(tmp_path: Path)
         encoding="utf-8",
     )
     marker = tmp_path / "lease-ready"
+    release_holder = tmp_path / "release-lease-holder"
     holder = tmp_path / "hold-lease.ps1"
     holder.write_text(
         "$handle = [IO.File]::Open($args[0], 'Open', 'ReadWrite', 'None')\n"
         "[IO.File]::WriteAllText($args[1], 'ready')\n"
-        "Start-Sleep -Milliseconds 1200\n"
+        "while (-not (Test-Path -LiteralPath $args[2])) { Start-Sleep -Milliseconds 20 }\n"
         "$handle.Dispose()\n",
         encoding="utf-8",
     )
     lock_process = subprocess.Popen(
-        [pwsh, "-NoProfile", "-File", str(holder), str(lease), str(marker)],
+        [pwsh, "-NoProfile", "-File", str(holder), str(lease), str(marker), str(release_holder)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -723,8 +724,12 @@ def test_uninstall_cleanup_preserves_runtime_with_live_cli_lease(tmp_path: Path)
         assert runtime.read_bytes() == b"synthetic venv redirector"
     finally:
         if lock_process.poll() is None:
+            release_holder.write_text("release", encoding="ascii")
+        try:
+            lock_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
             lock_process.terminate()
-        lock_process.wait(timeout=5)
+            lock_process.wait(timeout=5)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Контракт PowerShell Windows")

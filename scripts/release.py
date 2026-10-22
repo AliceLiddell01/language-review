@@ -86,6 +86,12 @@ def notes_valid(text: str, version: str, commit: str, previous: str) -> None:
         )
 
 
+def render_notes(text: str, version: str, commit: str, previous: str) -> str:
+    text = text.replace("@TARGET_SHA@", commit)
+    notes_valid(text, version, commit, previous)
+    return text
+
+
 def prepare(args: argparse.Namespace) -> None:
     if os.name != "nt" or sys.version_info[:2] != (3, 15):
         raise ReleaseError("Кандидат Windows требует нативный сборщик в Windows с Python 3.15.")
@@ -95,8 +101,7 @@ def prepare(args: argparse.Namespace) -> None:
         raise ReleaseError("Commit недоступен локально.")
     if run("git", "ls-remote", "--tags", "origin", "refs/tags/v" + args.version):
         raise ReleaseError("Публичный тег уже существует, его изменение запрещено.")
-    notes = args.notes.read_text("utf-8")
-    notes_valid(notes, args.version, args.commit, args.previous)
+    notes = render_notes(args.notes.read_text("utf-8"), args.version, args.commit, args.previous)
     destination = args.output.absolute()
     if destination.exists():
         raise ReleaseError("Каталог кандидата уже существует.")

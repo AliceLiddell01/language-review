@@ -15,6 +15,7 @@ REQUIRED = frozenset(
         "claude_not_selected_absent",
         "core_foreign_cwd_readonly",
         "controlled_extras_upgrade",
+        "default_bootstrap_preserves_extras_and_path",
         "release_sdist_independent_install",
         "installer_user_path_new_powershell",
         "idempotent_install_setup",

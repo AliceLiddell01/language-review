@@ -891,13 +891,38 @@ def verify(
             cleanup_diagnostic = json.loads(
                 (install_root / "uninstall-result.json").read_text("utf-8")
             )
+        if cleanup_result["status"] != "uninstalled":
+            cleanup_state = json.loads((install_root / "installation.json").read_text("utf-8"))
+            cleanup_diagnostic.update(
+                {
+                    "state_owner_matches": cleanup_state.get("owner")
+                    == "language-review.installer/1",
+                    "state_uninstalled": cleanup_state.get("uninstalled") is True,
+                    "state_root_matches": cleanup_state.get("root", "").casefold()
+                    == str(install_root.absolute()).casefold(),
+                    "state_root_normalized_matches": os.path.normcase(
+                        os.path.abspath(cleanup_state.get("root", ""))
+                    )
+                    == os.path.normcase(str(install_root.absolute())),
+                }
+            )
         require(
             cleanup_result["status"] == "uninstalled",
             "Внешняя очистка не подтвердила uninstall: "
             + json.dumps(
                 {
                     key: cleanup_diagnostic.get(key)
-                    for key in ("status", "reason", "stage", "error_id", "script_line")
+                    for key in (
+                        "status",
+                        "reason",
+                        "stage",
+                        "error_id",
+                        "script_line",
+                        "state_owner_matches",
+                        "state_uninstalled",
+                        "state_root_matches",
+                        "state_root_normalized_matches",
+                    )
                 },
                 ensure_ascii=False,
             ),

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
+import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -25,14 +26,28 @@ def run_check(event_path: Path, repository_root: Path, trusted_base_root: Path) 
     if not trusted:
         print(TRUSTED_BASE_WARNING)
     try:
-        return subprocess.run(
-            [sys.executable, str(checker), "--event-path", str(event_path)],
-            cwd=repository_root,
-            check=False,
-        ).returncode
-    except OSError as error:
-        print(f"Не удалось запустить проверку описания PR: {error}", file=sys.stderr)
+        spec = importlib.util.spec_from_file_location("trusted_pr_body_checker", checker)
+        if spec is None or spec.loader is None:
+            raise ImportError
+        validator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(validator)
+        payload = json.loads(event_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or not isinstance(payload.get("pull_request"), dict):
+            print("Не удалось проверить событие: отсутствует pull_request.", file=sys.stderr)
+            return 2
+        if validator.is_automation_pr(payload):
+            print("PR dependency-бота: формат ручных PR не применяется")
+            return 0
+        body = payload["pull_request"].get("body") or ""
+        problems = validator.validate(body if isinstance(body, str) else "")
+    except Exception:
+        print("Не удалось загрузить валидатор или проверить событие PR.", file=sys.stderr)
         return 2
+    if problems:
+        print("::error::Описание PR не соответствует обязательной структуре.", file=sys.stderr)
+        return 1
+    print("Структура описания PR соответствует контракту")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

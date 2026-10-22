@@ -104,7 +104,7 @@ $cleanupStage = 'write_result'
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $rootPath 'uninstall-result.json') -Encoding utf8NoBOM
 Remove-Item -LiteralPath $PSCommandPath
 } catch {
-    @{status = 'cleanup_failed'; reason = $_.Exception.GetType().Name; stage = $cleanupStage; error_id = $_.FullyQualifiedErrorId; script_line = $_.InvocationInfo.ScriptLineNumber; data = 'Пользовательские данные сохранены; проверьте остатки runtime'} |
+    @{status = 'cleanup_failed'; reason = $_.Exception.GetType().Name; stage = $cleanupStage; error_id = $_.FullyQualifiedErrorId; script_line = $_.InvocationInfo.ScriptLineNumber; owner_matches = ($state.owner -eq 'language-review.installer/1'); uninstall_complete = [bool]$state.uninstalled; root_matches = ($state.root -eq $rootPath); data = 'Пользовательские данные сохранены; проверьте остатки runtime'} |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $rootPath 'uninstall-result.json') -Encoding utf8NoBOM
     throw
 } finally { $lock.Dispose(); Remove-Item -LiteralPath $lockPath }

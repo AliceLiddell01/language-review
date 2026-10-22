@@ -35,12 +35,15 @@ memory = [
 dev = [
     "PyJWT[crypto]>=2.10.1",
     "mypy>=2.4.0",
+    "pip>=26.2.2",
     "psycopg[binary]>=3.3.6",
     "pytest>=9.1.1",
     "pytest-xdist>=3.8.0",
     "ruamel-yaml>=0.19.1",
     "ruff>=0.17.1",
+    "setuptools>=84.2.1",
     "types-jsonschema>=4.26.0.20261006",
+    "wheel>=0.48.0",
 ]
 
 [build-system]

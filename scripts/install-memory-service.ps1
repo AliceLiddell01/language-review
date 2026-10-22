@@ -1,4 +1,5 @@
 param(
+    [string]$ReleaseDirectory,
     [string]$RuntimeDirectory = (Join-Path $env:USERPROFILE '.language-review\memory'),
     [ValidatePattern('^[a-z][a-z0-9-]{2,60}$')][string]$Project = 'language-review-memory',
     [ValidateRange(1024, 65535)][int]$Port = 54329,
@@ -13,7 +14,24 @@ $ErrorActionPreference = 'Stop'
 if (-not $IsWindows -or $PSVersionTable.PSVersion.Major -lt 7) {
     throw 'Требуются Windows и PowerShell 7.'
 }
-$source = Split-Path -Parent $PSScriptRoot
+$source = if ($ReleaseDirectory) {
+    $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ReleaseDirectory)
+} else { Split-Path -Parent $PSScriptRoot }
+$releaseManifest = $null
+if ($ReleaseDirectory) {
+    $releaseManifest = Get-Content -Raw -LiteralPath (Join-Path $source 'release.json') | ConvertFrom-Json
+    if ($releaseManifest.schema -ne 'language-review.release/1' -or
+        $releaseManifest.commit -notmatch '^[a-f0-9]{40}$' -or
+        $releaseManifest.lock_sha256 -notmatch '^[a-f0-9]{64}$') {
+        throw 'Некорректный релизный комплект memory-worker.'
+    }
+    foreach ($entry in $releaseManifest.assets.PSObject.Properties) {
+        if ($entry.Name -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,180}$' -or $entry.Name.Contains('..') -or
+            (Get-FileHash -LiteralPath (Join-Path $source $entry.Name)).Hash.ToLowerInvariant() -ne $entry.Value.sha256) {
+            throw 'Релизный asset memory-worker повреждён.'
+        }
+    }
+}
 $runtime = [IO.Path]::GetFullPath($RuntimeDirectory)
 if ($runtime.Contains('"') -or $runtime.TrimEnd('\') -eq [IO.Path]::GetPathRoot($runtime).TrimEnd('\') -or
     $runtime -eq $env:USERPROFILE -or $runtime -eq $source -or
@@ -90,14 +108,42 @@ $release = Join-Path $runtime ('releases\' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $release | Out-Null
 Push-Location $source
 try {
-    & $uv export --locked --no-dev --extra memory --no-emit-project --output-file (Join-Path $release 'requirements.txt') | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Не удалось экспортировать закреплённые зависимости.' }
-    & $uv build --wheel --out-dir $release
-    if ($LASTEXITCODE -ne 0) { throw 'Не удалось собрать wheel.' }
+    if ($ReleaseDirectory) {
+        Copy-Item -LiteralPath (Join-Path $source 'requirements-memory.txt') -Destination (Join-Path $release 'requirements.txt')
+        $releasedWheels = @(Get-ChildItem -LiteralPath $source -Filter '*.whl')
+        if ($releasedWheels.Count -ne 1) { throw 'Ожидался один релизный wheel.' }
+        Copy-Item -LiteralPath $releasedWheels[0].FullName -Destination $release
+    } else {
+        & $uv export --locked --no-dev --extra memory --no-emit-project --output-file (Join-Path $release 'requirements.txt') | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Не удалось экспортировать закреплённые зависимости.' }
+        & $uv build --wheel --out-dir $release
+        if ($LASTEXITCODE -ne 0) { throw 'Не удалось собрать wheel.' }
+    }
     & $uv venv --python 3.15 (Join-Path $release 'venv')
     if ($LASTEXITCODE -ne 0) { throw 'Не удалось создать окружение runtime.' }
     $python = Join-Path $release 'venv\Scripts\python.exe'
-    & $uv pip install --python $python --require-hashes -r (Join-Path $release 'requirements.txt')
+    $dependencyArgs = @()
+    if ($ReleaseDirectory) {
+        $wheelhouse = Join-Path $release 'wheelhouse'
+        # Фиксированный плоский набор проверенных wheels; произвольные zip paths не извлекаются.
+        $archive = [IO.Compression.ZipFile]::OpenRead((Join-Path $source 'wheelhouse.zip'))
+        try {
+            $totalSize = 0L
+            $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            foreach ($entry in $archive.Entries) {
+                $totalSize += $entry.Length
+                if ($entry.FullName -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,180}\.whl$' -or
+                    $entry.FullName.Contains('..') -or -not $seen.Add($entry.FullName) -or
+                    $entry.Length -gt 100000000 -or $totalSize -gt 500000000) { throw 'Небезопасный wheelhouse.' }
+            }
+            New-Item -ItemType Directory -Path $wheelhouse | Out-Null
+            foreach ($entry in $archive.Entries) {
+                [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $wheelhouse $entry.FullName))
+            }
+        } finally { $archive.Dispose() }
+        $dependencyArgs = @('--no-index', '--find-links', $wheelhouse, '--only-binary', ':all:')
+    }
+    & $uv pip install --python $python --require-hashes @dependencyArgs -r (Join-Path $release 'requirements.txt')
     if ($LASTEXITCODE -ne 0) { throw 'Не удалось установить закреплённые зависимости.' }
     $wheel = @(Get-ChildItem -LiteralPath $release -Filter '*.whl')
     if ($wheel.Count -ne 1) { throw 'Ожидался ровно один собранный wheel.' }
@@ -108,8 +154,13 @@ try {
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $pythonw -PathType Leaf)) {
         throw 'Не найден базовый безоконный интерпретатор Python.'
     }
-    $sourceSha = (& git rev-parse HEAD).Trim()
-    $sourceDirty = [bool](& git status --porcelain=v1 --untracked-files=normal)
+    if ($ReleaseDirectory) {
+        $sourceSha = $releaseManifest.commit
+        $sourceDirty = $false
+    } else {
+        $sourceSha = (& git rev-parse HEAD).Trim()
+        $sourceDirty = [bool](& git status --porcelain=v1 --untracked-files=normal)
+    }
 } finally { Pop-Location }
 # Первый прогон worker пишет состояние только после завершения: до worker_limit заданий по timeout.
 $workerLimit = 8
@@ -139,7 +190,7 @@ $deployment = [ordered]@{
     project = $Project; port = $Port; task = $taskName; python = $python; docker = $docker; pwsh = $pwsh
     config = $workerConfig; release = $release; worker_limit = $workerLimit; source_sha = $sourceSha; source_dirty = $sourceDirty
     wheel_sha256 = (Get-FileHash -LiteralPath $wheel[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-    lock_sha256 = (Get-FileHash -LiteralPath (Join-Path $source 'uv.lock') -Algorithm SHA256).Hash.ToLowerInvariant()
+    lock_sha256 = if ($ReleaseDirectory) { $releaseManifest.lock_sha256 } else { (Get-FileHash -LiteralPath (Join-Path $source 'uv.lock') -Algorithm SHA256).Hash.ToLowerInvariant() }
     llm_model = $LlmModel; llm_revision = $llm[0].digest
     embedding_model = $EmbeddingModel; embedding_revision = $EmbeddingRevision
 }

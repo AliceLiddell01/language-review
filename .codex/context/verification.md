@@ -40,6 +40,18 @@ uv run --locked python .github/scripts/check_pr_body.py --body-file путь\к\
 
 ## Статусы
 
+Дистрибуция: `tests/test_distribution.py` проверяет идентичность/отказы/ownership и
+отсутствие auto-release. `scripts/verify-distribution.py --candidate КАТАЛОГ --output ОТЧЁТ`
+проверяет настоящий bootstrap тестового комплекта в отдельном профиле Windows без
+зависимости от checkout и PATH. `--codex-executable ПУТЬ` добавляет read-only
+`skills/list` через Codex app-server без вызова модели; `--upgrade-candidate КАТАЛОГ`
+проверяет смену версии и rollback. Без соответствующего аргумента каждая из этих
+дополнительных проверок имеет статус `NOT_RUN`. Релизный `scripts/release.py accept`
+получает настоящий `previous_stable` через официальный транспорт и проверяет его
+установку → обновление до кандидата → откат. Схемой обязательных результатов и
+разрешёнными причинами `NOT_RUN` владеет `release_acceptance.py`; неполный отчёт
+не проходит publish. Это не публичный Release, вызов skill моделью или приёмка worker/БД.
+
 SIWC и расширенные проходы: `tests/test_chatgpt.py`/`test_analysis.py` проверяют протоколы,
 JWT, настоящий loopback callback, DPAPI и межпроцессный refresh в Windows, SSE,
 бюджеты/routing/coverage и совместимость evaluator. Это не live OpenAI: каталог и

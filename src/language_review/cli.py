@@ -78,6 +78,9 @@ def _parser() -> argparse.ArgumentParser:
         help="явный TOML среды и полномочий (политика — .language-review.yaml)",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    from language_review.setup_cli import add_commands as add_setup_commands
+
+    add_setup_commands(commands)
 
     scan = commands.add_parser("scan", help="инвентаризировать файлы и их базовые характеристики")
     _add_selection_arguments(scan)
@@ -293,6 +296,10 @@ def _verify_review_human(report: dict[str, Any]) -> str:
 
 
 def _run(arguments: argparse.Namespace) -> int:
+    if arguments.command in {"setup", "installation"}:
+        from language_review.setup_cli import run as run_setup
+
+        return run_setup(arguments)
     if arguments.command == "init":
         from language_review.project_config import init_project
 

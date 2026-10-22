@@ -20,6 +20,14 @@ Python/uv из манифестов и явно настроенная лока�
 
 ### Постоянная установка из клона
 
+Для установленного релизного продукта checkout не требуется:
+`language-review setup --memory-service` передаёт проверенный release directory
+этому же владельцу через `-ReleaseDirectory`. Он использует релизные wheel,
+hash-locked requirements и Windows wheelhouse, сохраняя прежние task/volume/DPAPI,
+readiness и rollback. Пользовательский путь и явные параметры моделей описаны
+в [руководстве установки](installation.md#memory-worker-без-checkout).
+Без `-ReleaseDirectory` действует описанный ниже путь сборки из клона.
+
 Одинаковый deployment не требует файлов автора: Compose и digest образа находятся
 в репозитории, зависимости устанавливаются из `uv.lock`. Нужны Windows,
 PowerShell 7, Git, uv, Docker Desktop (Linux containers) и локальная Ollama.

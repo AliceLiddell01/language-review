@@ -21,7 +21,7 @@ DPAPI, loopback listener, межпроцессная блокировка и у�
 | Память не получает нового source of truth и облачного worker | `test_existing_memory_recall_obeys_separate_cloud_consent`, `test_background_memory_cannot_inherit_cloud_consent`; прежние тесты project/dataset isolation сохранены |
 | Evaluator читает 1.1, metadata/coverage и A/B | `test_evaluator_compares_new_reports_and_preserves_pass_telemetry`; сравниваются разные реальные выдачи продукта на synthetic contract corpus, без заявления о языковой точности |
 | CLI/doctor/config и автономный локальный режим | `test_cli_cloud_consent_config_and_doctor_are_observable`, `test_default_local_uses_single_search_and_no_oauth`; существующие `test_config.py`, `test_doctor.py`, `test_review.py` |
-| Установленные wheel/sdist и optional crypto | `scripts/verify-package.ps1`: CLI/module, scan/extract/check/review/eval, отказ облаку без согласия до установки extra, установка `[chatgpt]`, DPAPI round-trip, пустое изолированное хранилище, сохранность источника |
+| Установленные wheel/sdist и optional crypto | `scripts/verify-package.py`: CLI/module, scan/extract/check/review/eval, отказ облаку без согласия до установки extra, установка `[chatgpt]`, DPAPI round-trip, пустое изолированное хранилище, сохранность источника |
 
 ## Границы результатов
 

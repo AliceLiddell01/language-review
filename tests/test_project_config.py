@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from support import project_inputs
+from support import create_junction, project_inputs
 
 from language_review.cli import main
 from language_review.config import CheckSettings, load_config
@@ -392,11 +392,7 @@ def test_windows_junction_cannot_supply_external_prompt(
     external = tmp_path / "external"
     external.mkdir()
     (external / "prompt.md").write_text("Внешняя инструкция.", encoding="utf-8")
-    subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(root / "escaped"), str(external)],
-        check=True,
-        capture_output=True,
-    )
+    create_junction(root / "escaped", external)
     with pytest.raises(ConfigurationError, match="внутри"):
         load_project(load_config(), root)
 
@@ -462,9 +458,7 @@ def test_check_junction_target_keeps_root_metadata_valid(
     root = project(tmp_path / "repo")
     (root / "text.md").write_text("Русский текст.", encoding="utf-8")
     alias = tmp_path / "alias"
-    subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(alias), str(root)], check=True, capture_output=True
-    )
+    create_junction(alias, root)
     result = check_paths(
         [str(alias)],
         load_config(),

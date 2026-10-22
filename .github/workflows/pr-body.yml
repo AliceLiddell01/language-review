@@ -27,10 +27,12 @@ jobs:
           path: trusted-base
           persist-credentials: false
       - name: Проверить фактическое описание PR
+        env:
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        shell: python
         run: |
-          checker=trusted-base/.github/scripts/check_pr_body.py
-          if [[ ! -f "$checker" ]]; then
-            echo "::warning::В базовом коммите ещё нет валидатора описания PR; используется валидатор из этого PR."
-            checker=.github/scripts/check_pr_body.py
-          fi
-          python3 "$checker" --event-path "$GITHUB_EVENT_PATH"
+          import os
+          import sys
+          sys.path.insert(0, ".github/scripts")
+          from run_pr_body_check import main
+          raise SystemExit(main(["--event-path", os.environ["GITHUB_EVENT_PATH"]]))

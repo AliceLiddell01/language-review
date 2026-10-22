@@ -52,7 +52,8 @@ skill. `uv_build` остаётся закреплённым в pyproject; runtim
 и исходный checkout не меняются. Детерминированная идентичность не означает обещания
 побайтово одинаковых gzip/zip timestamps при разных запусках сборки.
 
-Комплект: wheel, sdist, `install.ps1`, закреплённые requirements с hashes, Windows wheelhouse,
+Комплект: wheel, sdist, автономный x64 `install.exe` (собранный закреплённым
+PyInstaller 6.22.3), закреплённые requirements с hashes, Windows wheelhouse,
 существующие memory runtime scripts/compose, `release-notes.md`, `release.json`,
 `SHA256SUMS`. Skill упакован в wheel/sdist. В manifest находятся tag/version/PEP
 version/SHA/предыдущий стабильный выпуск, Python и skill contract, размеры и SHA-256 assets.

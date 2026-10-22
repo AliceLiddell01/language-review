@@ -12,12 +12,13 @@ SCHEMA = "language-review.release-acceptance/1"
 REQUIRED = frozenset(
     {
         "independent_download_integrity",
+        "shell_free_bootstrap_and_launchers",
         "claude_not_selected_absent",
         "core_foreign_cwd_readonly",
         "controlled_extras_upgrade",
         "default_bootstrap_preserves_extras_and_path",
         "release_sdist_independent_install",
-        "installer_user_path_new_powershell",
+        "installer_user_path_new_process",
         "idempotent_install_setup",
         "codex_skill_ownership",
         "claude_skill_ownership",
@@ -99,7 +100,7 @@ def report(
         "commit": manifest["commit"],
         "candidate_tag": manifest["tag"],
         "manifest_sha256": manifest_sha256,
-        "environment": "Windows/PowerShell 7/Python 3.15",
+        "environment": "Windows/Python 3.15",
         "source": source(),
         "predecessor": predecessor,
         "checks": checks,
@@ -114,7 +115,7 @@ def validate_report(evidence: dict[str, Any], manifest: dict[str, Any], checksum
         or evidence.get("commit") != manifest["commit"]
         or evidence.get("candidate_tag") != manifest["tag"]
         or evidence.get("manifest_sha256") != checksum
-        or evidence.get("environment") != "Windows/PowerShell 7/Python 3.15"
+        or evidence.get("environment") != "Windows/Python 3.15"
     ):
         raise ReleaseError("Нет приёмки Windows именно этого комплекта.")
     checks = evidence.get("checks")

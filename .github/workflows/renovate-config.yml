@@ -40,4 +40,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-renovate-cli-
       - name: Проверить схему и актуальность конфигурации
-        run: npm exec --yes --package="renovate@${RENOVATE_VERSION}" -- renovate-config-validator renovate.json --strict
+        shell: python
+        run: |
+          import os
+          import subprocess
+          command = [
+              "npm", "exec", "--yes", f"--package=renovate@{os.environ['RENOVATE_VERSION']}",
+              "--", "renovate-config-validator", "renovate.json", "--strict",
+          ]
+          raise SystemExit(subprocess.run(command, check=False).returncode)

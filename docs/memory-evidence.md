@@ -1,9 +1,15 @@
 # Доказательства реализации памяти
 
-Среда: Windows, PowerShell 7, Python 3.15.0, Docker Desktop 4.95.0,
+Среда исторического прогона: Windows, PowerShell 7, Python 3.15.0, Docker Desktop 4.95.0,
 Docker Engine 29.8.2, Compose v5.6.0. Проверки выполняются на синтетических
 данных вне checkout; исходники сторонних проектов не использовались.
 Подробная процедура: [memory.md](memory.md).
+
+Все PASS ниже относятся к runtime commit `a38a04c2efd2bca20bb028b05f9d205d729254d6`
+и прежним PowerShell entrypoints до Python-миграции. Это сохранённая историческая
+сводка, а не свидетельство работы новых Python entrypoints; их фактические статусы
+обновляются только после отдельного запуска процедур из
+[матрицы проверок](../.codex/context/verification.md).
 
 ## Постоянный worker и чистый клон
 
@@ -20,10 +26,10 @@ Compose digest `sha256:9d9c930220cb9bf2f956d10a8f909cf9973d9672ca0278aef2c1e6fac
 | Новые проекты без регистрации отдельных workers, bounded jobs/index | `test_all_projects_worker_discovers_future_projects_and_bounds_jobs_and_index` — PASS на PostgreSQL |
 | Изоляция scoped worker, восстановление незавершённого индекса | `test_scoped_worker_keeps_other_projects_pending_and_global_worker_repairs_index` — PASS |
 | Явный операторский режим | `test_worker_cli_requires_one_explicit_scope` — PASS |
-| Отсутствие всплывающих консолей, scoped update-notification workaround | `test_windowless_entrypoint_creates_no_console_and_returns_supervisor_failure` — PASS, реальный console handle дочернего PowerShell = 0 |
+| Отсутствие всплывающих консолей в прежней реализации | `test_windowless_entrypoint_creates_no_console_and_returns_supervisor_failure` — PASS, реальный console handle дочернего PowerShell = 0 |
 | Остановка владельца завершает дочерние процессы | `test_terminating_actual_windowless_wrapper_kills_supervisor_child` и live `stopping_task_terminates_supervisor_tree` — PASS |
 | Установщик не меняет посторонний каталог | `test_installer_preserves_unrelated_nonempty_directory` — PASS |
-| Установка из клона с собственными данными | `scripts/verify-memory-service.ps1`: 13 проверок — PASS; включая logon/periodic triggers, restart policy, свой loopback port/volume и установленный wheel вне checkout |
+| Установка из клона с собственными данными | Историческая приёмка прежнего entrypoint: 13 проверок — PASS; включая logon/periodic triggers, restart policy, свой loopback port/volume и установленный wheel вне checkout |
 | Настоящий check → автоматическая очередь → LLM → embedding | В чистом клоне: 2 unverified-наблюдения, 2 done jobs, 1 hypothesis, 1 вектор, 5 durable events; ошибок нет, исходные байты сохранены |
 | Автоматический restart после аварии | Live `scheduler_restarts_crashed_supervisor`, затем `new_project_processed_after_restart_without_manual_work` — PASS |
 | Самостоятельное восстановление своей остановленной БД | Live `supervisor_recovers_own_database_without_data_loss`, `original_events_persist_across_database_restart` — PASS |
@@ -38,7 +44,7 @@ Job Object; периодический trigger с `IgnoreNew` обеспечив
 удалены, основной worker продолжает работу. Пользовательский Hindsight не менялся:
 его container ID, время старта и mounts до/после совпали.
 
-Сводка проверок runtime commit `a38a04c`: Windows `verify-memory.ps1` — 51 passed,
+Сводка проверок runtime commit `a38a04c`: прежняя Windows memory acceptance — 51 passed,
 3 live skips (модели проверены отдельно через service acceptance); полный локальный
 pytest на этом commit — 503 passed, 32 skipped;
 wheel/sdist smoke; Ruff/mypy/actionlint/валидаторы; CI на этом runtime
@@ -68,9 +74,9 @@ commit: Windows 499 passed, 36 skipped, пакет; Ubuntu quality и PostgreSQL
 | Настоящий pgvector, pinned embedding и rebuild | `test_live_pgvector_search_readback_is_scoped_and_versioned` |
 | Семантика при отсутствии общих слов | `test_semantic_retrieval_finds_case_without_shared_terms_in_real_pgvector` — настоящий pgvector, протокольный embedding; отдельная live-проверка использует настоящую модель |
 | Миграции и карантин holdout | `test_schema_migration_is_idempotent_and_detects_drift`, `test_holdout_events_are_quarantined_from_worker_index_and_decisions` |
-| Restart/recreate и реальный backup → потеря volume → restore | `scripts/verify-memory.ps1`: digest всех 13 таблиц и pgvector distance read-back до/после |
-| Настоящий отказ БД, базовый check без Docker | `scripts/verify-memory.ps1`: остановка контейнера, exit 6/пустой stdout, затем `--no-memory` |
-| Wheel/sdist и optional extra | `scripts/verify-package.ps1`: установленные CLI/модуль/ресурсы, отдельная установка `[memory]` |
+| Restart/recreate и реальный backup → потеря volume → restore | Прежняя memory acceptance: digest всех 13 таблиц и pgvector distance read-back до/после |
+| Настоящий отказ БД, базовый check без Docker | Прежняя memory acceptance: остановка контейнера, exit 6/пустой stdout, затем `--no-memory` |
+| Wheel/sdist и optional extra | Прежняя package acceptance: установленные CLI/модуль/ресурсы, отдельная установка `[memory]` |
 
 JsonServer и `ConsolidationProvider` проверяют протокол и ошибочные ветки;
 они **не** считаются live-моделью. Тесты с `live` обращаются к настоящему
@@ -135,7 +141,7 @@ exact technical terms», хотя отклонено замечание о пе�
 Воспроизведение с теми же локальными моделями, новым изолированным контейнером и bank:
 
 ```powershell
-.\scripts\experiment-hindsight.ps1 -Output $newExternalBenchmarkJson
+uv run --locked --extra memory python scripts/experiment-hindsight.py --output $newExternalBenchmarkJson
 ```
 
 Hindsight 1.0.0 проверен как кандидат. Production-adapter не добавлен; существующий

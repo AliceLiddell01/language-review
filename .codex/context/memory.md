@@ -14,7 +14,8 @@
   отчёта; started-run не считается завершённым. Retry/lease/fencing не создают решений.
 - `memory work` требует явный `--project` либо операторский `--all-projects`.
   Общий worker ограничивает jobs/embedding и обнаруживает новые проекты из БД.
-  Windows deployment — `install-memory-service.ps1`: отдельный wheel/runtime,
+  Windows deployment — `memory/service.py` и `scripts/install-memory-service.py`:
+  отдельный wheel/runtime,
   DPAPI credentials, пользовательская logon task; checkout не нужен процессу.
   Обновление фиксируется только после readiness задачи, иначе откатываются файлы runtime
   и задача; миграции БД не откатываются. Supervisor вызывает `compose up` только при
@@ -29,4 +30,4 @@
   synthetic knowledge выбирается явно, dev не обучает свои последующие повторы.
 - Cloud consent для check не разрешает фоновую консолидацию: worker отклоняет ChatGPT до claim. Передача ограниченного recall в облачный check требует отдельного allow_memory; snapshot сохраняется хешем.
 - Доказательство live БД/модели не заменяется JsonServer. Общие команды проверки принадлежат
-  [verification.md](verification.md); отдельная приёмка — `scripts/verify-memory.ps1`.
+  [verification.md](verification.md); отдельная приёмка — `scripts/verify-memory.py`.

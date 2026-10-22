@@ -159,4 +159,4 @@ uv run --locked language-review doctor --format json
 
 **Машинные контракты и примеры:** [`extract`](docs/extract-report.schema.json) ([пример](docs/extract-report.example.json)), [`check`](docs/check-report.schema.json) ([пример](docs/check-report.example.json)), [`review`](docs/review-report.schema.json) ([пример](docs/review-report.example.json)), [расширенный review](docs/multistage-review.example.json), [`verify-review`](docs/review-verification.schema.json). Схемы `scan` и `extract` имеют версию 1.0; `check` и `review` поддерживают 1.0/1.1 в зависимости от режима.
 
-Для разработки используйте команды из [контекста проверок](.codex/context/verification.md). `scripts/verify-package.ps1` проверяет сборку и установленный CLI; контрактные тесты без реальных языковых сервисов не измеряют качество анализа русского текста.
+Для разработки используйте команды из [контекста проверок](.codex/context/verification.md). `uv run --locked python scripts/verify-package.py` проверяет сборку и установленный CLI; контрактные тесты без реальных языковых сервисов не измеряют качество анализа русского текста.

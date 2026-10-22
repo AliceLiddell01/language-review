@@ -41,9 +41,6 @@ jobs:
     if: inputs.operation == 'prepare'
     runs-on: windows-latest
     timeout-minutes: 35
-    defaults:
-      run:
-        shell: pwsh
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -61,21 +58,11 @@ jobs:
           LR_COMMIT: ${{ inputs.commit }}
           LR_PREVIOUS: ${{ inputs.previous }}
           LR_NOTES: ${{ inputs.notes }}
-        run: |
-          if ($env:LR_COMMIT -notmatch '^[a-f0-9]{40}$') { throw 'Нужен полный SHA' }
-          git merge-base --is-ancestor $env:LR_COMMIT origin/main
-          if ($LASTEXITCODE -ne 0) { throw 'Target должен принадлежать main' }
-          $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
-          git show "${env:LR_COMMIT}:$env:LR_NOTES" | Set-Content -LiteralPath $notesPath -Encoding utf8NoBOM
-          if ($LASTEXITCODE -ne 0) { throw 'Не найдены notes' }
-          uv run --locked python scripts/release.py prepare --version $env:LR_VERSION --channel $env:LR_CHANNEL --commit $env:LR_COMMIT --previous $env:LR_PREVIOUS --notes $notesPath --output candidate
-          if ($LASTEXITCODE -ne 0) { throw 'Подготовка не завершена' }
+        run: uv run --locked python scripts/release.py workflow-prepare
       - name: Проверить установку из кандидата в Windows
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          uv run --locked python scripts/release.py accept --candidate candidate --output acceptance.json
-          if ($LASTEXITCODE -ne 0) { throw 'Приёмка не пройдена' }
+        run: uv run --locked python scripts/release.py accept --candidate candidate --output acceptance.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-candidate
@@ -94,9 +81,6 @@ jobs:
     permissions:
       contents: write
       actions: read
-    defaults:
-      run:
-        shell: pwsh
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -110,10 +94,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           LR_CANDIDATE_RUN: ${{ inputs.candidate_run }}
-        run: |
-          if ($env:LR_CANDIDATE_RUN -notmatch '^\d+$') { throw 'Нужен prepare run ID' }
-          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:LR_CANDIDATE_RUN" | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0 -or $run.path -ne '.github/workflows/release.yml' -or $run.event -ne 'workflow_dispatch' -or $run.conclusion -ne 'success' -or $run.head_branch -ne 'main') { throw 'Недоверенный candidate run' }
+        run: uv run --locked python scripts/release.py workflow-source
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: release-candidate
@@ -130,8 +111,4 @@ jobs:
           LR_CHANNEL: ${{ inputs.channel }}
           LR_PREVIOUS: ${{ inputs.previous }}
           LR_CANDIDATE_RUN: ${{ inputs.candidate_run }}
-        run: |
-          $manifest = Get-Content -Raw prepared/candidate/release.json | ConvertFrom-Json
-          if ($manifest.version -ne $env:LR_VERSION -or $manifest.commit -ne $env:LR_COMMIT -or $manifest.channel -ne $env:LR_CHANNEL -or $manifest.previous_stable -ne $env:LR_PREVIOUS) { throw 'Параметры публикации отличаются от кандидата' }
-          uv run --locked python scripts/release.py publish --candidate prepared/candidate --evidence prepared/acceptance.json
-          if ($LASTEXITCODE -ne 0) { throw 'Публикация не завершена; проверьте draft вручную' }
+        run: uv run --locked python scripts/release.py workflow-publish

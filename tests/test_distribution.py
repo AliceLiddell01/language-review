@@ -67,7 +67,7 @@ def make_bundle(root: Path, version: str, previous: str = "none") -> Path:
         sdist.addfile(entry, io.BytesIO(payload))
     for name in (
         "INSTALL.md",
-        "install.ps1",
+        "install.exe",
         "release-notes.md",
         "requirements-core.txt",
         "requirements-chatgpt.txt",
@@ -97,7 +97,7 @@ def test_release_bundle_identity_and_tamper(bundle: Path) -> None:
     data = validate_bundle(bundle)
     assert data["tag"] == "v0.0.0-rc.1"
     assert data["package_version"] == "0.0.0rc1"
-    (bundle / "install.ps1").write_text("изменённый исполняемый asset", encoding="utf-8")
+    (bundle / "install.exe").write_text("изменённый исполняемый asset", encoding="utf-8")
     with pytest.raises(ReleaseError, match="SHA-256"):
         validate_bundle(bundle)
 
@@ -549,19 +549,75 @@ def test_prune_stale_releases_preserves_live_lease(
     assert deploy.prune_stale_releases(root, active="1" * 32, previous="2" * 32) == [identifier]
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Контракт PowerShell Windows")
+def cleanup_command(root: Path) -> list[str]:
+    return [
+        sys.executable,
+        str(Path("scripts/install.py").resolve()),
+        "--cleanup",
+        "--root",
+        str(root),
+    ]
+
+
+def windows_file_holder(
+    path: Path, marker: Path, mode: str, release: Path | None = None
+) -> subprocess.Popen[bytes]:
+    code = r"""import ctypes, msvcrt, sys, time
+from pathlib import Path
+path, marker, mode = sys.argv[1:4]
+if mode == 'file':
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateFileW.argtypes = [
+        ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
+        ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
+    ]
+    kernel.CreateFileW.restype = ctypes.c_void_p
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    handle = kernel.CreateFileW(path, 0x80000000, 1, None, 3, 0, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+else:
+    stream = open(path, 'r+b')
+    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+Path(marker).touch()
+if len(sys.argv) > 4:
+    while not Path(sys.argv[4]).exists():
+        time.sleep(0.02)
+else:
+    time.sleep(0.7)
+if mode == 'file':
+    kernel.CloseHandle(handle)
+else:
+    stream.close()
+"""
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            code,
+            str(path),
+            str(marker),
+            mode,
+            *([str(release)] if release else []),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Контракт очистки Windows")
 def test_uninstall_cleanup_reports_deferred_when_lock_is_busy(tmp_path: Path) -> None:
-    pwsh = shutil.which("pwsh")
-    if pwsh is None:
-        pytest.skip("PowerShell 7 не найден.")
     root = tmp_path / "application"
     root.mkdir()
     lock = root / ".install-lock"
     lock.write_text("another operation", encoding="utf-8")
-    script = Path("src/language_review/distribution_assets/uninstall-cleanup.ps1").resolve()
+    deploy.atomic(
+        root / "installation.json",
+        deploy.json_bytes({"owner": deploy.OWNER, "root": str(root), "uninstalled": True}),
+    )
 
     result = subprocess.run(
-        [pwsh, "-NoProfile", "-File", str(script), "-Root", str(root)],
+        cleanup_command(root),
         capture_output=True,
         check=False,
         text=True,
@@ -574,11 +630,8 @@ def test_uninstall_cleanup_reports_deferred_when_lock_is_busy(tmp_path: Path) ->
     assert lock.is_file()
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Контракт PowerShell Windows")
+@pytest.mark.skipif(os.name != "nt", reason="Контракт очистки Windows")
 def test_uninstall_cleanup_retries_removing_locked_owned_file(tmp_path: Path) -> None:
-    pwsh = shutil.which("pwsh")
-    if pwsh is None:
-        pytest.skip("PowerShell 7 не найден.")
     root = tmp_path / "application"
     release = root / "releases" / ("a" * 32)
     runtime = release / "venv" / "Scripts" / "python.exe"
@@ -603,20 +656,14 @@ def test_uninstall_cleanup_retries_removing_locked_owned_file(tmp_path: Path) ->
         ),
         encoding="utf-8",
     )
+    protocol = release / ".run-leases/protocol"
+    protocol.parent.mkdir()
+    protocol.write_text("1\n", encoding="ascii")
+    inventory = json.loads((release / "owned-files.json").read_text("utf-8"))
+    inventory["files"][str(Path(".run-leases") / "protocol")] = digest(protocol)
+    deploy.atomic(release / "owned-files.json", deploy.json_bytes(inventory))
     marker = tmp_path / "lock-ready"
-    holder = tmp_path / "hold-file.ps1"
-    holder.write_text(
-        "$handle = [IO.File]::Open($args[0], 'Open', 'Read', 'Read')\n"
-        "[IO.File]::WriteAllText($args[1], 'ready')\n"
-        "Start-Sleep -Milliseconds 700\n"
-        "$handle.Dispose()\n",
-        encoding="utf-8",
-    )
-    lock_process = subprocess.Popen(
-        [pwsh, "-NoProfile", "-File", str(holder), str(runtime), str(marker)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    lock_process = windows_file_holder(runtime, marker, "file")
     try:
         deadline = time.monotonic() + 10
         while not marker.exists():
@@ -624,14 +671,8 @@ def test_uninstall_cleanup_retries_removing_locked_owned_file(tmp_path: Path) ->
                 pytest.fail("Не удалось захватить синтетический файл runtime.")
             time.sleep(0.02)
 
-        script = tmp_path / "uninstall-cleanup.ps1"
-        script.write_bytes(
-            Path("src/language_review/distribution_assets/uninstall-cleanup.ps1")
-            .resolve()
-            .read_bytes()
-        )
         result = subprocess.run(
-            [pwsh, "-NoProfile", "-File", str(script), "-Root", str(root)],
+            cleanup_command(root),
             capture_output=True,
             check=False,
             text=True,
@@ -650,9 +691,6 @@ def test_uninstall_cleanup_retries_removing_locked_owned_file(tmp_path: Path) ->
 
 @pytest.mark.skipif(os.name != "nt", reason="Lease использует exclusive Windows sharing")
 def test_uninstall_cleanup_preserves_runtime_with_live_cli_lease(tmp_path: Path) -> None:
-    pwsh = shutil.which("pwsh")
-    if pwsh is None:
-        pytest.skip("PowerShell 7 не найден.")
     root = tmp_path / "application"
     identifier = "b" * 32
     release = root / "releases" / identifier
@@ -683,34 +721,15 @@ def test_uninstall_cleanup_preserves_runtime_with_live_cli_lease(tmp_path: Path)
     )
     marker = tmp_path / "lease-ready"
     release_holder = tmp_path / "release-lease-holder"
-    holder = tmp_path / "hold-lease.ps1"
-    holder.write_text(
-        "$handle = [IO.File]::Open($args[0], 'Open', 'ReadWrite', 'None')\n"
-        "[IO.File]::WriteAllText($args[1], 'ready')\n"
-        "while (-not (Test-Path -LiteralPath $args[2])) { Start-Sleep -Milliseconds 20 }\n"
-        "$handle.Dispose()\n",
-        encoding="utf-8",
-    )
-    lock_process = subprocess.Popen(
-        [pwsh, "-NoProfile", "-File", str(holder), str(lease), str(marker), str(release_holder)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    lock_process = windows_file_holder(lease, marker, "lease", release_holder)
     try:
         deadline = time.monotonic() + 10
         while not marker.exists():
             if lock_process.poll() is not None or time.monotonic() > deadline:
                 pytest.fail("Не удалось захватить runtime lease.")
             time.sleep(0.02)
-        script = tmp_path / "uninstall-cleanup.ps1"
-        script.write_bytes(
-            Path("src/language_review/distribution_assets/uninstall-cleanup.ps1")
-            .resolve()
-            .read_bytes()
-        )
-
         result = subprocess.run(
-            [pwsh, "-NoProfile", "-File", str(script), "-Root", str(root)],
+            cleanup_command(root),
             capture_output=True,
             check=False,
             text=True,
@@ -720,7 +739,7 @@ def test_uninstall_cleanup_preserves_runtime_with_live_cli_lease(tmp_path: Path)
         assert result.returncode == 0, result.stderr
         outcome = json.loads((root / "uninstall-result.json").read_text(encoding="utf-8"))
         assert outcome["status"] == "uninstalled"
-        assert outcome["preserved"] == ["Runtime занят работающим CLI: " + identifier]
+        assert outcome["preserved"] == ["Runtime занят или не поддерживает lease: " + identifier]
         assert runtime.read_bytes() == b"synthetic venv redirector"
     finally:
         if lock_process.poll() is None:
@@ -732,11 +751,8 @@ def test_uninstall_cleanup_preserves_runtime_with_live_cli_lease(tmp_path: Path)
             lock_process.wait(timeout=5)
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Контракт PowerShell Windows")
+@pytest.mark.skipif(os.name != "nt", reason="Контракт очистки Windows")
 def test_uninstall_cleanup_waits_for_launcher_before_checking_lease(tmp_path: Path) -> None:
-    pwsh = shutil.which("pwsh")
-    if pwsh is None:
-        pytest.skip("PowerShell 7 не найден.")
     root = tmp_path / "application"
     identifier = "c" * 32
     release = root / "releases" / identifier
@@ -766,43 +782,15 @@ def test_uninstall_cleanup_waits_for_launcher_before_checking_lease(tmp_path: Pa
         encoding="utf-8",
     )
     marker = tmp_path / "launcher-ready"
-    holder = tmp_path / "hold-launcher-lease.ps1"
-    holder.write_text(
-        "$handle = [IO.File]::Open($args[0], 'Open', 'ReadWrite', 'None')\n"
-        "[IO.File]::WriteAllText($args[1], 'ready')\n"
-        "Start-Sleep -Milliseconds 700\n"
-        "$handle.Dispose()\n",
-        encoding="utf-8",
-    )
-    launcher = subprocess.Popen(
-        [pwsh, "-NoProfile", "-File", str(holder), str(lease), str(marker)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    launcher = windows_file_holder(lease, marker, "lease")
     try:
         deadline = time.monotonic() + 10
         while not marker.exists():
             if launcher.poll() is not None or time.monotonic() > deadline:
                 pytest.fail("Не удалось захватить runtime lease процессом launcher.")
             time.sleep(0.02)
-        script = tmp_path / "uninstall-cleanup.ps1"
-        script.write_bytes(
-            Path("src/language_review/distribution_assets/uninstall-cleanup.ps1")
-            .resolve()
-            .read_bytes()
-        )
-
         result = subprocess.run(
-            [
-                pwsh,
-                "-NoProfile",
-                "-File",
-                str(script),
-                "-Root",
-                str(root),
-                "-WaitForLauncherPid",
-                str(launcher.pid),
-            ],
+            [*cleanup_command(root), "--wait-for-pid", str(launcher.pid)],
             capture_output=True,
             check=False,
             text=True,
@@ -820,39 +808,15 @@ def test_uninstall_cleanup_waits_for_launcher_before_checking_lease(tmp_path: Pa
         launcher.wait(timeout=5)
 
 
-@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 не найден")
-def test_generated_launcher_parses_in_powershell(tmp_path: Path) -> None:
-    pwsh = shutil.which("pwsh")
-    assert pwsh is not None
-    launcher = tmp_path / "language-review-launch.ps1"
-    launcher_bytes = deploy.launcher_files(tmp_path)[tmp_path / "bin/language-review-launch.ps1"]
-    assert b"$env:LANGUAGE_REVIEW_LAUNCHER_PID = [string]$PID" in launcher_bytes
-    launcher.write_bytes(launcher_bytes)
-    parser = tmp_path / "parse-powershell.ps1"
-    parser.write_text(
-        "param([string]$Path)\n"
-        "$tokens = $null\n$errors = $null\n"
-        "[void][System.Management.Automation.Language.Parser]::ParseFile(\n"
-        "    $Path,\n    [ref]$tokens,\n    [ref]$errors\n)\n"
-        "if ($errors) { $errors | Out-String | Write-Error; exit 1 }\n",
-        encoding="utf-8",
-    )
-
-    result = subprocess.run(
-        [pwsh, "-NoProfile", "-File", str(parser), str(launcher)],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-
-    assert result.returncode == 0, result.stderr
-
-
-def test_generated_batch_launchers_exit_on_the_invocation_line(tmp_path: Path) -> None:
-    launchers = deploy.launcher_files(tmp_path)
-    for name in ("language-review.cmd", "language-review-eval.cmd"):
-        invocation = launchers[tmp_path / "bin" / name].splitlines()[1]
-        assert invocation.endswith(b" %* & exit /b")
+def test_generated_launchers_are_verified_binary_copies(tmp_path: Path) -> None:
+    bootstrap = tmp_path / "install.exe"
+    bootstrap.write_bytes(b"MZ synthetic verified bootstrap")
+    launchers = deploy.launcher_files(tmp_path, bootstrap=bootstrap)
+    assert set(launchers) == {
+        tmp_path / "bin/language-review.exe",
+        tmp_path / "bin/language-review-eval.exe",
+    }
+    assert all(content == bootstrap.read_bytes() for content in launchers.values())
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-планировщика")
@@ -861,6 +825,22 @@ def test_schedule_cleanup_waits_for_venv_parent_process(tmp_path: Path, monkeypa
     monkeypatch.setattr(deploy.os, "getpid", lambda: 1234)
     monkeypatch.setattr(deploy.os, "getppid", lambda: 5678)
     monkeypatch.setenv("LANGUAGE_REVIEW_LAUNCHER_PID", "8765")
+    monkeypatch.setenv("LANGUAGE_REVIEW_LAUNCHER_PARENT_PID", "9876")
+    root = tmp_path / "application"
+    deploy.atomic(
+        root / "installation.json",
+        deploy.json_bytes(
+            {
+                "owner": deploy.OWNER,
+                "root": str(root),
+                "uninstalled": True,
+                "cleanup_python": {
+                    "executable": sys.executable,
+                    "sha256": digest(Path(sys.executable)),
+                },
+            }
+        ),
+    )
     captured: dict[str, Any] = {}
 
     def fake_popen(args: list[str], **kwargs: Any) -> None:
@@ -872,9 +852,18 @@ def test_schedule_cleanup_waits_for_venv_parent_process(tmp_path: Path, monkeypa
     deploy.schedule_cleanup(tmp_path / "application")
 
     args = captured["args"]
-    assert args[args.index("-WaitForPid") + 1] == "1234"
-    assert args[args.index("-WaitForParentPid") + 1] == "5678"
-    assert args[args.index("-WaitForLauncherPid") + 1] == "8765"
+    assert {args[index + 1] for index, value in enumerate(args) if value == "--wait-for-pid"} == {
+        "1234",
+        "5678",
+        "8765",
+        "9876",
+    }
+    assert args[0] == sys.executable
+    archive = Path(args[2])
+    assert archive.suffix == ".pyz" and not archive.is_relative_to(root)
+    with zipfile.ZipFile(archive) as helper:
+        assert "language_review/bootstrap.py" in helper.namelist()
+        assert not any(name.endswith((".ps1", ".cmd", ".bat", ".sh")) for name in helper.namelist())
     assert captured["kwargs"]["creationflags"] == subprocess.CREATE_NO_WINDOW
 
 
@@ -904,6 +893,11 @@ def test_idempotent_install_applies_new_path_request(
     }
     deploy.atomic(root / "installation.json", deploy.json_bytes(initial))
     monkeypatch.setattr(deploy, "probe", lambda *_args: None)
+    monkeypatch.setattr(
+        deploy,
+        "cleanup_interpreter",
+        lambda *_args: {"executable": sys.executable, "sha256": digest(Path(sys.executable))},
+    )
     monkeypatch.setattr(deploy, "path_conflict", lambda *_args: None)
     path_changes: list[bool] = []
 
@@ -958,6 +952,11 @@ def test_install_compiles_bytecode_before_recording_inventory(
         lambda args, **_kwargs: commands.append(args) or "",
     )
     monkeypatch.setattr(deploy, "probe", lambda *_args: None)
+    monkeypatch.setattr(
+        deploy,
+        "cleanup_interpreter",
+        lambda *_args: {"executable": sys.executable, "sha256": digest(Path(sys.executable))},
+    )
     monkeypatch.setattr(deploy, "path_conflict", lambda *_args: None)
 
     deploy.install(bundle, root, uv=str(fake_uv), home=tmp_path / "home", add_path=False)
@@ -979,6 +978,11 @@ def test_prune_failure_does_not_remove_committed_runtime(
     fake_uv.write_bytes(b"synthetic")
     monkeypatch.setattr(deploy, "execute", lambda *_args, **_kwargs: "")
     monkeypatch.setattr(deploy, "probe", lambda *_args: None)
+    monkeypatch.setattr(
+        deploy,
+        "cleanup_interpreter",
+        lambda *_args: {"executable": sys.executable, "sha256": digest(Path(sys.executable))},
+    )
     monkeypatch.setattr(deploy, "path_conflict", lambda *_args: None)
 
     def fail(*_args: Any, **_kwargs: Any) -> list[str]:
@@ -1180,7 +1184,9 @@ def test_distribution_verifier_isolates_checkout_and_bootstrap_paths(
     monkeypatch.setattr(
         module.shutil,
         "which",
-        lambda name, path=None: str(uv) if name == "uv" else None,
+        lambda name, path=None: (
+            str(uv) if name == "uv" and str(tools) in (path or "").split(os.pathsep) else None
+        ),
     )
     source_path = os.pathsep.join(map(str, (checkout_scripts, tools, other)))
     runtime, bootstrap = module.isolated_environments({"PATH": source_path, "MARKER": "kept"})
@@ -1199,114 +1205,79 @@ def test_distribution_verifier_retargets_bootstrap_bundle_and_digest(tmp_path: P
     manifest = bundle / "release.json"
     manifest.write_text('{"version":"1.2.3"}', encoding="utf-8")
     bootstrap = [
-        "pwsh.exe",
-        "-File",
-        "install.ps1",
-        "-BundleDirectory",
+        "old/install.exe",
+        "--bundle-directory",
         "old",
-        "-TrustedManifestSha256",
+        "--trusted-manifest-sha256",
         "old-digest",
     ]
 
     result = module.bootstrap_for_bundle(bootstrap, bundle)
 
-    assert result[result.index("-BundleDirectory") + 1] == str(bundle)
-    assert result[result.index("-TrustedManifestSha256") + 1] == digest(manifest)
-    assert bootstrap[4:7] == ["old", "-TrustedManifestSha256", "old-digest"]
+    assert result[0] == str(bundle / "install.exe")
+    assert result[result.index("--bundle-directory") + 1] == str(bundle)
+    assert result[result.index("--trusted-manifest-sha256") + 1] == digest(manifest)
+    assert bootstrap == [
+        "old/install.exe",
+        "--bundle-directory",
+        "old",
+        "--trusted-manifest-sha256",
+        "old-digest",
+    ]
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Исполняемый Windows bootstrap")
 @pytest.mark.parametrize("prerelease", [False, True])
 @pytest.mark.parametrize("channel", ["stable", "prerelease"])
 def test_bootstrap_checks_release_channel_consistency(
     tmp_path: Path, monkeypatch: Any, prerelease: bool, channel: str
 ) -> None:
-    pwsh = shutil.which("pwsh")
-    assert pwsh is not None
-    uv_bin = tmp_path / "uv-bin"
-    uv_bin.mkdir()
-    (uv_bin / "uv.cmd").write_text("@echo off\r\necho uv 0.13.1\r\n", encoding="utf-8")
-    windows_root = Path(os.environ["SystemRoot"])
-    monkeypatch.setenv(
-        "PATH",
-        os.pathsep.join([str(uv_bin), str(windows_root / "System32"), str(windows_root)]),
+    from language_review import release_transport as transport
+
+    source = make_bundle(tmp_path / "source", "1.0.0-rc.1" if channel == "prerelease" else "1.0.0")
+    manifest = validate_bundle(source)
+    prefix = f"https://github.com/{REPOSITORY}/releases/download/{manifest['tag']}/"
+    assets = [
+        {
+            "name": name,
+            "browser_download_url": prefix + name,
+            "size": metadata["size"],
+            "digest": "sha256:" + metadata["sha256"],
+        }
+        for name, metadata in manifest["assets"].items()
+    ]
+    assets.append(
+        {
+            "name": "release.json",
+            "browser_download_url": prefix + "release.json",
+            "digest": "sha256:" + digest(source / "release.json"),
+        }
     )
-    # Подменяется только сеть. AST выделяет downloader; guard и весь основной
-    # установщик выполняются PowerShell без изменений.
-    (tmp_path / "release.json").write_text(
-        json.dumps(
-            {
-                "tag_name": "v1.0.0",
-                "draft": False,
-                "published_at": "date",
-                "prerelease": prerelease,
-                "assets": [
-                    {
-                        "name": "release.json",
-                        "digest": "sha256:" + "b" * 64,
-                        "browser_download_url": f"https://github.com/{REPOSITORY}/releases/download/v1.0.0/release.json",
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
+    monkeypatch.setattr(
+        transport,
+        "published",
+        lambda *_args, **_kwargs: {
+            "tag_name": manifest["tag"],
+            "prerelease": prerelease,
+            "assets": assets,
+        },
     )
-    (tmp_path / "manifest.json").write_text(
-        json.dumps(
-            {
-                "repository": REPOSITORY,
-                "tag": "v1.0.0",
-                "commit": "a" * 40,
-                "channel": channel,
-            }
-        ),
-        encoding="utf-8",
-    )
-    wrapper = tmp_path / "bootstrap-boundary.ps1"
-    wrapper.write_text(
-        """param([string]$Script, [string]$Fixtures)
-$tokens = $null; $errors = $null
-$ast = [Management.Automation.Language.Parser]::ParseFile($Script, [ref]$tokens, [ref]$errors)
-if ($errors) { throw 'Не удалось разобрать установщик.' }
-$fn = $ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
-    $n.Name -eq 'Get-VerifiedDownload'}, $true)
-$replacement = @'
-function Get-VerifiedDownload([string]$Url, [string]$Destination, [string]$Hash, [long]$Limit) {
-    if ($Url -like '*/git/ref/tags/*') { throw 'GUARD_PASSED_BOUNDARY' }
-    $name = if ($Url -like '*/releases/tags/*') { 'release.json' } else { 'manifest.json' }
-    Copy-Item -LiteralPath (Join-Path $env:LR_TEST_FIXTURES $name) -Destination $Destination
-}
-'@
-$env:LR_TEST_FIXTURES = $Fixtures
-$text = [IO.File]::ReadAllText($Script)
-$text = $text.Remove($fn.Extent.StartOffset, $fn.Extent.EndOffset - $fn.Extent.StartOffset)
-$text = $text.Insert($fn.Extent.StartOffset, $replacement)
-$root = Join-Path $Fixtures 'unused-root'
-& ([scriptblock]::Create($text)) -Tag v1.0.0 -Root $root -NonInteractive
-""",
-        encoding="utf-8",
-    )
-    result = subprocess.run(
-        [
-            pwsh,
-            "-NoProfile",
-            "-File",
-            str(wrapper),
-            str(Path("scripts/install.ps1").absolute()),
-            str(tmp_path),
-        ],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        timeout=30,
-    )
-    assert result.returncode != 0
+    monkeypatch.setattr(transport, "tag_commit", lambda _tag: manifest["commit"])
+    downloaded: list[str] = []
+
+    def download(url: str, target: Path, *_args: Any, **_kwargs: Any) -> None:
+        downloaded.append(target.name)
+        target.write_bytes((source / target.name).read_bytes())
+
+    monkeypatch.setattr(transport, "download", download)
+    received = tmp_path / "received"
+    received.mkdir()
     if prerelease == (channel == "prerelease"):
-        assert "GUARD_PASSED_BOUNDARY" in result.stderr
+        assert transport.fetch_bundle(received, manifest["tag"]) == manifest
+        assert validate_bundle(received) == manifest
     else:
-        assert "Manifest не соответствует GitHub release" in result.stderr
-        assert "GUARD_PASSED_BOUNDARY" not in result.stderr
-    assert not (tmp_path / "unused-root").exists()
+        with pytest.raises(ReleaseError, match="канал"):
+            transport.fetch_bundle(received, manifest["tag"])
+        assert downloaded == ["release.json"]
 
 
 def test_distribution_verifier_reports_missing_vale_as_not_run(
@@ -1660,7 +1631,7 @@ def test_non_windows_setup_refuses_mutation(tmp_path: Path, monkeypatch: Any) ->
 def test_path_conflict_preserves_foreign_program(
     tmp_path: Path, monkeypatch: Any, name: str
 ) -> None:
-    foreign = tmp_path / "foreign" / (name + ".cmd")
+    foreign = tmp_path / "foreign" / (name + ".exe")
     foreign.parent.mkdir()
     foreign.write_bytes(b"foreign executable")
     monkeypatch.setattr(
@@ -1685,49 +1656,36 @@ def test_default_application_root_preserves_existing_oauth_directory(
     assert oauth.read_bytes() == b"existing encrypted user data"
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Контракт PowerShell Windows")
+@pytest.mark.skipif(os.name != "nt", reason="Установщик службы Windows")
 @pytest.mark.parametrize("blocker", ["schema", "lock_sha256"])
 def test_memory_installer_resolves_relative_release_and_validates_manifest(
     tmp_path: Path, blocker: str
 ) -> None:
-    pwsh = shutil.which("pwsh")
-    if pwsh is None:
-        pytest.skip("PowerShell 7 не найден.")
-    candidate = tmp_path / "candidate"
-    candidate.mkdir()
-    manifest = (
-        {"schema": "invalid"}
-        if blocker == "schema"
-        else {
-            "schema": "language-review.release/1",
-            "commit": "a" * 40,
-            "lock_sha256": "invalid",
-            "assets": {},
-        }
-    )
+    candidate = make_bundle(tmp_path / "candidate", "1.0.0")
+    manifest = json.loads((candidate / "release.json").read_text("utf-8"))
+    manifest[blocker] = "invalid"
     (candidate / "release.json").write_text(json.dumps(manifest), encoding="utf-8")
-
-    def quote_ps(value: str | Path) -> str:
-        return "'" + str(value).replace("'", "''") + "'"
-
-    runner = tmp_path / "invoke-installer.ps1"
-    runner.write_text(
-        f"Set-Location -LiteralPath {quote_ps(tmp_path)}\n"
-        f"& {quote_ps(Path('scripts/install-memory-service.ps1').resolve())} "
-        f"-ReleaseDirectory 'candidate' -RuntimeDirectory {quote_ps(tmp_path / 'runtime')} "
-        "-Project 'lr-relative-path-test'\n",
-        encoding="utf-8",
-    )
+    runtime = tmp_path / "runtime"
     result = subprocess.run(
-        [pwsh, "-NoProfile", "-File", str(runner)],
+        [
+            sys.executable,
+            str(Path("scripts/install-memory-service.py").resolve()),
+            "--release-directory",
+            "candidate",
+            "--runtime-directory",
+            str(runtime),
+            "--project",
+            "lr-relative-path-test",
+        ],
+        cwd=tmp_path,
         capture_output=True,
-        check=False,
         text=True,
+        encoding="utf-8",
         timeout=10,
     )
-
     assert result.returncode != 0
-    assert "Некорректный релизный комплект memory-worker." in result.stdout + result.stderr
+    assert ("схема" if blocker == "schema" else "SHA-256") in result.stderr
+    assert not runtime.exists()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Пользовательский реестр Windows")
@@ -1761,6 +1719,11 @@ def test_install_failure_preserves_pointer_and_skills(
     fake_uv.write_bytes(b"synthetic")
     monkeypatch.setattr(deploy, "execute", lambda *a, **k: "")
     monkeypatch.setattr(deploy, "probe", lambda *a: None)
+    monkeypatch.setattr(
+        deploy,
+        "cleanup_interpreter",
+        lambda *_args: {"executable": sys.executable, "sha256": digest(Path(sys.executable))},
+    )
     monkeypatch.setattr(deploy, "path_conflict", lambda *a: None)
     first = deploy.install(
         bundle, root, uv=str(fake_uv), home=home, agents=["codex"], add_path=False
@@ -1780,7 +1743,7 @@ def test_install_failure_preserves_pointer_and_skills(
     assert deploy.status(root)["version"] == first["version"]
     assert len(list((root / "releases").iterdir())) == 1
     monkeypatch.setattr(deploy, "probe", lambda *args: None)
-    launcher = root / "bin/language-review.cmd"
+    launcher = root / "bin/language-review.exe"
     launcher.write_bytes(b"user launcher")
     with pytest.raises(ReleaseError, match="Launcher"):
         deploy.install(bundle, root, uv=str(fake_uv), home=home, add_path=False)
@@ -1794,6 +1757,11 @@ def isolated_install(bundle: Path, tmp_path: Path, monkeypatch: Any) -> tuple[Pa
     uv.write_bytes(b"synthetic uv")
     monkeypatch.setattr(deploy, "execute", lambda *_args, **_kwargs: "")
     monkeypatch.setattr(deploy, "probe", lambda *_args: None)
+    monkeypatch.setattr(
+        deploy,
+        "cleanup_interpreter",
+        lambda *_args: {"executable": sys.executable, "sha256": digest(Path(sys.executable))},
+    )
     monkeypatch.setattr(deploy, "path_conflict", lambda *_args: None)
     deploy.install(bundle, root, uv=str(uv), home=home, agents=["codex", "claude"], add_path=False)
     python = deploy.python_at(root / "releases" / deploy.state(root)["active"])
@@ -1888,9 +1856,7 @@ def test_update_and_rollback_reject_untrusted_uv_before_execution(
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Контракт Windows-установки")
-@pytest.mark.parametrize(
-    "name", ["language-review.cmd", "language-review-eval.cmd", "language-review-launch.ps1"]
-)
+@pytest.mark.parametrize("name", ["language-review.exe", "language-review-eval.exe"])
 @pytest.mark.parametrize("damage", ["missing", "changed"])
 def test_status_detects_launcher_drift(
     isolated_install: tuple[Path, Path, str], name: str, damage: str
@@ -2323,20 +2289,26 @@ def test_prepare_acceptance_uses_real_previous_candidate(
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Общий Windows byte-range lock")
-@pytest.mark.parametrize("holder", ["python", "powershell"])
 @pytest.mark.parametrize("client", ["python", "launcher"])
 def test_launch_lock_waits_for_live_owner_and_survives_owner_crash(
     tmp_path: Path,
-    holder: str,
     client: str,
 ) -> None:
     root = tmp_path / "application"
     root.mkdir()
     ready, entered = tmp_path / "ready", tmp_path / "entered"
     (root / ".launch-lock").write_bytes(b"orphan from an earlier process")
-    deploy.atomic(root / "installation.json", deploy.json_bytes({"active": "a" * 32}))
-    for path, content in deploy.launcher_files(root).items():
-        deploy.atomic(path, content)
+    deploy.atomic(
+        root / "installation.json",
+        deploy.json_bytes({"owner": deploy.OWNER, "root": str(root), "active": "a" * 32}),
+    )
+    release = root / "releases" / ("a" * 32)
+    protocol = release / ".run-leases/protocol"
+    protocol.parent.mkdir(parents=True)
+    protocol.write_bytes(b"1\n")
+    deploy.atomic(
+        release / "owned-files.json", deploy.json_bytes({"owner": deploy.OWNER, "files": {}})
+    )
     python_owner = """import sys, time
 from pathlib import Path
 from language_review.distribution import launch_locked
@@ -2344,21 +2316,7 @@ with launch_locked(Path(sys.argv[1])):
     Path(sys.argv[2]).touch()
     time.sleep(60)
 """
-    ps_owner = tmp_path / "owner.ps1"
-    ps_owner.write_text(
-        """param([string]$Root, [string]$Ready)
-$gate = [IO.File]::Open((Join-Path $Root '.launch-lock'), 'OpenOrCreate', 'ReadWrite', 'ReadWrite')
-$gate.Lock(0, 1)
-[IO.File]::WriteAllText($Ready, 'ready')
-Start-Sleep -Seconds 60
-""",
-        encoding="utf-8",
-    )
-    owner_args = (
-        [sys.executable, "-c", python_owner]
-        if holder == "python"
-        else ["pwsh", "-NoProfile", "-File", str(ps_owner)]
-    ) + [str(root), str(ready)]
+    owner_args = [sys.executable, "-c", python_owner, str(root), str(ready)]
     waiter_args = (
         [
             sys.executable,
@@ -2374,11 +2332,13 @@ with launch_locked(Path(sys.argv[1])):
         ]
         if client == "python"
         else [
-            "pwsh",
-            "-NoProfile",
-            "-File",
-            str(root / "bin/language-review-launch.ps1"),
+            sys.executable,
+            str(Path("scripts/install.py").resolve()),
+            "--launch",
             "review",
+            "--root",
+            str(root),
+            "--",
             "--version",
         ]
     )
@@ -2411,3 +2371,191 @@ with launch_locked(Path(sys.argv[1])):
                 if process.poll() is None:
                     process.kill()
                 process.communicate(timeout=10)
+
+
+@pytest.mark.parametrize(
+    "extension", [".ps1", ".psm1", ".psd1", ".cmd", ".bat", ".sh", ".bash", ".zsh"]
+)
+def test_release_manifest_refuses_shell_assets(bundle: Path, extension: str) -> None:
+    manifest = validate_bundle(bundle)
+    manifest["assets"]["own-automation" + extension] = {"size": 1, "sha256": "a" * 64}
+    with pytest.raises(ReleaseError, match="неполон"):
+        validate_manifest(manifest)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Настоящий Windows runtime и lease")
+@pytest.mark.parametrize("kind", ["review", "eval"])
+def test_python_launcher_forwards_arguments_and_exit_code(tmp_path: Path, kind: str) -> None:
+    import venv
+
+    root = tmp_path / "application"
+    identifier = "a" * 32
+    release = root / "releases" / identifier
+    venv.EnvBuilder(with_pip=False).create(release / "venv")
+    package = release / "venv/Lib/site-packages/language_review"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    source = (
+        "import json, os, sys\n"
+        "launcher_pid = os.environ['LANGUAGE_REVIEW_LAUNCHER_PID']\n"
+        "print(json.dumps({'arguments': sys.argv[1:], 'launcher_pid': launcher_pid}))\n"
+        "raise SystemExit(17)\n"
+    )
+    (package / "__main__.py").write_text(source, encoding="utf-8")
+    evaluator = package / "evaluation"
+    evaluator.mkdir()
+    (evaluator / "__init__.py").write_text("", encoding="utf-8")
+    (evaluator / "__main__.py").write_text(source, encoding="utf-8")
+    protocol = release / ".run-leases/protocol"
+    protocol.parent.mkdir()
+    protocol.write_bytes(b"1\n")
+    deploy.atomic(
+        release / "owned-files.json",
+        deploy.json_bytes(
+            {
+                "owner": deploy.OWNER,
+                "files": {str(Path(".run-leases") / "protocol"): digest(protocol)},
+            }
+        ),
+    )
+    deploy.atomic(
+        root / "installation.json",
+        deploy.json_bytes(
+            {
+                "owner": deploy.OWNER,
+                "root": str(root),
+                "active": identifier,
+            }
+        ),
+    )
+    arguments = ["--flag", "текст с пробелами", "", 'a"b', "x&y|z", "tail\\"]
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path("scripts/install.py").resolve()),
+            "--launch",
+            kind,
+            "--root",
+            str(root),
+            "--",
+            *arguments,
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=20,
+    )
+    assert result.returncode == 17, result.stderr
+    observed = json.loads(result.stdout)
+    assert observed["arguments"] == arguments
+    assert int(observed["launcher_pid"]) > 0
+    assert list(protocol.parent.glob("*.lock")) == []
+
+
+@pytest.mark.parametrize(
+    "field", ["id", "path", "event", "conclusion", "head_branch", "repository"]
+)
+def test_workflow_rejects_untrusted_candidate_origin(monkeypatch: Any, field: str) -> None:
+    module = release_module()
+    monkeypatch.setenv("LR_CANDIDATE_RUN", "123")
+    origin: dict[str, Any] = {
+        "id": 123,
+        "path": ".github/workflows/release.yml",
+        "event": "workflow_dispatch",
+        "conclusion": "success",
+        "head_branch": "main",
+        "head_repository": {"full_name": REPOSITORY},
+    }
+    if field == "repository":
+        origin["head_repository"] = {"full_name": "other/repository"}
+    else:
+        origin[field] = "untrusted"
+    monkeypatch.setattr(module, "github", lambda _path: origin)
+    with pytest.raises(ReleaseError, match="Недоверенный"):
+        module.workflow_source()
+
+
+def test_workflow_source_accepts_exact_official_prepare_run(monkeypatch: Any) -> None:
+    module = release_module()
+    monkeypatch.setenv("LR_CANDIDATE_RUN", "123")
+    paths: list[str] = []
+
+    def github(path: str) -> dict[str, Any]:
+        paths.append(path)
+        return {
+            "id": 123,
+            "path": ".github/workflows/release.yml",
+            "event": "workflow_dispatch",
+            "conclusion": "success",
+            "head_branch": "main",
+            "head_repository": {"full_name": REPOSITORY},
+        }
+
+    monkeypatch.setattr(module, "github", github)
+    module.workflow_source()
+    assert paths == ["actions/runs/123"]
+
+
+@pytest.mark.parametrize("variable", ["LR_VERSION", "LR_COMMIT", "LR_CHANNEL", "LR_PREVIOUS"])
+def test_workflow_publish_rejects_parameters_before_publication(
+    bundle: Path, monkeypatch: Any, variable: str
+) -> None:
+    module = release_module()
+    manifest = validate_bundle(bundle)
+    for key, name in (
+        ("version", "LR_VERSION"),
+        ("commit", "LR_COMMIT"),
+        ("channel", "LR_CHANNEL"),
+        ("previous_stable", "LR_PREVIOUS"),
+    ):
+        monkeypatch.setenv(name, manifest[key])
+    monkeypatch.setenv(variable, "different")
+    monkeypatch.setattr(module, "validate_bundle", lambda _path: manifest)
+    calls: list[Any] = []
+    monkeypatch.setattr(module, "publish", lambda args: calls.append(args))
+    with pytest.raises(ReleaseError, match="Параметры публикации"):
+        module.workflow_publish()
+    assert calls == []
+
+
+def test_workflow_prepare_binds_notes_to_main_target(monkeypatch: Any) -> None:
+    module = release_module()
+    expected = {
+        "LR_COMMIT": "a" * 40,
+        "LR_NOTES": "docs/notes with spaces.md",
+        "LR_VERSION": "1.0.0",
+        "LR_CHANNEL": "stable",
+        "LR_PREVIOUS": "none",
+    }
+    for name, value in expected.items():
+        monkeypatch.setenv(name, value)
+    calls: list[tuple[str, ...]] = []
+    captured: list[Any] = []
+
+    def run(*arguments: str) -> str:
+        calls.append(arguments)
+        return "Подтверждённые notes" if arguments[:2] == ("git", "show") else ""
+
+    def prepare(arguments: Any) -> None:
+        captured.append(
+            (
+                arguments.commit,
+                arguments.version,
+                arguments.channel,
+                arguments.previous,
+                arguments.notes.read_text("utf-8"),
+                arguments.output,
+            )
+        )
+
+    monkeypatch.setattr(module, "run", run)
+    monkeypatch.setattr(module, "prepare", prepare)
+    module.workflow_prepare()
+    assert calls == [
+        ("git", "merge-base", "--is-ancestor", "a" * 40, "origin/main"),
+        ("git", "show", "a" * 40 + ":docs/notes with spaces.md"),
+    ]
+    assert captured == [
+        ("a" * 40, "1.0.0", "stable", "none", "Подтверждённые notes\n", Path("candidate"))
+    ]

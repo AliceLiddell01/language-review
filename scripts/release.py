@@ -205,11 +205,18 @@ def prepare(args: argparse.Namespace) -> None:
         run("uv", "build", "--no-sources", "--out-dir", str(output), cwd=tree)
         # uv создаёт служебный .gitignore в out-dir; это не release asset.
         (output / ".gitignore").unlink(missing_ok=True)
-        shutil.copyfile(tree / "scripts/install.ps1", output / "install.ps1")
+        run(
+            str(builder_python),
+            str(tree / "scripts/install.py"),
+            "build",
+            "--output",
+            str(output / "install.exe"),
+            cwd=tree,
+        )
         (output / "INSTALL.md").write_text(
             "# Language Review " + args.version + "\n\n"
-            "Windows x64, PowerShell 7. Не требуется checkout или системный Python.\n"
-            "Запустите проверенный install.ps1 -Tag " + identity["tag"] + ".\n"
+            "Windows x64. Не требуется checkout, системный Python, uv или PowerShell.\n"
+            "Запустите проверенный install.exe --tag " + identity["tag"] + ".\n"
             "После установки: language-review setup; language-review doctor.\n"
             "Проект настраивается отдельно явным language-review init.\n"
             "Доверие: официальный GitHub API/TLS; SHA-256 — integrity, не независимая подпись.\n"
@@ -398,6 +405,60 @@ def publish(args: argparse.Namespace) -> None:
     print("GitHub Release опубликован; автоматическое перемещение тегов запрещено.")
 
 
+def workflow_prepare() -> None:
+    """Проверяет ручной target и извлекает notes без shell-интерполяции."""
+    commit = os.environ.get("LR_COMMIT", "")
+    if not SHA.fullmatch(commit):
+        raise ReleaseError("Нужен полный SHA.")
+    run("git", "merge-base", "--is-ancestor", commit, "origin/main")
+    notes = run("git", "show", commit + ":" + os.environ.get("LR_NOTES", ""))
+    with tempfile.TemporaryDirectory(prefix="language-review-notes-") as temporary:
+        path = Path(temporary) / "release-notes.md"
+        path.write_text(notes + "\n", encoding="utf-8")
+        prepare(
+            argparse.Namespace(
+                version=os.environ.get("LR_VERSION", ""),
+                channel=os.environ.get("LR_CHANNEL", ""),
+                commit=commit,
+                previous=os.environ.get("LR_PREVIOUS", ""),
+                notes=path,
+                output=Path("candidate"),
+            )
+        )
+
+
+def workflow_source() -> None:
+    """До скачивания артефакта проверяет источник prepare через GitHub API."""
+    identifier = os.environ.get("LR_CANDIDATE_RUN", "")
+    if not re.fullmatch(r"[1-9][0-9]*", identifier):
+        raise ReleaseError("Нужен prepare run ID.")
+    origin = github("actions/runs/" + identifier)
+    if (
+        origin.get("id") != int(identifier)
+        or origin.get("path") != ".github/workflows/release.yml"
+        or origin.get("event") != "workflow_dispatch"
+        or origin.get("conclusion") != "success"
+        or origin.get("head_branch") != "main"
+        or origin.get("head_repository", {}).get("full_name") != REPOSITORY
+    ):
+        raise ReleaseError("Недоверенный candidate run.")
+
+
+def workflow_publish() -> None:
+    """Связывает отдельные параметры разрешения с загруженным кандидатом."""
+    candidate = Path("prepared/candidate")
+    manifest = validate_bundle(candidate)
+    for key, variable in (
+        ("version", "LR_VERSION"),
+        ("commit", "LR_COMMIT"),
+        ("channel", "LR_CHANNEL"),
+        ("previous_stable", "LR_PREVIOUS"),
+    ):
+        if manifest[key] != os.environ.get(variable):
+            raise ReleaseError("Параметры публикации отличаются от кандидата.")
+    publish(argparse.Namespace(candidate=candidate, evidence=Path("prepared/acceptance.json")))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -416,14 +477,22 @@ def main() -> None:
     publication = sub.add_parser("publish")
     publication.add_argument("--candidate", type=Path, required=True)
     publication.add_argument("--evidence", type=Path, required=True)
+    for name in ("workflow-prepare", "workflow-source", "workflow-publish"):
+        sub.add_parser(name)
     args = parser.parse_args()
     try:
         if args.command == "prepare":
             prepare(args)
         elif args.command == "accept":
             accept(args)
-        else:
+        elif args.command == "publish":
             publish(args)
+        else:
+            {
+                "workflow-prepare": workflow_prepare,
+                "workflow-source": workflow_source,
+                "workflow-publish": workflow_publish,
+            }[args.command]()
     except ReleaseError as exc:
         parser.exit(2, str(exc) + "\n")
 

@@ -149,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     from language_review.memory.service import Scheduler, database_environment
 
     repo = Path(__file__).resolve().parents[1]
-    scratch = Path(tempfile.mkdtemp(prefix="lr-service-"))
+    scratch = Path(tempfile.mkdtemp(prefix="lr-service-")).resolve()
     runtime = scratch / "runtime with spaces"
     project = "lr-service-test-" + uuid4().hex[:12]
     with socket.socket() as listener:

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from language_review.memory import database as database_module
 from language_review.memory.database import Database, DatabaseError, main
 
 
@@ -142,6 +144,54 @@ def test_backup_copies_binary_checks_archive_and_hashes_before_publish(
     assert any("-Fc" in call for call in calls)
     assert any("pg_restore" in call and "--list" in call for call in calls)
     assert calls[-1][-3:-1] == ["rm", "-f"]
+    assert not list(tmp_path.glob(".lr-backup-*"))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows может запрещать создание hard link")
+def test_backup_falls_back_to_atomic_rename_when_hardlinks_are_unavailable(
+    docker: tuple[Database, list[list[str]], dict[str, Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database, _, _ = docker
+
+    def reject_hardlink(_source: Path, _target: Path) -> None:
+        raise OSError("hard links are unavailable")
+
+    monkeypatch.setattr(database_module.os, "link", reject_hardlink)
+    target = tmp_path / "backup.dump"
+
+    result = database.backup(target)
+
+    assert target.read_bytes() == b"PGDMP\x00\xff\r\n\x80"
+    assert result["path"] == str(target.resolve())
+    assert not list(tmp_path.glob(".lr-backup-*"))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows rename must preserve an existing target")
+def test_backup_never_renames_over_target_created_during_publication(
+    docker: tuple[Database, list[list[str]], dict[str, Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database, _, _ = docker
+    target = tmp_path / "racing-backup.dump"
+
+    def publish_competing_file(_source: Path, destination: Path) -> None:
+        destination.write_bytes(b"concurrent")
+        raise FileExistsError(destination)
+
+    monkeypatch.setattr(database_module.os, "link", publish_competing_file)
+    monkeypatch.setattr(
+        database_module.os,
+        "rename",
+        lambda *_args, **_kwargs: pytest.fail("Нельзя заменять существующий backup"),
+    )
+
+    with pytest.raises(FileExistsError):
+        database.backup(target)
+
+    assert target.read_bytes() == b"concurrent"
     assert not list(tmp_path.glob(".lr-backup-*"))
 
 

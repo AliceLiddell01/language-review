@@ -87,6 +87,24 @@ class ShellAutomationGateTests(unittest.TestCase):
 
         self.assertEqual(tracked_shell_files(self.root), ["100755 tools/verify"])
 
+    def test_tracked_extensionless_script_with_set_e_without_branch_is_reported(self):
+        self.initialize_git()
+        script = self.root / "tools" / "verify"
+        script.parent.mkdir(parents=True)
+        script.write_text("set -e\nprintf 'ready\\n'\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "-C", str(self.root), "add", "--", "tools/verify"],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(self.root), "update-index", "--chmod=+x", "--", "tools/verify"],
+            check=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(tracked_shell_files(self.root), ["100755 tools/verify"])
+
     def test_python_file_writer_that_targets_shell_output_is_reported(self):
         source = 'from pathlib import Path\nPath("bin/launcher.cmd").write_text("content")\n'
 
@@ -128,6 +146,18 @@ class ShellAutomationGateTests(unittest.TestCase):
 
         self.assertTrue(any("shell-интерпретатор" in error for error in errors))
         self.assertTrue(any("shell=True" in error for error in errors))
+
+    def test_windows_shell_executables_with_exe_and_full_path_are_reported(self):
+        sources = (
+            "import subprocess\n"
+            "subprocess.run([r'C:\\Windows\\System32\\cmd.exe', '/c', 'whoami'])\n",
+            "import subprocess\nsubprocess.run(['pwsh.exe', '-File', 'task.ps1'])\n",
+        )
+
+        for source in sources:
+            with self.subTest(source=source):
+                errors = source_automation_errors(source)
+                self.assertTrue(any("shell-интерпретатор" in error for error in errors))
 
     def test_mentions_in_comments_and_input_reads_are_not_generators(self):
         source = (
@@ -177,6 +207,47 @@ class ShellAutomationGateTests(unittest.TestCase):
         )
 
         self.assertEqual(workflow_errors(self.root), [])
+
+    def test_workflow_level_shell_default_is_checked_and_inherited(self):
+        workflows = self.root / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        path = workflows / "ci.yml"
+        path.write_text(
+            "name: test\ndefaults:\n  run:\n    shell: bash\n"
+            "jobs:\n  check:\n    runs-on: ubuntu-latest\n"
+            "    steps:\n      - run: uv run pytest\n",
+            encoding="utf-8",
+        )
+
+        errors = workflow_errors(self.root)
+
+        self.assertTrue(any("задан shell bash" in error for error in errors))
+
+        path.write_text(
+            "name: test\ndefaults:\n  run:\n    shell: python\n"
+            "jobs:\n  check:\n    runs-on: windows-latest\n"
+            "    steps:\n      - run: |\n"
+            "          import subprocess\n"
+            "          raise SystemExit(subprocess.run("
+            "['uv', 'sync', '--locked'], check=False).returncode)\n",
+            encoding="utf-8",
+        )
+
+        self.assertEqual(workflow_errors(self.root), [])
+
+    def test_malformed_workflow_defaults_and_steps_report_errors(self):
+        workflows = self.root / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "ci.yml").write_text(
+            "name: test\ndefaults:\n  run:\njobs:\n  check:\n"
+            "    runs-on: windows-latest\n    steps:\n",
+            encoding="utf-8",
+        )
+
+        errors = workflow_errors(self.root)
+
+        self.assertTrue(any("defaults.run должен быть объектом" in error for error in errors))
+        self.assertTrue(any("steps должен быть списком" in error for error in errors))
 
     def test_workflow_inline_script_and_shell_are_reported(self):
         workflows = self.root / ".github" / "workflows"

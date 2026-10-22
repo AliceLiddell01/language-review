@@ -110,6 +110,8 @@ schtasks.exe /Run /TN $deployment.task
 Чтобы выполнить CLI с DPAPI-паролем в окружении только дочернего процесса, оберните
 команду через Python helper:
 
+Команда запускается из клона репозитория, где доступны `pyproject.toml` и `uv.lock`.
+
 ```powershell
 uv run --locked --extra memory python scripts/connect-memory.py --runtime-directory $runtime -- `
     uv run --locked --extra memory language-review --config $deployment.config `

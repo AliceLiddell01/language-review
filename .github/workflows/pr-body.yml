@@ -16,10 +16,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Получить содержимое PR
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
       - name: Получить доверенную базу
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -32,7 +28,10 @@ jobs:
         shell: python
         run: |
           import os
+          import subprocess
           import sys
-          sys.path.insert(0, ".github/scripts")
-          from run_pr_body_check import main
-          raise SystemExit(main(["--event-path", os.environ["GITHUB_EVENT_PATH"]]))
+          checker = "trusted-base/.github/scripts/check_pr_body.py"
+          raise SystemExit(subprocess.run(
+              [sys.executable, checker, "--event-path", os.environ["GITHUB_EVENT_PATH"]],
+              check=False,
+          ).returncode)

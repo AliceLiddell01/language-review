@@ -179,7 +179,9 @@ def test_failed_native_launcher_publication_restores_legacy_installation(
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows x64 PE")
-def test_cleanup_interpreter_rejects_modified_pe_and_runtime_local_path(tmp_path: Path) -> None:
+def test_cleanup_interpreter_rejects_modified_pe_and_runtime_local_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     deploy.verify_x64_executable(Path(sys._base_executable))
     root = tmp_path / "application"
     current = installation(root, uninstalled=True)
@@ -194,6 +196,18 @@ def test_cleanup_interpreter_rejects_modified_pe_and_runtime_local_path(tmp_path
     current["cleanup_python"] = {"executable": str(external), "sha256": digest(external)}
     deploy.atomic(root / "installation.json", deploy.json_bytes(current))
     with pytest.raises(ReleaseError, match="Windows x64"):
+        deploy.schedule_cleanup(root)
+    current["cleanup_python"] = {
+        "executable": sys._base_executable,
+        "sha256": "0" * 64,
+    }
+    deploy.atomic(root / "installation.json", deploy.json_bytes(current))
+    monkeypatch.setattr(
+        deploy.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("Очистка не должна запускаться"),
+    )
+    with pytest.raises(ReleaseError, match="Базовый Python очистки изменён"):
         deploy.schedule_cleanup(root)
     assert root.is_dir()
 
@@ -411,6 +425,41 @@ def test_local_bootstrap_refuses_untrusted_bundle_before_uv_execution(
         trusted_manifest_sha256="0" * 64,
     )
     with pytest.raises(ReleaseError, match="доверенный SHA-256"):
+        bootstrap.install(arguments)
+    assert called == []
+    assert not arguments.root.exists()
+
+
+def test_local_bootstrap_rechecks_copied_manifest_before_uv_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    manifest = bundle / "release.json"
+    manifest.write_text("trusted", encoding="utf-8")
+    (bundle / "artifact.whl").write_bytes(b"bundle")
+    trusted_sha256 = digest(manifest)
+    original_copy = bootstrap.shutil.copyfile
+    called: list[Path] = []
+
+    def mutate_manifest_before_copy(
+        source: Path, destination: Path, *args: Any, **kwargs: Any
+    ) -> str:
+        if Path(source).name == "release.json":
+            Path(source).write_text("changed", encoding="utf-8")
+        return original_copy(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(bootstrap, "validate_bundle", lambda _directory: {})
+    monkeypatch.setattr(bootstrap.shutil, "copyfile", mutate_manifest_before_copy)
+    monkeypatch.setattr(bootstrap, "obtain_uv", lambda directory, root: called.append(directory))
+    from argparse import Namespace
+
+    arguments = Namespace(
+        root=tmp_path / "application",
+        bundle_directory=bundle,
+        trusted_manifest_sha256=trusted_sha256,
+    )
+    with pytest.raises(ReleaseError, match="Копия release manifest"):
         bootstrap.install(arguments)
     assert called == []
     assert not arguments.root.exists()

@@ -203,7 +203,14 @@ class Database:
                 with temporary.open("rb") as stream:
                     checksum = hashlib.file_digest(stream, "sha256").hexdigest()
                 size = temporary.stat().st_size
-                os.link(temporary, target)
+                try:
+                    os.link(temporary, target)
+                except FileExistsError:
+                    raise
+                except OSError:
+                    if os.name != "nt":
+                        raise
+                    os.rename(temporary, target)
                 return {"sha256": checksum, "size": size, "path": str(target)}
         finally:
             temporary.unlink(missing_ok=True)

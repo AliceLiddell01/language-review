@@ -7,6 +7,7 @@ import re
 import subprocess
 from collections import defaultdict
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 from ruamel.yaml import YAML
 
@@ -73,10 +74,7 @@ def _looks_like_shell_content(contents: str | bytes) -> bool:
         return True
     if re.search(r"(?im)^\s*param\s*\(", text) and powershell_markers >= 2:
         return True
-    is_shell_prefix = first.lower() == "set -e" or first.lower().startswith("set -euo pipefail")
-    return is_shell_prefix and any(
-        token in lowered for token in ("\nthen", "\nfi", "\ncase ", "\nesac")
-    )
+    return first.lower() == "set -e" or first.lower().startswith("set -euo pipefail")
 
 
 def tracked_shell_files(repository_root: Path) -> list[str]:
@@ -311,16 +309,16 @@ def _executable_names(node: ast.AST, assignments: dict[str, list[ast.AST]]) -> s
             else set()
         )
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return {PurePosixPath(node.value.replace("\\", "/")).name.lower()}
+        return {PurePosixPath(node.value.replace("\\", "/")).name.lower().removesuffix(".exe")}
     if isinstance(node, (ast.List, ast.Tuple)):
         values: set[str] = set()
         if node.elts:
             values |= _executable_names(node.elts[0], assignments)
             values |= {
-                value.lower()
+                value.lower().removesuffix(".exe")
                 for element in node.elts[1:]
                 for value in (_constant_string(element, assignments),)
-                if value is not None and value.lower() in SHELL_NAMES
+                if value is not None and value.lower().removesuffix(".exe") in SHELL_NAMES
             }
         return values
     return set()
@@ -478,7 +476,38 @@ def workflow_errors(repository_root: Path) -> list[str]:
                 f"{path.relative_to(repository_root).as_posix()}: некорректный YAML ({error})."
             )
             continue
-        jobs = document.get("jobs", {}) if isinstance(document, dict) else {}
+        if not isinstance(document, dict):
+            errors.append(
+                f"{path.relative_to(repository_root).as_posix()}: workflow должен быть объектом."
+            )
+            continue
+
+        def default_shell(scope: dict[str, Any], location: str) -> str | None:
+            if "defaults" not in scope:
+                return None
+            defaults = scope["defaults"]
+            if not isinstance(defaults, dict):
+                errors.append(f"{location}: defaults должен быть объектом.")
+                return None
+            if "run" not in defaults:
+                return None
+            run_defaults = defaults["run"]
+            if not isinstance(run_defaults, dict):
+                errors.append(f"{location}: defaults.run должен быть объектом.")
+                return None
+            if "shell" not in run_defaults:
+                return None
+            shell_value = run_defaults["shell"]
+            if not isinstance(shell_value, str):
+                errors.append(f"{location}: defaults.run.shell должен быть строкой.")
+                return None
+            if shell_value.lower() in SHELL_NAMES:
+                errors.append(f"{location}: задан shell {shell_value}.")
+            return shell_value
+
+        workflow_location = path.relative_to(repository_root).as_posix()
+        workflow_default_shell = default_shell(document, workflow_location)
+        jobs = document.get("jobs", {})
         if not isinstance(jobs, dict):
             errors.append(
                 f"{path.relative_to(repository_root).as_posix()}: jobs должен быть объектом."
@@ -486,6 +515,10 @@ def workflow_errors(repository_root: Path) -> list[str]:
             continue
         for job_name, job in jobs.items():
             if not isinstance(job, dict):
+                errors.append(
+                    f"{path.relative_to(repository_root).as_posix()} ({job_name}): "
+                    "job должен быть объектом."
+                )
                 continue
             runs_on = job.get("runs-on")
             windows_job = (
@@ -497,29 +530,34 @@ def workflow_errors(repository_root: Path) -> list[str]:
                     for label in runs_on
                 )
             )
-            defaults = job.get("defaults", {})
-            default_shell = (
-                defaults.get("run", {}).get("shell") if isinstance(defaults, dict) else None
+            job_location = f"{path.relative_to(repository_root).as_posix()} ({job_name})"
+            job_default_shell = default_shell(job, job_location)
+            effective_default_shell = (
+                job_default_shell if job_default_shell is not None else workflow_default_shell
             )
-            if isinstance(default_shell, str) and default_shell.lower() in SHELL_NAMES:
-                errors.append(
-                    f"{path.relative_to(repository_root).as_posix()} ({job_name}): "
-                    f"задан shell {default_shell}."
-                )
-            for index, step in enumerate(job.get("steps", [])):
+            steps = job.get("steps", [])
+            if not isinstance(steps, list):
+                errors.append(f"{job_location}: steps должен быть списком.")
+                continue
+            for index, step in enumerate(steps):
                 if not isinstance(step, dict):
+                    errors.append(f"{job_location}, шаг {index + 1}: step должен быть объектом.")
                     continue
                 where = (
                     f"{path.relative_to(repository_root).as_posix()} ({job_name}, шаг {index + 1})"
                 )
                 shell = step.get("shell")
+                if "shell" in step and not isinstance(shell, str):
+                    errors.append(f"{where}: shell должен быть строкой.")
                 if isinstance(shell, str) and shell.lower() in SHELL_NAMES:
                     errors.append(f"{where}: задан shell {shell}.")
                 run = step.get("run")
                 if not isinstance(run, str):
+                    if "run" in step:
+                        errors.append(f"{where}: run должен быть строкой.")
                     continue
                 lines = run.strip().splitlines()
-                effective_shell = shell if isinstance(shell, str) else default_shell
+                effective_shell = shell if isinstance(shell, str) else effective_default_shell
                 if windows_job and not (
                     isinstance(effective_shell, str) and effective_shell.lower() == "python"
                 ):

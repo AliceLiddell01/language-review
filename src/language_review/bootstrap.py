@@ -137,6 +137,8 @@ def install(arguments: argparse.Namespace) -> int:
                 if not item.is_file():
                     raise ReleaseError("Комплект содержит неожиданный каталог.")
                 shutil.copyfile(item, bundle / item.name)
+            if digest(bundle / "release.json") != arguments.trusted_manifest_sha256:
+                raise ReleaseError("Копия release manifest не совпадает с доверенным SHA-256.")
         else:
             if arguments.trusted_manifest_sha256:
                 raise ReleaseError("Доверенный digest применяется только с --bundle-directory.")

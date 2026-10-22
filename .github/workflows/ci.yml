@@ -28,50 +28,23 @@ jobs:
           version: "0.13.1"
           enable-cache: true
       - name: Установить Python
-        shell: python
-        run: |
-          import subprocess
-          raise SystemExit(subprocess.run(["uv", "python", "install"], check=False).returncode)
+        run: uv python install
       - name: Установить закреплённые зависимости
-        shell: python
-        run: |
-          import subprocess
-          raise SystemExit(subprocess.run(["uv", "sync", "--locked"], check=False).returncode)
+        run: uv sync --locked
       - name: Проверить стиль Ruff
-        shell: python
-        run: |
-          import subprocess
-          raise SystemExit(subprocess.run(["uv", "run", "--locked", "ruff", "check", "."], check=False).returncode)
+        run: uv run --locked ruff check .
       - name: Проверить форматирование Ruff
-        shell: python
-        run: |
-          import subprocess
-          raise SystemExit(subprocess.run(["uv", "run", "--locked", "ruff", "format", "--check", "."], check=False).returncode)
+        run: uv run --locked ruff format --check .
       - name: Проверить типы mypy
-        shell: python
-        run: |
-          import subprocess
-          raise SystemExit(subprocess.run(["uv", "run", "--locked", "mypy"], check=False).returncode)
+        run: uv run --locked mypy
       - name: Проверить метаданные Agent Skills и ссылки
-        shell: python
-        run: |
-          import subprocess
-          raise SystemExit(subprocess.run(["uv", "run", "--locked", "python", ".github/scripts/check_skill_contracts.py"], check=False).returncode)
+        run: uv run --locked python .github/scripts/check_skill_contracts.py
       - name: Проверить защиту локальных данных
-        shell: python
-        run: |
-          import subprocess
-          raise SystemExit(subprocess.run(["uv", "run", "--locked", "python", ".github/scripts/check_local_data_untracked.py"], check=False).returncode)
+        run: uv run --locked python .github/scripts/check_local_data_untracked.py
       - name: Проверить отсутствие shell-автоматизации
-        shell: python
-        run: |
-          import subprocess
-          raise SystemExit(subprocess.run(["uv", "run", "--locked", "python", ".github/scripts/check_shell_automation.py"], check=False).returncode)
+        run: uv run --locked python .github/scripts/check_shell_automation.py
       - name: Проверить скрипты репозитория
-        shell: python
-        run: |
-          import subprocess
-          raise SystemExit(subprocess.run(["uv", "run", "--locked", "python", "-m", "unittest", "discover", "-s", ".github/scripts", "-p", "test_*.py"], check=False).returncode)
+        run: uv run --locked python -m unittest discover -s .github/scripts -p 'test_*.py'
 
   memory-integration:
     name: PostgreSQL / pgvector • интеграция (Ubuntu)
@@ -100,20 +73,11 @@ jobs:
         with:
           version: "0.13.1"
       - name: Установить Python
-        shell: python
-        run: |
-          import subprocess
-          raise SystemExit(subprocess.run(["uv", "python", "install"], check=False).returncode)
+        run: uv python install
       - name: Установить закреплённые зависимости
-        shell: python
-        run: |
-          import subprocess
-          raise SystemExit(subprocess.run(["uv", "sync", "--locked", "--extra", "memory"], check=False).returncode)
+        run: uv sync --locked --extra memory
       - name: Проверить настоящий PostgreSQL
-        shell: python
-        run: |
-          import subprocess
-          raise SystemExit(subprocess.run(["uv", "run", "--locked", "--extra", "memory", "pytest", "-n", "8", "tests/test_memory.py", "tests/test_memory_integration.py", "tests/test_memory_worker.py"], check=False).returncode)
+        run: uv run --locked --extra memory pytest -n 8 tests/test_memory.py tests/test_memory_integration.py tests/test_memory_worker.py
 
   windows-smoke:
     name: Python 3.15 • пакет и CLI (Windows)

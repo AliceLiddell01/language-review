@@ -124,7 +124,8 @@ def test_installer_rejects_invalid_compose_identity_before_any_side_effect(
     )
     assert result.returncode != 0
     stderr = result.stderr.decode(errors="replace")
-    assert "project" in stderr.lower()
+    assert "usage:" not in stderr.lower()
+    assert "некорректный project:" in stderr.lower()
     assert not runtime.exists()
 
 

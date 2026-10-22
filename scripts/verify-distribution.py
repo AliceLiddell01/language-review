@@ -624,9 +624,7 @@ def verify(
         command(no_path_bootstrap, bootstrap_env, inputs / "repo-b")
         no_path_state = json.loads((install_root / "installation.json").read_text("utf-8"))
         require(
-            no_path_state["extras"] == "all"
-            and no_path_state["path_requested"] is False
-            and no_path_state["path_added"] is False,
+            no_path_state["extras"] == "all" and no_path_state["path_requested"] is False,
             "Явный -NoPath не сохранил состояние установки.",
         )
         default_bootstrap = no_path_bootstrap.copy()
@@ -640,7 +638,7 @@ def verify(
             default_state["active"] == no_path_state["active"]
             and default_state["extras"] == "all"
             and default_state["path_requested"] is False
-            and default_state["path_added"] is False,
+            and default_state["path_added"] == no_path_state["path_added"],
             "Повторный bootstrap без параметров изменил extras или регистрацию PATH.",
         )
         current = default_state

@@ -180,13 +180,21 @@ def _static_strings(
     return []
 
 
-def _path_suffix(node: ast.AST, assignments: dict[str, list[ast.AST]]) -> str | None:
+def _path_suffix(
+    node: ast.AST,
+    assignments: dict[str, list[ast.AST]],
+    seen: set[str] | None = None,
+) -> str | None:
+    seen = set() if seen is None else seen
     if isinstance(node, ast.Name):
+        if node.id in seen:
+            return None
+        seen.add(node.id)
         return next(
             (
                 suffix
                 for value in assignments.get(node.id, [])
-                if (suffix := _path_suffix(value, assignments)) is not None
+                if (suffix := _path_suffix(value, assignments, seen.copy())) is not None
             ),
             None,
         )
@@ -201,10 +209,12 @@ def _path_suffix(node: ast.AST, assignments: dict[str, list[ast.AST]]) -> str | 
                 tail = ""
         return PurePosixPath(tail.replace("\\", "/")).suffix.lower() if tail else None
     if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Div, ast.Add)):
-        return _path_suffix(node.right, assignments) or _path_suffix(node.left, assignments)
+        return _path_suffix(node.right, assignments, seen.copy()) or _path_suffix(
+            node.left, assignments, seen.copy()
+        )
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
         if node.func.attr == "with_name" and node.args:
-            return _path_suffix(node.args[-1], assignments)
+            return _path_suffix(node.args[-1], assignments, seen.copy())
         if node.func.attr == "with_suffix" and node.args:
             suffix = _constant_string(node.args[-1], assignments)
             return PurePosixPath("artifact" + suffix).suffix.lower() if suffix else None
@@ -252,9 +262,9 @@ def _path_targets_shell_file(
         return _is_shell_path(tail) if tail else False
     if isinstance(node, ast.BinOp):
         if isinstance(node.op, (ast.Div, ast.Add)):
-            return _path_targets_shell_file(node.left, assignments) or _path_targets_shell_file(
-                node.right, assignments
-            )
+            return _path_targets_shell_file(
+                node.left, assignments, seen.copy()
+            ) or _path_targets_shell_file(node.right, assignments, seen.copy())
     if isinstance(node, ast.Call):
         if isinstance(node.func, ast.Attribute) and node.func.attr == "with_suffix":
             if not node.args:
@@ -262,21 +272,23 @@ def _path_targets_shell_file(
             suffix = node.args[-1]
             if isinstance(suffix, ast.Constant) and isinstance(suffix.value, str):
                 return _is_shell_path("artifact" + suffix.value)
-            return _path_targets_shell_file(node.args[0], assignments)
+            return _path_targets_shell_file(node.args[0], assignments, seen.copy())
         if isinstance(node.func, ast.Attribute) and node.func.attr == "with_name":
             if not node.args:
                 return False
             name = node.args[-1]
             if isinstance(name, ast.Constant) and isinstance(name.value, str):
                 return _is_shell_path(name.value)
-            return _path_targets_shell_file(node.args[0], assignments)
+            return _path_targets_shell_file(node.args[0], assignments, seen.copy())
         if isinstance(node.func, ast.Name) and node.func.id in {
             "Path",
             "PurePath",
             "PurePosixPath",
             "PureWindowsPath",
         }:
-            return bool(node.args) and _path_targets_shell_file(node.args[0], assignments)
+            return bool(node.args) and _path_targets_shell_file(
+                node.args[0], assignments, seen.copy()
+            )
         if isinstance(node.func, ast.Attribute) and node.func.attr in {
             "NamedTemporaryFile",
             "TemporaryFile",

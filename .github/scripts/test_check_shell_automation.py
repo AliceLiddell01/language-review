@@ -129,6 +129,24 @@ class ShellAutomationGateTests(unittest.TestCase):
             [],
         )
 
+    def test_path_analysis_handles_self_referencing_assignments(self):
+        sources = (
+            "from pathlib import Path\n"
+            "def generate_files(path):\n"
+            "    path = Path(path)\n"
+            "    path = path / 'sub'\n"
+            "    path.write_text('content')\n",
+            "from pathlib import Path\n"
+            "def generate_files(path):\n"
+            "    path = Path(path)\n"
+            "    path = path / 'sub'\n"
+            "    open(path, 'w')\n",
+        )
+
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertEqual(source_automation_errors(source), [])
+
     def test_launcher_generator_returning_shell_output_is_reported(self):
         source = (
             "def launcher_files(root):\n"

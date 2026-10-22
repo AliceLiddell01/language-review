@@ -182,15 +182,31 @@ def _assert_no_shell_outputs(artifact: Path) -> None:
 
 def _make_workspace() -> tuple[Path, Path]:
     temp_base = Path(tempfile.gettempdir()).resolve()
-    temp_root = Path(tempfile.mkdtemp(prefix="language-review-smoke-")).resolve()
+    temp_root = Path(tempfile.mkdtemp(prefix="language-review-smoke-"))
     try:
-        if os.path.commonpath((str(temp_base), str(temp_root))) != str(temp_base):
+        resolved = temp_root.resolve()
+        try:
+            within_temp = os.path.commonpath((str(temp_base), str(resolved))) == str(temp_base)
+        except ValueError as error:
+            raise SmokeFailure(
+                "Временный путь smoke-проверки находится на другом диске."
+            ) from error
+        if not within_temp:
             raise SmokeFailure(
                 "Временный путь smoke-проверки вышел за системный каталог временных файлов."
             )
-    except ValueError as error:
-        raise SmokeFailure("Временный путь smoke-проверки находится на другом диске.") from error
-    return temp_base, temp_root
+    except BaseException as error:
+        try:
+            if temp_root.is_symlink():
+                temp_root.unlink()
+            else:
+                temp_root.rmdir()
+        except OSError as cleanup_error:
+            error.add_note(
+                "Не удалось удалить пустую временную область: " + type(cleanup_error).__name__ + "."
+            )
+        raise
+    return temp_base, resolved
 
 
 def _remove_workspace(temp_base: Path, temp_root: Path) -> None:
@@ -702,18 +718,18 @@ def verify_package() -> None:
     expected_version_output = f"language-review {expected_version}"
 
     temp_base, temp_root = _make_workspace()
-    project_env = os.environ.copy()
-    project_env["APPDATA"] = str(temp_root / "appdata")
-    project_env["LOCALAPPDATA"] = str(temp_root / "localappdata")
-    project_env["PYTHONIOENCODING"] = "utf-8"
-    (temp_root / "appdata").mkdir()
-    (temp_root / "localappdata").mkdir()
-    if not project_env.get("UV_CACHE_DIR"):
-        project_env["UV_CACHE_DIR"] = _run(
-            "определение кэша uv", ["uv", "cache", "dir"], env=project_env
-        ).stdout.strip()
-
     try:
+        project_env = os.environ.copy()
+        project_env["APPDATA"] = str(temp_root / "appdata")
+        project_env["LOCALAPPDATA"] = str(temp_root / "localappdata")
+        project_env["PYTHONIOENCODING"] = "utf-8"
+        (temp_root / "appdata").mkdir()
+        (temp_root / "localappdata").mkdir()
+        if not project_env.get("UV_CACHE_DIR"):
+            project_env["UV_CACHE_DIR"] = _run(
+                "определение кэша uv", ["uv", "cache", "dir"], env=project_env
+            ).stdout.strip()
+
         distribution_directory = temp_root / "dist"
         distribution_directory.mkdir()
         _run(

@@ -69,6 +69,7 @@ def create_junction(link: Path, target: Path) -> None:
     )
     input_buffer = ctypes.create_string_buffer(reparse_buffer)
     returned = wintypes.DWORD()
+    error = None
     try:
         if not kernel.DeviceIoControl(
             handle,
@@ -81,7 +82,8 @@ def create_junction(link: Path, target: Path) -> None:
             None,
         ):
             error = ctypes.WinError(ctypes.get_last_error())
-            link.rmdir()
-            raise error
     finally:
         kernel.CloseHandle(handle)
+    if error is not None:
+        link.rmdir()
+        raise error

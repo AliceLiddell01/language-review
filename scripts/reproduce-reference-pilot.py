@@ -68,17 +68,20 @@ def prepare_destination(value: Path, repository: Path) -> Path:
 
     target = parent / value.name
     root = repository.resolve()
-    target_text = os.path.normcase(os.path.abspath(target))
-    root_text = os.path.normcase(os.path.abspath(root))
-    try:
-        inside_repository = os.path.commonpath((target_text, root_text)) == root_text
-    except ValueError:
-        inside_repository = False
-    if inside_repository:
+    if is_inside_repository(target, root):
         raise PilotError("Данные и результаты должны находиться вне checkout.")
     if target.exists() or target.is_symlink():
         raise PilotError("Нужен новый каталог артефактов.")
     return target
+
+
+def is_inside_repository(path: Path, repository: Path) -> bool:
+    path_text = os.path.normcase(os.path.abspath(path))
+    root_text = os.path.normcase(os.path.abspath(repository.resolve()))
+    try:
+        return os.path.commonpath((path_text, root_text)) == root_text
+    except ValueError:
+        return False
 
 
 def command(
@@ -184,6 +187,8 @@ def run_pilot(arguments: argparse.Namespace, repository: Path = ROOT) -> Path:
     cache_root = (
         resolve_existing(arguments.cache_root, "CacheRoot") if arguments.cache_root else None
     )
+    if cache_root and is_inside_repository(cache_root, repository):
+        raise PilotError("CacheRoot должен находиться вне checkout.")
     engines = arguments.engine or ["vale"]
 
     sha, status = git_state(repository)

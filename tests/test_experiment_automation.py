@@ -18,11 +18,16 @@ def _load_script(name: str) -> Any:
     return module
 
 
-def test_hindsight_cleanup_targets_only_container_id_from_current_run(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def _stub_hindsight(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    api_version: str = "1.0.0",
+    container_identifier: str = "a" * 64,
+    benchmark_exit: int = 0,
+    cleanup_exit: int = 0,
+) -> tuple[Any, list[list[str]]]:
     experiment = _load_script("experiment-hindsight.py")
-    container = "a" * 64
     calls: list[list[str]] = []
 
     class TemporaryDirectory:
@@ -39,18 +44,34 @@ def test_hindsight_cleanup_targets_only_container_id_from_current_run(
         calls.append(arguments)
         if arguments[:2] == ["docker", "run"]:
             cid_file = Path(arguments[arguments.index("--cidfile") + 1])
-            cid_file.write_text(container, encoding="ascii")
-        return SimpleNamespace(returncode=0)
+            cid_file.write_text(container_identifier, encoding="ascii")
+            return SimpleNamespace(returncode=0)
+        if arguments[:2] == ["uv", "run"]:
+            return SimpleNamespace(returncode=benchmark_exit)
+        if arguments[:3] == ["docker", "rm", "--force"]:
+            return SimpleNamespace(returncode=cleanup_exit)
+        raise AssertionError(f"Неожиданный вызов: {arguments}")
 
     monkeypatch.setattr(experiment, "reserve_port", lambda: 43123)
-    monkeypatch.setattr(experiment, "api_description", lambda _url: {"info": {"version": "1.0.0"}})
+    monkeypatch.setattr(
+        experiment, "api_description", lambda _url: {"info": {"version": api_version}}
+    )
     monkeypatch.setattr(experiment.tempfile, "TemporaryDirectory", TemporaryDirectory)
     monkeypatch.setattr(experiment.subprocess, "run", run)
+    return experiment, calls
+
+
+def test_hindsight_cleanup_targets_only_container_id_from_current_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    container = "a" * 64
+    experiment, calls = _stub_hindsight(monkeypatch, tmp_path, container_identifier=container)
 
     output = tmp_path / "benchmark.json"
     assert experiment.run_experiment(output) == 0
 
     assert calls[0][:4] == ["docker", "run", "-d", "--cidfile"]
+    assert "127.0.0.1:43123:8888" in calls[0]
     assert experiment.IMAGE in calls[0]
     assert calls[1][0:2] == ["uv", "run"]
     assert calls[1][calls[1].index("--extra") + 1] == "memory"
@@ -59,12 +80,58 @@ def test_hindsight_cleanup_targets_only_container_id_from_current_run(
     assert "Артефакты:" in capsys.readouterr().out
 
 
+def test_hindsight_failed_benchmark_still_removes_container_and_preserves_exit_code(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    experiment, calls = _stub_hindsight(monkeypatch, tmp_path, benchmark_exit=7)
+
+    result = experiment.run_experiment(tmp_path / "benchmark.json")
+
+    assert result == 7
+    assert calls[-1] == ["docker", "rm", "--force", "a" * 64]
+    assert "Benchmark Hindsight не выполнен." in capsys.readouterr().err
+
+
+def test_hindsight_version_mismatch_still_removes_container(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    experiment, calls = _stub_hindsight(monkeypatch, tmp_path, api_version="0.9.0")
+
+    with pytest.raises(experiment.ExperimentError, match="Неожиданная версия API"):
+        experiment.run_experiment(tmp_path / "benchmark.json")
+
+    assert calls[-1] == ["docker", "rm", "--force", "a" * 64]
+
+
+def test_hindsight_cleanup_failure_returns_failure_after_successful_benchmark(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    experiment, calls = _stub_hindsight(monkeypatch, tmp_path, cleanup_exit=1)
+
+    assert experiment.run_experiment(tmp_path / "benchmark.json") == 1
+
+    assert calls[-1] == ["docker", "rm", "--force", "a" * 64]
+    assert "Не удалось удалить контейнер текущего эксперимента." in capsys.readouterr().err
+
+
 def test_hindsight_rejects_unowned_container_identifier(tmp_path: Path) -> None:
     experiment = _load_script("experiment-hindsight.py")
     cid_file = tmp_path / "container.id"
     cid_file.write_text("container-name", encoding="ascii")
 
     assert experiment.container_id(cid_file) is None
+
+
+def test_hindsight_does_not_remove_container_for_unowned_identifier(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    experiment, calls = _stub_hindsight(
+        monkeypatch, tmp_path, container_identifier="container-name"
+    )
+
+    assert experiment.run_experiment(tmp_path / "benchmark.json") == 0
+
+    assert not any(call[:3] == ["docker", "rm", "--force"] for call in calls)
 
 
 def test_pilot_parser_keeps_engine_and_limit_contract() -> None:
@@ -107,6 +174,69 @@ def test_pilot_destination_must_be_new_and_outside_checkout(tmp_path: Path) -> N
         pilot.prepare_destination(outside, checkout)
 
     assert pilot.prepare_destination(outside / "new-run", checkout) == outside / "new-run"
+
+
+def test_pilot_cache_root_must_be_outside_checkout_before_commands(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pilot = _load_script("reproduce-reference-pilot.py")
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    cache = checkout / "cache"
+    cache.mkdir()
+    target = tmp_path / "results"
+    arguments = pilot.parser().parse_args(
+        ["--destination", str(target), "--cache-root", str(cache)]
+    )
+    commands: list[list[str]] = []
+    monkeypatch.setattr(pilot, "command", lambda args, **_kwargs: commands.append(args))
+
+    with pytest.raises(pilot.PilotError, match="CacheRoot должен находиться вне checkout"):
+        pilot.run_pilot(arguments, checkout)
+
+    assert commands == []
+    assert not target.exists()
+
+
+def test_package_smoke_cleans_workspace_when_uv_cache_discovery_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    verifier = _load_script("verify-package.py")
+    workspace = tmp_path / "smoke-workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(verifier, "_make_workspace", lambda: (tmp_path, workspace))
+    monkeypatch.delenv("UV_CACHE_DIR", raising=False)
+
+    def run(label: str, _arguments: list[str], **_kwargs: Any) -> SimpleNamespace:
+        if label == "поиск Python 3.15":
+            return SimpleNamespace(stdout=str(Path(__file__).resolve()))
+        if label == "определение кэша uv":
+            raise verifier.SmokeFailure("Синтетическая ошибка поиска кэша uv.")
+        raise AssertionError(f"Неожиданный шаг smoke-проверки: {label}")
+
+    monkeypatch.setattr(verifier, "_run", run)
+
+    with pytest.raises(verifier.SmokeFailure, match="Синтетическая ошибка поиска кэша uv"):
+        verifier.verify_package()
+
+    assert not workspace.exists()
+
+
+def test_package_smoke_removes_workspace_after_failed_temp_path_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    verifier = _load_script("verify-package.py")
+    temp_base = tmp_path / "system-temp"
+    temp_base.mkdir()
+    workspace = tmp_path / "outside-temp"
+    workspace.mkdir()
+    monkeypatch.setattr(verifier.tempfile, "gettempdir", lambda: str(temp_base))
+    monkeypatch.setattr(verifier.tempfile, "mkdtemp", lambda **_kwargs: str(workspace))
+
+    with pytest.raises(verifier.SmokeFailure, match="вышел за системный каталог"):
+        verifier._make_workspace()
+
+    assert not workspace.exists()
 
 
 def test_pilot_offline_file_comparison_is_byte_exact(tmp_path: Path) -> None:

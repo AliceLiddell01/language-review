@@ -18,6 +18,19 @@ import pytest
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="NOT_RUN: точка входа Windows Scheduler")
 
 
+def test_scrub_preserves_port_digits_inside_serialized_state() -> None:
+    from language_review.memory.service import scrub
+
+    port = "54329"
+    record = {
+        "at": "2026-10-23T12:34:56.543290+00:00",
+        "supervisor_created_at": 154329,
+    }
+    payload = json.dumps(record)
+
+    assert scrub(payload, {"LANGUAGE_REVIEW_DB_PORT": port}) == payload
+
+
 @pytest.mark.parametrize("encoding", ["console", "utf-16"])
 def test_scheduler_query_parses_xml_from_schtasks(
     tmp_path: Path, monkeypatch, encoding: str
@@ -272,7 +285,9 @@ import sys
 runtime = pathlib.Path(sys.argv[sys.argv.index('--runtime-directory') + 1])
 child = subprocess.Popen([sys.executable, '-I', '-c', 'import time; time.sleep(120)'])
 (runtime / 'children.json').write_text(json.dumps([os.getpid(), child.pid]))
-service = runpy.run_path({str(source)!r})
+source = pathlib.Path({str(source)!r})
+sys.path.insert(0, str(source.parents[2]))
+service = runpy.run_path(str(source))
 supervisor = service['Supervisor'](runtime, database_factory=lambda *args, **kwargs: None,
                                    models_loader=lambda: [])
 raise SystemExit(supervisor.run())

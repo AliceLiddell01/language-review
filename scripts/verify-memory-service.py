@@ -269,8 +269,21 @@ def main(argv: list[str] | None = None) -> int:
 
     def processed(project_id: str) -> dict[str, Any]:
         deadline = time.monotonic() + 300
+        database_retry_deadline: float | None = None
         while time.monotonic() < deadline:
-            status = cli(["memory", "status", "--project", project_id])
+            try:
+                status = cli(["memory", "status", "--project", project_id])
+            except RuntimeError:
+                error = (scratch / "cli.stderr.log").read_text("utf-8", errors="replace")
+                if "memory_database_failed" not in error:
+                    raise
+                if database_retry_deadline is None:
+                    database_retry_deadline = time.monotonic() + 60
+                if time.monotonic() >= database_retry_deadline:
+                    raise
+                time.sleep(2)
+                continue
+            database_retry_deadline = None
             jobs = status.get("jobs", [])
             if any(job["state"] == "failed" for job in jobs):
                 raise RuntimeError("Фоновый обработчик исчерпал попытки.")

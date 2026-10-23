@@ -344,22 +344,24 @@ def test_probe_failure_is_recorded_before_completion(
     assert attempt["stages"]["probe"]["configured_limit_ms"] > 0
 
 
-def test_initial_attempt_record_failure_returns_retry_result(
-    worker_store: Store, stored: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("failure_stage", ["claim", "context"])
+def test_attempt_record_failure_returns_retry_result(
+    worker_store: Store,
+    stored: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    failure_stage: str,
 ) -> None:
     from language_review.memory.store import MemoryFeatureError
 
     project = seed(worker_store, stored["report"])
     original = worker_store.record_attempt
 
-    def fail_initial_record(
-        job: dict[str, Any], diagnostic: dict[str, Any], db: Any | None = None
-    ) -> None:
-        if diagnostic["stage"] == "claim":
+    def fail_record(job: dict[str, Any], diagnostic: dict[str, Any], db: Any | None = None) -> None:
+        if diagnostic["stage"] == failure_stage:
             raise MemoryFeatureError("memory_database_failed")
         original(job, diagnostic, db)
 
-    monkeypatch.setattr(worker_store, "record_attempt", fail_initial_record)
+    monkeypatch.setattr(worker_store, "record_attempt", fail_record)
 
     result = process_one(worker_store, project, CheckSettings(), DiagnosticProvider())
 
@@ -369,6 +371,10 @@ def test_initial_attempt_record_failure_returns_retry_result(
     assert attempt["job_state"] == "pending"
     assert attempt["outcome"] == "failed"
     assert attempt["error"] == "memory_database_failed"
+    if failure_stage == "context":
+        assert attempt["stage"] == "context"
+        assert attempt["stages"]["context"]["outcome"] == "failed"
+        assert isinstance(attempt["stages"]["context"]["duration_ms"], int)
 
 
 def test_attempt_history_keeps_timeout_after_successful_retry(

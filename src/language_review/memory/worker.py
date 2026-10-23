@@ -136,6 +136,7 @@ def process_one(
         if configured_limit_ms is not None:
             stage_record["configured_limit_ms"] = configured_limit_ms
         diagnostic["stages"][name] = stage_record
+        active_stage = (name, time.perf_counter_ns())
         store.record_attempt(job, diagnostic)
         active_stage = (name, time.perf_counter_ns())
         return active_stage[1]

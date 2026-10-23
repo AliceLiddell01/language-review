@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from copy import deepcopy
 from typing import Any
 
@@ -67,28 +68,136 @@ def worker_lease_seconds(settings: CheckSettings) -> int:
     return math.ceil(min(timeout, 10.0) + timeout + 30.0)
 
 
+def _attempt_fields(job: dict[str, Any], diagnostic: dict[str, Any]) -> dict[str, Any]:
+    """Безопасная проекция попытки для машинного результата worker."""
+    return {
+        "attempt_id": str(job["attempt_id"]),
+        "attempt": job["attempt"],
+        "project_id": str(job["project_id"]),
+        "diagnostic": deepcopy(diagnostic),
+    }
+
+
+def _duration_ms(started_ns: int) -> int:
+    return max(0, round((time.perf_counter_ns() - started_ns) / 1_000_000))
+
+
+def _post_schema_subreason(
+    rule: dict[str, Any],
+    aliases: dict[str, str],
+    permitted: set[str],
+    current_id: str,
+    category: str,
+) -> str | None:
+    evidence = rule["evidence"]
+    if any(alias not in aliases for alias in evidence):
+        return "evidence_alias_unknown"
+    rule["evidence"] = [aliases[alias] for alias in evidence]
+    if not set(rule["evidence"]) <= permitted:
+        return "evidence_outside_permitted"
+    if current_id not in rule["evidence"]:
+        return "current_evidence_missing"
+    if rule["category"] != category:
+        return "category_mismatch"
+    if sanitize(rule) != rule:
+        return "sanitize_changed"
+    if not rule["text"].strip():
+        return "empty_text_after_strip"
+    return None
+
+
 def process_one(
     store: Store, project: str | None, settings: CheckSettings, provider: Provider | None = None
 ) -> dict[str, Any] | None:
     if settings.llm_provider == "chatgpt" or (provider is not None and provider.name == "chatgpt"):
         # Согласие check не разрешает передачу фонового журнала и базы знаний.
         raise MemoryFeatureError("memory_cloud_consolidation_not_supported")
+    claim_started_ns = time.perf_counter_ns()
     job = store.claim(project, lease_seconds=worker_lease_seconds(settings))
     if job is None:
         return None
     project = str(job["project_id"])
+    diagnostic: dict[str, Any] = {
+        "stage": "claim",
+        "outcome": "running",
+        "disposition": "running",
+        "error": None,
+        "subreason": None,
+        "stages": {
+            "claim": {"outcome": "succeeded", "duration_ms": _duration_ms(claim_started_ns)}
+        },
+    }
+    store.record_attempt(job, diagnostic)
+    active_stage: tuple[str, int] | None = None
+
+    def begin_stage(name: str, configured_limit_ms: int | None = None) -> int:
+        nonlocal active_stage
+        diagnostic["stage"] = name
+        stage_record: dict[str, Any] = {"outcome": "running"}
+        if configured_limit_ms is not None:
+            stage_record["configured_limit_ms"] = configured_limit_ms
+        diagnostic["stages"][name] = stage_record
+        store.record_attempt(job, diagnostic)
+        active_stage = (name, time.perf_counter_ns())
+        return active_stage[1]
+
+    def finish_stage(
+        outcome: str = "succeeded", *, persist: bool = True, keep_active: bool = False
+    ) -> None:
+        nonlocal active_stage
+        if active_stage is None:
+            return
+        name, started_ns = active_stage
+        diagnostic["stages"][name]["duration_ms"] = _duration_ms(started_ns)
+        diagnostic["stages"][name]["outcome"] = outcome
+        diagnostic["stage"] = name
+        if not keep_active:
+            active_stage = None
+        if persist:
+            store.record_attempt(job, diagnostic)
+
+    def failed(code: str) -> dict[str, Any]:
+        if active_stage is not None:
+            finish_stage("failed", persist=False)
+        diagnostic["error"] = code
+        if code == "memory_worker_lease_lost":
+            diagnostic["outcome"] = "stale"
+            diagnostic["disposition"] = "stale"
+        else:
+            diagnostic["outcome"] = "failed"
+            diagnostic["disposition"] = (
+                "retry" if job["attempts"] < store.settings.max_attempts else "failed_final"
+            )
+        store.fail(job, code, diagnostic)
+        return {
+            "job": job["id"],
+            "status": "retry_or_failed",
+            "reason": code,
+            **_attempt_fields(job, diagnostic),
+        }
+
     try:
+        begin_stage("context")
         with store.connect() as db:
             current = db.execute(
                 "SELECT * FROM lr_findings WHERE id=%s", (job["finding_id"],)
             ).fetchone()
             if current["revision"] != job["revision"]:
+                finish_stage("stale", persist=False, keep_active=True)
                 db.execute(
                     "UPDATE lr_jobs SET state='done',result=%s,owner=NULL,lease_until=NULL "
                     "WHERE id=%s AND owner=%s AND state='running'",
                     (store.json({"stale": True, "rules": 0}), job["id"], job["owner"]),
                 )
-                return {"job": job["id"], "status": "done", "stale": True, "rules": 0}
+                diagnostic.update(outcome="stale", disposition="stale")
+                store.record_attempt(job, diagnostic, db=db)
+                return {
+                    "job": job["id"],
+                    "status": "done",
+                    "stale": True,
+                    "rules": 0,
+                    **_attempt_fields(job, diagnostic),
+                }
             if current["dataset"] in {"test", "holdout"}:
                 raise MemoryFeatureError("memory_evaluation_leakage_refused")
             related = db.execute(
@@ -123,32 +232,60 @@ def process_one(
         properties["evidence"]["items"]["enum"] = list(aliases)
         properties["category"]["enum"] = [current["payload"]["category"]]
         client = provider or create_provider(settings)
+        finish_stage()
+
+        begin_stage("probe", round(min(settings.llm_timeout_seconds, 10.0) * 1000))
         probe = client.probe()
         if probe.status != "available":
             raise MemoryFeatureError("memory_llm_unavailable")
+        finish_stage()
+
+        begin_stage("completion", round(settings.llm_timeout_seconds * 1000))
         reply = client.complete(
             SYSTEM_PROMPT,
             json.dumps({"current": "c1", "cases": data}, ensure_ascii=False),
             schema,
         )
+        token_counts = {
+            key: value
+            for key, value in (
+                ("prompt", reply.prompt_tokens),
+                ("completion", reply.completion_tokens),
+            )
+            if type(value) is int and value >= 0
+        }
+        if token_counts:
+            diagnostic["stages"]["completion"]["token_counts"] = token_counts
         if reply.truncated:
             raise MemoryFeatureError("memory_llm_truncated")
+        finish_stage()
+
+        begin_stage("parse_schema")
         try:
             document = json.loads(reply.content, object_pairs_hook=unique_object)
             Draft202012Validator(schema).validate(document)
-        except (ValueError, ValidationError) as exc:
+        except ValidationError as exc:
+            diagnostic["subreason"] = "schema_validation_failed"
             raise MemoryFeatureError("memory_llm_schema_invalid") from exc
+        except ValueError as exc:
+            diagnostic["subreason"] = (
+                "duplicate_json_key" if str(exc) == "duplicate_key" else "json_invalid"
+            )
+            raise MemoryFeatureError("memory_llm_schema_invalid") from exc
+        finish_stage()
+
+        begin_stage("post_schema")
         permitted = {row["id"] for row in cases}
         for rule in document["rules"]:
-            rule["evidence"] = [aliases[alias] for alias in rule["evidence"]]
-            if (
-                not set(rule["evidence"]) <= permitted
-                or current["id"] not in rule["evidence"]
-                or rule["category"] != current["payload"]["category"]
-                or sanitize(rule) != rule
-                or not rule["text"].strip()
-            ):
+            subreason = _post_schema_subreason(
+                rule, aliases, permitted, current["id"], current["payload"]["category"]
+            )
+            if subreason is not None:
+                diagnostic["subreason"] = subreason
                 raise MemoryFeatureError("memory_llm_evidence_invalid")
+        finish_stage()
+
+        begin_stage("persistence")
         with store.connect() as db:
             owned = db.execute(
                 "SELECT * FROM lr_jobs WHERE id=%s AND owner=%s AND state='running' "
@@ -287,14 +424,24 @@ def process_one(
                 "WHERE id=%s AND owner=%s",
                 (store.json(result), job["id"], job["owner"]),
             )
-        return {"job": job["id"], "status": "done", **result}
+            finish_stage("stale" if stale else "succeeded", persist=False, keep_active=True)
+            diagnostic.update(
+                outcome="stale" if stale else "succeeded",
+                disposition="stale" if stale else "completed",
+            )
+            store.record_attempt(job, diagnostic, db=db)
+        active_stage = None
+        return {
+            "job": job["id"],
+            "status": "done",
+            **_attempt_fields(job, diagnostic),
+            **result,
+        }
     except (EngineHttpError, LlmResponseError) as exc:
         code = f"memory_llm_{exc.code}"
-        store.fail(job, code)
-        return {"job": job["id"], "status": "retry_or_failed", "reason": code}
+        return failed(code)
     except MemoryFeatureError as exc:
-        store.fail(job, str(exc))
-        return {"job": job["id"], "status": "retry_or_failed", "reason": str(exc)}
+        return failed(str(exc))
 
 
 def work(
@@ -330,10 +477,26 @@ def work(
         remaining = limit - indexed["indexed"]
         if not remaining:
             break
+        started_ns = time.perf_counter_ns()
+        stage_error = None
         try:
             indexed["indexed"] += index_rules(store, identifier, limit=remaining)["indexed"]
         except MemoryFeatureError as exc:
-            errors.append({"project": identifier, "reason": str(exc)})
+            stage_error = str(exc)
+            errors.append({"project": identifier, "reason": stage_error})
+        duration_ms = _duration_ms(started_ns)
+        for result in results:
+            if result["project_id"] != identifier or result["diagnostic"]["outcome"] != "succeeded":
+                continue
+            store.record_attempt_stage(
+                result["job"],
+                result["attempt_id"],
+                "indexing",
+                "failed" if stage_error else "succeeded",
+                duration_ms,
+                scope="project_batch",
+                error=stage_error,
+            )
     if errors:
         indexed["errors"] = errors
     return {

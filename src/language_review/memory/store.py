@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from importlib.resources import files
@@ -16,7 +17,86 @@ from uuid import UUID, uuid4
 from language_review.memory.safety import digest, sanitize
 from language_review.memory.settings import MemorySettings, project_uuid
 
-MIGRATION_FILES = ("migrations/001.sql", "migrations/002.sql")
+MIGRATION_FILES = ("migrations/001.sql", "migrations/002.sql", "migrations/003.sql")
+
+ATTEMPT_HISTORY_LIMIT = 16
+ATTEMPT_STATUS_LIMIT = 50
+ATTEMPT_STAGES = {
+    "claim",
+    "context",
+    "probe",
+    "completion",
+    "parse_schema",
+    "post_schema",
+    "persistence",
+    "indexing",
+}
+ATTEMPT_OUTCOMES = {"running", "succeeded", "failed", "stale", "interrupted"}
+ATTEMPT_STAGE_OUTCOMES = {"running", "succeeded", "failed", "stale"}
+ATTEMPT_DISPOSITIONS = {
+    "running",
+    "retry",
+    "failed_final",
+    "completed",
+    "stale",
+    "interrupted",
+}
+ATTEMPT_SUBREASONS = {
+    "evidence_alias_unknown",
+    "evidence_outside_permitted",
+    "current_evidence_missing",
+    "category_mismatch",
+    "sanitize_changed",
+    "empty_text_after_strip",
+    "json_invalid",
+    "duplicate_json_key",
+    "schema_validation_failed",
+}
+_MACHINE_CODE = re.compile(r"^[a-z0-9_]{1,80}$")
+_DYNAMIC_HTTP_ERROR = re.compile(r"^(memory_llm|memory_embedding)_http_[1-5][0-9]{2}$")
+_MAX_TELEMETRY_MILLISECONDS = 86_400_000
+_MAX_TELEMETRY_TOKENS = 2_147_483_647
+_SAFE_ERROR_CODES = {
+    "attempts_exhausted",
+    "controlled_retry",
+    "memory_cloud_consolidation_not_supported",
+    "memory_database_failed",
+    "memory_dsn_missing",
+    "memory_embedding_connection_failed",
+    "memory_embedding_invalid_json",
+    "memory_embedding_model_not_evaluated",
+    "memory_embedding_not_configured",
+    "memory_embedding_protocol_error",
+    "memory_embedding_redirect_refused",
+    "memory_embedding_response_too_large",
+    "memory_embedding_revision_mismatch",
+    "memory_embedding_schema_invalid",
+    "memory_embedding_timeout",
+    "memory_extra_missing",
+    "memory_evaluation_leakage_refused",
+    "memory_attempt_diagnostics_invalid",
+    "memory_index_limit_invalid",
+    "memory_index_readback_failed",
+    "memory_loopback_required",
+    "memory_llm_analysis_time_budget",
+    "memory_llm_connection_failed",
+    "memory_llm_evidence_invalid",
+    "memory_llm_http_status",
+    "memory_llm_invalid_json",
+    "memory_llm_protocol_error",
+    "memory_llm_redirect_refused",
+    "memory_llm_response_too_large",
+    "memory_llm_retry_exhausted",
+    "memory_llm_schema_invalid",
+    "memory_llm_schema_violation",
+    "memory_llm_timeout",
+    "memory_llm_truncated",
+    "memory_llm_unavailable",
+    "memory_worker_attempt_lost",
+    "memory_worker_internal_error",
+    "memory_worker_lease_lost",
+    "stale_worker",
+}
 
 
 def _engine_identity(engine: dict[str, Any]) -> dict[str, Any]:
@@ -72,6 +152,118 @@ def _migration_scripts() -> list[tuple[int, str, str]]:
 
 class MemoryFeatureError(Exception):
     """Диагностический код без DSN, SQL, текста источников и ошибок сервера."""
+
+
+def _safe_machine_code(value: Any) -> str:
+    if (
+        isinstance(value, str)
+        and _MACHINE_CODE.fullmatch(value)
+        and (value in _SAFE_ERROR_CODES or _DYNAMIC_HTTP_ERROR.fullmatch(value))
+    ):
+        return value
+    return "memory_worker_internal_error"
+
+
+def _telemetry_integer(value: Any) -> bool:
+    return type(value) is int and 0 <= value <= _MAX_TELEMETRY_MILLISECONDS
+
+
+def _validate_attempt_diagnostic(value: Any) -> dict[str, Any]:
+    required = {"stage", "outcome", "disposition", "error", "subreason", "stages"}
+    if not isinstance(value, dict) or set(value) != required:
+        raise MemoryFeatureError("memory_attempt_diagnostics_invalid")
+    stage = value["stage"]
+    outcome = value["outcome"]
+    disposition = value["disposition"]
+    if (
+        not isinstance(stage, str)
+        or stage not in ATTEMPT_STAGES
+        or not isinstance(outcome, str)
+        or outcome not in ATTEMPT_OUTCOMES
+        or not isinstance(disposition, str)
+        or disposition not in ATTEMPT_DISPOSITIONS
+    ):
+        raise MemoryFeatureError("memory_attempt_diagnostics_invalid")
+    valid_dispositions = {
+        "running": {"running"},
+        "succeeded": {"completed"},
+        "failed": {"retry", "failed_final"},
+        "stale": {"stale"},
+        "interrupted": {"interrupted", "failed_final"},
+    }
+    if disposition not in valid_dispositions[outcome]:
+        raise MemoryFeatureError("memory_attempt_diagnostics_invalid")
+    error = value["error"]
+    if error is not None and not isinstance(error, str):
+        raise MemoryFeatureError("memory_attempt_diagnostics_invalid")
+    safe_error = _safe_machine_code(error) if error is not None else None
+    subreason = value["subreason"]
+    if subreason is not None and (
+        not isinstance(subreason, str) or subreason not in ATTEMPT_SUBREASONS
+    ):
+        raise MemoryFeatureError("memory_attempt_diagnostics_invalid")
+    stages = value["stages"]
+    if not isinstance(stages, dict) or len(stages) > len(ATTEMPT_STAGES):
+        raise MemoryFeatureError("memory_attempt_diagnostics_invalid")
+    safe_stages: dict[str, Any] = {}
+    allowed_stage_fields = {
+        "outcome",
+        "duration_ms",
+        "configured_limit_ms",
+        "scope",
+        "error",
+        "token_counts",
+    }
+    for name, record in stages.items():
+        if (
+            not isinstance(name, str)
+            or name not in ATTEMPT_STAGES
+            or not isinstance(record, dict)
+            or not set(record) <= allowed_stage_fields
+            or "outcome" not in record
+            or not isinstance(record["outcome"], str)
+            or record["outcome"] not in ATTEMPT_STAGE_OUTCOMES
+        ):
+            raise MemoryFeatureError("memory_attempt_diagnostics_invalid")
+        safe_record: dict[str, Any] = {"outcome": record["outcome"]}
+        for duration_key in ("duration_ms", "configured_limit_ms"):
+            if duration_key in record:
+                if not _telemetry_integer(record[duration_key]):
+                    raise MemoryFeatureError("memory_attempt_diagnostics_invalid")
+                safe_record[duration_key] = record[duration_key]
+        if "configured_limit_ms" in record and name not in {"probe", "completion"}:
+            raise MemoryFeatureError("memory_attempt_diagnostics_invalid")
+        if "scope" in record:
+            if name != "indexing" or record["scope"] != "project_batch":
+                raise MemoryFeatureError("memory_attempt_diagnostics_invalid")
+            safe_record["scope"] = "project_batch"
+        if "error" in record:
+            if name != "indexing" or not isinstance(record["error"], str):
+                raise MemoryFeatureError("memory_attempt_diagnostics_invalid")
+            safe_record["error"] = _safe_machine_code(record["error"])
+        if "token_counts" in record:
+            counts = record["token_counts"]
+            if (
+                name != "completion"
+                or not isinstance(counts, dict)
+                or not counts
+                or not set(counts) <= {"prompt", "completion"}
+                or any(
+                    type(count) is not int or not 0 <= count <= _MAX_TELEMETRY_TOKENS
+                    for count in counts.values()
+                )
+            ):
+                raise MemoryFeatureError("memory_attempt_diagnostics_invalid")
+            safe_record["token_counts"] = dict(counts)
+        safe_stages[name] = safe_record
+    return {
+        "stage": stage,
+        "outcome": outcome,
+        "disposition": disposition,
+        "error": safe_error,
+        "subreason": subreason,
+        "stages": safe_stages,
+    }
 
 
 class Store:
@@ -163,6 +355,92 @@ class Store:
             "pgvector": extension["extversion"],
             "postgresql": server,
         }
+
+    def record_attempt(
+        self, job: dict[str, Any], diagnostic: dict[str, Any], db: Any | None = None
+    ) -> None:
+        safe = _validate_attempt_diagnostic(diagnostic)
+        try:
+            attempt_id = UUID(str(job["attempt_id"]))
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            raise MemoryFeatureError("memory_attempt_diagnostics_invalid") from exc
+
+        def write(connection: Any) -> None:
+            updated = connection.execute(
+                "UPDATE lr_job_attempts SET stage=%s,"
+                "outcome=CASE WHEN outcome='running' THEN %s ELSE outcome END,"
+                "disposition=CASE WHEN outcome='running' THEN %s ELSE disposition END,"
+                "error=CASE WHEN outcome='running' THEN %s ELSE error END,"
+                "subreason=CASE WHEN outcome='running' THEN %s ELSE subreason END,"
+                "stages=%s,finished_at=CASE WHEN outcome='running' AND %s='running' THEN NULL "
+                "WHEN outcome='running' THEN clock_timestamp() ELSE finished_at END "
+                "WHERE job_id=%s AND attempt_id=%s AND owner=%s AND "
+                "(outcome='running' OR (outcome='interrupted' AND %s='running'))",
+                (
+                    safe["stage"],
+                    safe["outcome"],
+                    safe["disposition"],
+                    safe["error"],
+                    safe["subreason"],
+                    self.json(safe["stages"]),
+                    safe["outcome"],
+                    job["id"],
+                    attempt_id,
+                    job["owner"],
+                    safe["outcome"],
+                ),
+            )
+            if updated.rowcount != 1:
+                raise MemoryFeatureError("memory_worker_attempt_lost")
+
+        if db is not None:
+            write(db)
+        else:
+            with self.connect() as connection:
+                write(connection)
+
+    def record_attempt_stage(
+        self,
+        job_id: str,
+        attempt_id: str,
+        stage: str,
+        outcome: str,
+        duration_ms: int,
+        *,
+        scope: str = "project_batch",
+        error: str | None = None,
+    ) -> None:
+        if (
+            not isinstance(stage, str)
+            or stage != "indexing"
+            or not isinstance(outcome, str)
+            or outcome not in ATTEMPT_STAGE_OUTCOMES - {"running", "stale"}
+            or not _telemetry_integer(duration_ms)
+            or not isinstance(scope, str)
+            or scope != "project_batch"
+            or (error is not None and not isinstance(error, str))
+        ):
+            raise MemoryFeatureError("memory_attempt_diagnostics_invalid")
+        try:
+            attempt_uuid = UUID(str(attempt_id))
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise MemoryFeatureError("memory_attempt_diagnostics_invalid") from exc
+        safe_error = _safe_machine_code(error) if error is not None else None
+        record: dict[str, Any] = {
+            "outcome": outcome,
+            "duration_ms": duration_ms,
+            "scope": scope,
+        }
+        if safe_error is not None:
+            record["error"] = safe_error
+        with self.connect() as db:
+            updated = db.execute(
+                "UPDATE lr_job_attempts SET stages=jsonb_set(stages,'{indexing}',%s,true) "
+                "WHERE job_id=%s AND attempt_id=%s AND outcome='succeeded'",
+                (self.json(record), job_id, attempt_uuid),
+            )
+            if updated.rowcount != 1:
+                raise MemoryFeatureError("memory_worker_attempt_lost")
 
     def begin(self, run_id: str, bindings: dict[str, str], dataset: str, provenance: str) -> None:
         run_id = str(UUID(run_id))
@@ -573,6 +851,39 @@ class Store:
                 "AND j.error IS NOT NULL ORDER BY j.created_at DESC LIMIT 20",
                 (project,),
             ).fetchall()
+            errors = [{**row, "error": _safe_machine_code(row["error"])} for row in errors]
+            attempt_count = db.execute(
+                "SELECT count(*) AS count FROM lr_job_attempts a JOIN lr_jobs j "
+                "ON j.id=a.job_id JOIN lr_findings f ON f.id=j.finding_id "
+                "WHERE f.project_id=%s",
+                (project,),
+            ).fetchone()["count"]
+            attempt_failures = db.execute(
+                "SELECT error,subreason,stage,disposition,count(*) AS count FROM ("
+                "SELECT a.error,a.subreason,a.stage,a.disposition FROM lr_job_attempts a "
+                "JOIN lr_jobs j ON j.id=a.job_id JOIN lr_findings f ON f.id=j.finding_id "
+                "WHERE f.project_id=%s AND a.error IS NOT NULL "
+                "AND a.outcome IN ('failed','stale','interrupted') "
+                "UNION ALL "
+                "SELECT a.stages->'indexing'->>'error' AS error,NULL::text AS subreason,"
+                "'indexing'::text AS stage,a.disposition FROM lr_job_attempts a "
+                "JOIN lr_jobs j ON j.id=a.job_id JOIN lr_findings f ON f.id=j.finding_id "
+                "WHERE f.project_id=%s AND a.stages->'indexing'->>'outcome'='failed' "
+                "AND a.stages->'indexing'->>'error' IS NOT NULL"
+                ") failures GROUP BY error,subreason,stage,disposition "
+                "ORDER BY count DESC,error,subreason,stage,disposition",
+                (project, project),
+            ).fetchall()
+            recent_attempts = db.execute(
+                "SELECT a.job_id AS job_id,a.attempt_id::text AS attempt_id,"
+                "a.sequence AS attempt,(a.sequence>1) AS retry,j.state AS job_state,"
+                "a.stage,a.outcome,a.disposition,a.error,a.subreason,a.stages,"
+                "a.started_at,a.finished_at FROM lr_job_attempts a JOIN lr_jobs j "
+                "ON j.id=a.job_id JOIN lr_findings f ON f.id=j.finding_id "
+                "WHERE f.project_id=%s ORDER BY a.started_at DESC,a.job_id,a.sequence DESC "
+                "LIMIT %s",
+                (project, ATTEMPT_STATUS_LIMIT),
+            ).fetchall()
             indexing = db.execute(
                 "SELECT count(*) AS rules, count(e.rule_id) AS indexed "
                 "FROM lr_rules r LEFT JOIN lr_embeddings e ON e.rule_id=r.id "
@@ -600,6 +911,11 @@ class Store:
             "jobs": jobs,
             "rules": rules,
             "recent_errors": errors,
+            "attempt_diagnostics": {
+                "retained": attempt_count,
+                "failure_distribution": attempt_failures,
+                "recent": recent_attempts,
+            },
             "index": indexing,
             "processing": processing,
             "latest_consolidation": latest_llm["result"] if latest_llm else None,
@@ -625,6 +941,17 @@ class Store:
     def claim(self, project: str | None, *, lease_seconds: int = 300) -> dict[str, Any] | None:
         with self.connect() as db:
             db.execute(
+                "UPDATE lr_job_attempts a SET outcome='interrupted',"
+                "disposition='failed_final',error='attempts_exhausted',"
+                "finished_at=clock_timestamp() FROM lr_jobs j JOIN lr_findings f "
+                "ON f.id=j.finding_id WHERE j.id=a.job_id AND "
+                "(%s::uuid IS NULL OR f.project_id=%s) AND j.state='running' "
+                "AND j.lease_until<clock_timestamp() AND j.attempts>=%s "
+                "AND a.sequence=(SELECT max(last.sequence) FROM lr_job_attempts last "
+                "WHERE last.job_id=j.id) AND a.outcome='running'",
+                (project, project, self.settings.max_attempts),
+            )
+            db.execute(
                 "UPDATE lr_jobs j SET state='failed',error='attempts_exhausted' FROM lr_findings f "
                 "WHERE j.finding_id=f.id AND (%s::uuid IS NULL OR f.project_id=%s) "
                 "AND j.state='running' "
@@ -641,14 +968,51 @@ class Store:
             ).fetchone()
             if row is None:
                 return None
+            if row["state"] == "running":
+                db.execute(
+                    "UPDATE lr_job_attempts a SET outcome='interrupted',"
+                    "disposition='retry',error='memory_worker_lease_lost',"
+                    "finished_at=clock_timestamp() WHERE a.job_id=%s AND "
+                    "a.sequence=(SELECT max(last.sequence) FROM lr_job_attempts last "
+                    "WHERE last.job_id=%s) AND a.outcome='running'",
+                    (row["id"], row["id"]),
+                )
             owner = uuid4()
+            attempt_id = uuid4()
+            sequence = int(
+                db.execute(
+                    "SELECT COALESCE(max(sequence),0)+1 AS sequence "
+                    "FROM lr_job_attempts WHERE job_id=%s",
+                    (row["id"],),
+                ).fetchone()["sequence"]
+            )
             # Lease учитывает время probe, completion и запас, заданный worker.
             db.execute(
                 "UPDATE lr_jobs SET state='running',attempts=attempts+1,owner=%s,"
                 "lease_until=clock_timestamp() + %s * interval '1 second' WHERE id=%s",
                 (owner, lease_seconds, row["id"]),
             )
-            row.update(owner=owner, attempts=row["attempts"] + 1)
+            db.execute(
+                "INSERT INTO lr_job_attempts(attempt_id,job_id,sequence,owner,stage,outcome,"
+                "disposition,stages) VALUES (%s,%s,%s,%s,'claim','running','running',%s)",
+                (
+                    attempt_id,
+                    row["id"],
+                    sequence,
+                    owner,
+                    self.json({"claim": {"outcome": "running"}}),
+                ),
+            )
+            db.execute(
+                "DELETE FROM lr_job_attempts WHERE job_id=%s AND sequence <= %s",
+                (row["id"], sequence - ATTEMPT_HISTORY_LIMIT),
+            )
+            row.update(
+                owner=owner,
+                attempts=row["attempts"] + 1,
+                attempt_id=attempt_id,
+                attempt=sequence,
+            )
             return dict(row)
 
     def retry(self, project: str) -> int:
@@ -662,17 +1026,79 @@ class Store:
                 ).rowcount
             )
 
-    def fail(self, job: dict[str, Any], code: str) -> None:
+    def fail(
+        self,
+        job: dict[str, Any],
+        code: str,
+        diagnostic: dict[str, Any] | None = None,
+    ) -> None:
+        safe_code = _safe_machine_code(code)
+        supplied = _validate_attempt_diagnostic(diagnostic) if diagnostic is not None else None
+        try:
+            attempt_id = UUID(str(job["attempt_id"])) if job.get("attempt_id") else None
+        except TypeError, ValueError, AttributeError:
+            attempt_id = None
         with self.connect() as db:
-            db.execute(
+            updated = db.execute(
                 "UPDATE lr_jobs SET state=%s,error=%s,owner=NULL,lease_until=NULL,"
                 "available_at=clock_timestamp() + %s * interval '1 second' "
                 "WHERE id=%s AND owner=%s AND state='running'",
                 (
                     "failed" if job["attempts"] >= self.settings.max_attempts else "pending",
-                    code,
+                    safe_code,
                     min(300, 2 ** job["attempts"]),
                     job["id"],
                     job["owner"],
                 ),
             )
+            if supplied is None:
+                current = db.execute(
+                    "SELECT stage,subreason,stages FROM lr_job_attempts "
+                    "WHERE job_id=%s AND attempt_id=%s AND owner=%s "
+                    "AND outcome IN ('running','interrupted')",
+                    (job["id"], attempt_id, job["owner"]),
+                ).fetchone()
+                if current is None:
+                    return
+                supplied = {
+                    "stage": current["stage"],
+                    "outcome": "running",
+                    "disposition": "running",
+                    "error": None,
+                    "subreason": current["subreason"],
+                    "stages": current["stages"],
+                }
+            final_outcome = "failed" if updated.rowcount == 1 else "stale"
+            final_disposition = (
+                ("failed_final" if job["attempts"] >= self.settings.max_attempts else "retry")
+                if updated.rowcount == 1
+                else "stale"
+            )
+            supplied.update(
+                outcome=final_outcome,
+                disposition=final_disposition,
+                error=safe_code,
+            )
+            safe_diagnostic = _validate_attempt_diagnostic(supplied)
+            attempt_updated = db.execute(
+                "UPDATE lr_job_attempts SET stage=%s,outcome=%s,disposition=%s,error=%s,"
+                "subreason=%s,stages=%s,finished_at=COALESCE(finished_at,clock_timestamp()) "
+                "WHERE job_id=%s AND attempt_id=%s AND owner=%s AND "
+                "((%s='stale' AND outcome IN ('running','interrupted')) OR "
+                "(%s<>'stale' AND outcome='running'))",
+                (
+                    safe_diagnostic["stage"],
+                    safe_diagnostic["outcome"],
+                    safe_diagnostic["disposition"],
+                    safe_diagnostic["error"],
+                    safe_diagnostic["subreason"],
+                    self.json(safe_diagnostic["stages"]),
+                    job["id"],
+                    attempt_id,
+                    job["owner"],
+                    safe_diagnostic["outcome"],
+                    safe_diagnostic["outcome"],
+                ),
+            )
+            if attempt_updated.rowcount == 1 and diagnostic is not None:
+                diagnostic.update(safe_diagnostic)

@@ -338,6 +338,7 @@ def _verify_installed_artifact(
             "p=files('language_review.memory'); "
             "assert 'CREATE EXTENSION' in p.joinpath('migrations/001.sql').read_text(); "
             "assert 'lr_jobs_finding' in p.joinpath('migrations/002.sql').read_text(); "
+            "assert 'lr_job_attempts' in p.joinpath('migrations/003.sql').read_text(); "
             "assert json.loads(p.joinpath('decision.schema.json').read_text())['type'] == 'object'",
         ],
         env=project_env,

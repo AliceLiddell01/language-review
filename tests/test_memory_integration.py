@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+from argparse import Namespace
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import replace
@@ -26,6 +28,7 @@ from language_review.check_models import ProbeResult
 from language_review.config import CheckSettings, load_config
 from language_review.engine_llm import LlmEngine, ProviderReply
 from language_review.errors import InputError
+from language_review.memory.cli import run as run_memory
 from language_review.memory.cli import submit_decision
 from language_review.memory.pipeline import import_review
 from language_review.memory.search import index_rules, recall
@@ -73,6 +76,56 @@ def stored(tmp_path: Path, isolated_appdata: Path, json_server: JsonServer) -> d
         "config": config,
         "run": result.memory["run_id"],
     }
+
+
+@pytest.fixture
+def version_two_store(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
+    """Создаёт отдельную БД с миграциями 001/002 для проверки обновления до версии 003."""
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+
+    from language_review.memory.store import _migration_scripts
+
+    database_name = "lr_memory_v2_" + uuid4().hex
+    with psycopg.connect(os.environ["LANGUAGE_REVIEW_MEMORY_TEST_DSN"], autocommit=True) as admin:
+        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
+        try:
+            dsn_env = "LANGUAGE_REVIEW_MEMORY_V2_TEST_DSN"
+            monkeypatch.setenv(
+                dsn_env,
+                make_conninfo(os.environ["LANGUAGE_REVIEW_MEMORY_TEST_DSN"], dbname=database_name),
+            )
+            store = Store(MemorySettings(enabled=True, dsn_env=dsn_env))
+            migrations = _migration_scripts()
+            assert len(migrations) >= 3
+            project = str(uuid4())
+            with store.connect() as db:
+                db.execute(
+                    "CREATE TABLE lr_migrations (version integer PRIMARY KEY, "
+                    "checksum text NOT NULL, applied_at timestamptz DEFAULT clock_timestamp())"
+                )
+                for version, script, checksum in migrations[:2]:
+                    db.execute(script)
+                    db.execute(
+                        "INSERT INTO lr_migrations(version,checksum) VALUES (%s,%s)",
+                        (version, checksum),
+                    )
+                db.execute("INSERT INTO lr_projects(id) VALUES (%s)", (project,))
+                db.execute(
+                    "INSERT INTO lr_findings(id,project_id,identity,payload,dataset) "
+                    "VALUES (%s,%s,'{}','{}','synthetic')",
+                    ("legacy-finding", project),
+                )
+                db.execute(
+                    "INSERT INTO lr_jobs(id,finding_id,revision) VALUES (%s,%s,0)",
+                    ("legacy-job", "legacy-finding"),
+                )
+            yield {"store": store, "project": project}
+        finally:
+            admin.execute(
+                sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database_name))
+            )
 
 
 def decision(data: dict[str, Any], status: str = "accepted", revision: int = 0) -> dict[str, Any]:
@@ -382,15 +435,15 @@ class ConsolidationProvider:
 
 
 @pytest.mark.parametrize(
-    "mode,code",
+    "mode,code,stage,subreason",
     [
-        ("invalid", "schema_invalid"),
-        ("forged", "evidence_invalid"),
-        ("timeout", "timeout"),
+        ("invalid", "schema_invalid", "parse_schema", "schema_validation_failed"),
+        ("forged", "evidence_invalid", "post_schema", "current_evidence_missing"),
+        ("timeout", "timeout", "completion", None),
     ],
 )
 def test_llm_failure_preserves_events_and_observable_retry(
-    stored: dict, mode: str, code: str
+    stored: dict, mode: str, code: str, stage: str, subreason: str | None
 ) -> None:
     result = process_one(
         stored["store"], stored["project"], CheckSettings(), ConsolidationProvider(mode)
@@ -401,6 +454,80 @@ def test_llm_failure_preserves_events_and_observable_retry(
     assert sum(row["count"] for row in status["findings"]) == 2
     assert status["rules"] == []
     assert status["recent_errors"]
+    [attempt] = [
+        row
+        for row in status["attempt_diagnostics"]["recent"]
+        if row["attempt_id"] == result["attempt_id"]
+    ]
+    assert attempt["error"] == f"memory_llm_{code}"
+    assert attempt["stage"] == stage
+    assert attempt["subreason"] == subreason
+    assert attempt["outcome"] == "failed"
+    assert attempt["disposition"] == "retry"
+    assert attempt["stages"][stage]["outcome"] == "failed"
+    assert "duration_ms" in attempt["stages"][stage]
+    assert any(
+        row
+        == {
+            "error": f"memory_llm_{code}",
+            "subreason": subreason,
+            "stage": stage,
+            "disposition": "retry",
+            "count": 1,
+        }
+        for row in status["attempt_diagnostics"]["failure_distribution"]
+    )
+
+
+def test_status_cli_exposes_redacted_post_schema_diagnostics_only(
+    stored: dict, capsys: pytest.CaptureFixture[str]
+) -> None:
+    secret = "api_key=synthetic-secret"
+    private_path = r"C:\Users\Private\sample.txt"
+
+    class SensitiveProvider(ConsolidationProvider):
+        def complete(self, system: str, user: str, schema: dict) -> ProviderReply:
+            reply = super().complete(system, user, schema)
+            document = json.loads(reply.content)
+            document["rules"][0]["text"] = f"{secret} {private_path}"
+            return ProviderReply(
+                json.dumps(document, ensure_ascii=False),
+                truncated=False,
+                prompt_tokens=12,
+                completion_tokens=5,
+            )
+
+    result = process_one(stored["store"], stored["project"], CheckSettings(), SensitiveProvider())
+    assert result and result["status"] == "retry_or_failed"
+    assert result["reason"] == "memory_llm_evidence_invalid"
+
+    assert (
+        run_memory(
+            Namespace(
+                command="memory",
+                memory_command="status",
+                project=stored["project"],
+            ),
+            stored["config"],
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    status = json.loads(output)
+    [attempt] = [
+        row
+        for row in status["attempt_diagnostics"]["recent"]
+        if row["attempt_id"] == result["attempt_id"]
+    ]
+    assert attempt["error"] == "memory_llm_evidence_invalid"
+    assert attempt["subreason"] == "sanitize_changed"
+    assert attempt["stages"]["completion"]["token_counts"] == {
+        "prompt": 12,
+        "completion": 5,
+    }
+    assert secret not in output
+    assert private_path not in output
+    assert "sanitize_changed" in output
 
 
 def test_worker_accepts_empty_rules_as_a_successful_noop(stored: dict) -> None:
@@ -432,6 +559,7 @@ def test_worker_fencing_recovery_and_hypotheses_never_promote_observations(store
         row = db.execute("SELECT state,owner FROM lr_jobs WHERE id=%s", (lost["id"],)).fetchone()
     assert row["state"] == "running" and row["owner"] == recovered["owner"]
     store.fail(recovered, "controlled_retry")
+    assert not _hypotheses(store, stored["project"])
     with store.connect() as db:
         db.execute(
             "UPDATE lr_jobs SET available_at=clock_timestamp()-interval '1 second' WHERE id=%s",
@@ -439,6 +567,15 @@ def test_worker_fencing_recovery_and_hypotheses_never_promote_observations(store
         )
     result = process_one(store, stored["project"], CheckSettings(), ConsolidationProvider())
     assert result and result["status"] == "done"
+    attempts = [
+        row
+        for row in store.status(stored["project"])["attempt_diagnostics"]["recent"]
+        if row["job_id"] == lost["id"]
+    ]
+    attempts.sort(key=lambda row: row["attempt"])
+    assert [row["attempt"] for row in attempts] == [1, 2, 3]
+    assert [row["outcome"] for row in attempts] == ["stale", "failed", "succeeded"]
+    assert [row["disposition"] for row in attempts] == ["stale", "retry", "completed"]
     assert not [
         row
         for row in recall(store, stored["project"], "праверить", hybrid=False)["results"]
@@ -664,6 +801,15 @@ def test_decision_during_llm_never_revives_superseded_lineage(
     rejected = LineageProvider(during=lambda: submit_decision(store, decision(stored, "rejected")))
     outcome = process_one(store, project, CheckSettings(), rejected)
     assert outcome["stale"] is True and outcome["rules"] == 0
+    [attempt] = [
+        row
+        for row in store.status(project)["attempt_diagnostics"]["recent"]
+        if row["attempt_id"] == outcome["attempt_id"]
+    ]
+    assert attempt["outcome"] == "stale"
+    assert attempt["disposition"] == "stale"
+    assert attempt["stage"] == "persistence"
+    assert attempt["stages"]["persistence"]["outcome"] == "stale"
     rules = _hypotheses(store, project)
     assert [(row["id"], row["state"]) for row in rules] == [(lineage["id"], "superseded")]
     with store.connect() as db:
@@ -745,12 +891,10 @@ def test_automatic_recall_reaches_real_llm_transport_and_keeps_protected_tokens(
 
 def test_retry_budget_and_recovery_are_observable(stored: dict) -> None:
     store = Store(replace(stored["store"].settings, max_attempts=1))
-    assert (
-        process_one(store, stored["project"], CheckSettings(), ConsolidationProvider("timeout"))[
-            "status"
-        ]
-        == "retry_or_failed"
+    failed = process_one(
+        store, stored["project"], CheckSettings(), ConsolidationProvider("timeout")
     )
+    assert failed and failed["status"] == "retry_or_failed"
     with store.connect() as db:
         job = db.execute(
             "SELECT j.* FROM lr_jobs j JOIN lr_findings f ON f.id=j.finding_id "
@@ -758,18 +902,106 @@ def test_retry_budget_and_recovery_are_observable(stored: dict) -> None:
             (stored["project"],),
         ).fetchone()
     assert job["attempts"] == 1 and job["error"] == "memory_llm_timeout"
+    [first] = [
+        row
+        for row in store.status(stored["project"])["attempt_diagnostics"]["recent"]
+        if row["attempt_id"] == failed["attempt_id"]
+    ]
+    assert first["attempt"] == 1 and first["retry"] is False
+    assert first["outcome"] == "failed" and first["disposition"] == "failed_final"
     assert store.retry(stored["project"]) == 1
     with store.connect() as db:
         restored = db.execute(
             "SELECT state,attempts FROM lr_jobs WHERE id=%s", (job["id"],)
         ).fetchone()
     assert restored == {"state": "pending", "attempts": 0}
+    recovered = process_one(store, stored["project"], CheckSettings(), ConsolidationProvider())
+    assert recovered and recovered["status"] == "done"
+    diagnostics = store.status(stored["project"])["attempt_diagnostics"]
+    history = [row for row in diagnostics["recent"] if row["job_id"] == job["id"]]
+    history.sort(key=lambda row: row["attempt"])
+    assert [row["attempt"] for row in history] == [1, 2]
+    assert [row["retry"] for row in history] == [False, True]
+    assert [row["disposition"] for row in history] == ["failed_final", "completed"]
+    assert any(
+        row["error"] == "memory_llm_timeout" and row["stage"] == "completion" and row["count"] == 1
+        for row in diagnostics["failure_distribution"]
+    )
+
+
+def test_invalid_attempt_diagnostic_does_not_leave_job_running(stored: dict) -> None:
+    store = stored["store"]
+    job = store.claim(stored["project"])
+    assert job is not None
+    invalid_diagnostic = {
+        "stage": "completion",
+        "outcome": "running",
+        "disposition": "running",
+        "error": None,
+        "subreason": None,
+        "stages": {
+            "completion": {
+                "outcome": "running",
+                "token_counts": {"prompt": 2_147_483_648},
+            }
+        },
+    }
+
+    store.fail(job, "controlled_retry", invalid_diagnostic)
+
+    attempt = next(
+        row
+        for row in store.status(stored["project"])["attempt_diagnostics"]["recent"]
+        if row["attempt_id"] == str(job["attempt_id"])
+    )
+    assert attempt["job_state"] == "pending"
+    assert attempt["outcome"] == "failed"
+    assert attempt["disposition"] == "retry"
+    assert attempt["error"] == "controlled_retry"
+    assert "token_counts" not in attempt["stages"].get("completion", {})
+
+
+def test_attempt_history_is_bounded_per_job_and_keeps_monotonic_sequence(stored: dict) -> None:
+    store = Store(replace(stored["store"].settings, max_attempts=1))
+    with store.connect() as db:
+        jobs = db.execute(
+            "SELECT j.id FROM lr_jobs j JOIN lr_findings f ON f.id=j.finding_id "
+            "WHERE f.project_id=%s ORDER BY j.created_at,j.id",
+            (stored["project"],),
+        ).fetchall()
+        target = jobs[0]["id"]
+        db.execute(
+            "UPDATE lr_jobs SET state='done' WHERE id!=%s AND finding_id IN "
+            "(SELECT id FROM lr_findings WHERE project_id=%s)",
+            (target, stored["project"]),
+        )
+
+    for _ in range(18):
+        job = store.claim(stored["project"])
+        assert job and job["id"] == target
+        store.fail(job, "controlled_retry")
+        if job["attempts"] >= store.settings.max_attempts:
+            store.retry(stored["project"])
+
+    diagnostics = store.status(stored["project"])["attempt_diagnostics"]
+    history = [row for row in diagnostics["recent"] if row["job_id"] == target]
+    history.sort(key=lambda row: row["attempt"])
+    assert len(history) == 16
+    assert [row["attempt"] for row in history] == list(range(3, 19))
+    assert all(row["retry"] is True for row in history)
+    with store.connect() as db:
+        assert (
+            db.execute(
+                "SELECT count(*) AS count FROM lr_job_attempts WHERE job_id=%s", (target,)
+            ).fetchone()["count"]
+            == 16
+        )
 
 
 def test_schema_migration_is_idempotent_and_detects_drift(stored: dict) -> None:
     store = stored["store"]
-    assert store.migrate()["schema_version"] == 2
-    assert store.health()["schema_version"] == 2
+    assert store.migrate()["schema_version"] == 3
+    assert store.health()["schema_version"] == 3
     assert store.health()["pgvector"]
     # Проверка drift на отдельной транзакции без изменения общей тестовой схемы.
     from unittest.mock import patch
@@ -784,6 +1016,28 @@ def test_schema_migration_is_idempotent_and_detects_drift(stored: dict) -> None:
     with patch("language_review.memory.store.files", return_value=AlteredMigration()):
         with pytest.raises(MemoryFeatureError, match="migration_mismatch"):
             store.migrate()
+
+
+def test_migration_from_version_two_preserves_existing_jobs(version_two_store: dict) -> None:
+    store = version_two_store["store"]
+    with pytest.raises(MemoryFeatureError, match="migration_required"):
+        store.health()
+
+    migrated = store.migrate()
+    assert migrated["schema_version"] == 3
+    assert store.health()["schema_version"] == 3
+    with store.connect() as db:
+        assert db.execute(
+            "SELECT state,attempts FROM lr_jobs WHERE id=%s", ("legacy-job",)
+        ).fetchone() == {"state": "pending", "attempts": 0}
+        assert db.execute("SELECT version FROM lr_migrations ORDER BY version").fetchall() == [
+            {"version": 1},
+            {"version": 2},
+            {"version": 3},
+        ]
+        assert db.execute("SELECT to_regclass('lr_job_attempts') AS relation").fetchone() == {
+            "relation": "lr_job_attempts"
+        }
 
 
 def test_global_scope_requires_reviewed_public_text_and_never_exports_private_context(
@@ -911,6 +1165,28 @@ def test_multiple_root_bindings_keep_counters_and_identity_isolated(
     assert own["durable_events"] == 10 and other["durable_events"] == 3
     assert sum(row["count"] for row in own["findings"]) == 2
     assert sum(row["count"] for row in other["findings"]) == 1
+
+    failed = process_one(
+        stored["store"], stored["project"], CheckSettings(), ConsolidationProvider("timeout")
+    )
+    succeeded = process_one(
+        stored["store"], other_project, CheckSettings(), ConsolidationProvider("empty")
+    )
+    assert failed and succeeded
+    own_diagnostics = stored["store"].status(stored["project"])["attempt_diagnostics"]
+    other_diagnostics = stored["store"].status(other_project)["attempt_diagnostics"]
+    assert [row["job_id"] for row in own_diagnostics["recent"]] == [failed["job"]]
+    assert [row["job_id"] for row in other_diagnostics["recent"]] == [succeeded["job"]]
+    assert own_diagnostics["failure_distribution"] == [
+        {
+            "error": "memory_llm_timeout",
+            "subreason": None,
+            "stage": "completion",
+            "disposition": "retry",
+            "count": 1,
+        }
+    ]
+    assert other_diagnostics["failure_distribution"] == []
 
 
 def test_real_unavailable_llm_endpoint_keeps_events_and_never_reports_clean(stored: dict) -> None:

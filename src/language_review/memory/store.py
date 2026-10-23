@@ -1033,7 +1033,10 @@ class Store:
         diagnostic: dict[str, Any] | None = None,
     ) -> None:
         safe_code = _safe_machine_code(code)
-        supplied = _validate_attempt_diagnostic(diagnostic) if diagnostic is not None else None
+        try:
+            supplied = _validate_attempt_diagnostic(diagnostic) if diagnostic is not None else None
+        except MemoryFeatureError:
+            supplied = None
         try:
             attempt_id = UUID(str(job["attempt_id"])) if job.get("attempt_id") else None
         except TypeError, ValueError, AttributeError:

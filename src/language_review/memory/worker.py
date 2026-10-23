@@ -20,7 +20,7 @@ from language_review.engine_llm import (
 )
 from language_review.memory.safety import digest, sanitize, unique_object
 from language_review.memory.search import index_rules
-from language_review.memory.store import MemoryFeatureError, Store
+from language_review.memory.store import _MAX_TELEMETRY_TOKENS, MemoryFeatureError, Store
 
 PROMPT_VERSION = "language-memory-consolidation/2"
 SYSTEM_PROMPT = """Ты классифицируешь предметные наблюдения о русском техническом языке.
@@ -252,7 +252,7 @@ def process_one(
                 ("prompt", reply.prompt_tokens),
                 ("completion", reply.completion_tokens),
             )
-            if type(value) is int and value >= 0
+            if type(value) is int and 0 <= value <= _MAX_TELEMETRY_TOKENS
         }
         if token_counts:
             diagnostic["stages"]["completion"]["token_counts"] = token_counts

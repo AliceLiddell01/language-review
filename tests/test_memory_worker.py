@@ -39,6 +39,25 @@ PRIVATE_DIAGNOSTIC_KEYS = {
 }
 
 
+def contains_private_diagnostic_keys(value: Any, *, stage_map: bool = False) -> bool:
+    if isinstance(value, dict):
+        return any(
+            (key in PRIVATE_DIAGNOSTIC_KEYS and not (stage_map and key == "context"))
+            or contains_private_diagnostic_keys(item, stage_map=key == "stages")
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(contains_private_diagnostic_keys(item, stage_map=stage_map) for item in value)
+    return False
+
+
+def test_private_diagnostic_key_check_recurses_into_stage_data() -> None:
+    assert contains_private_diagnostic_keys({"stages": {"completion": {"text": "private"}}})
+    assert contains_private_diagnostic_keys({"stages": {"text": {"duration_ms": 1}}})
+    assert contains_private_diagnostic_keys({"metadata": {"context": "private"}})
+    assert not contains_private_diagnostic_keys({"stages": {"context": {"duration_ms": 1}}})
+
+
 @pytest.fixture
 def worker_store(
     monkeypatch: pytest.MonkeyPatch, json_server: JsonServer, stored: dict[str, Any]
@@ -259,7 +278,7 @@ def test_post_schema_failures_are_publicly_distinguishable_and_private(
         )
         == before
     )
-    assert not PRIVATE_DIAGNOSTIC_KEYS.intersection(attempt)
+    assert not contains_private_diagnostic_keys(attempt)
     if mode == "sanitize_changed":
         serialized = json.dumps(status, ensure_ascii=False, default=str)
         serialized_result = json.dumps(result, ensure_ascii=False, default=str)
@@ -398,7 +417,23 @@ def test_success_records_measured_stages_and_omits_unreported_tokens(
     assert attempt["stages"]["probe"]["configured_limit_ms"] > 0
     assert attempt["stages"]["completion"]["configured_limit_ms"] > 0
     assert "token_counts" not in attempt["stages"]["completion"]
-    assert status_has_no_rule_text(worker_store.status(project))
+    assert status_has_no_private_diagnostic_keys(worker_store.status(project))
+
+
+def test_out_of_range_provider_token_counts_are_omitted(
+    worker_store: Store, stored: dict[str, Any]
+) -> None:
+    project = seed(worker_store, stored["report"])
+    result = process_one(
+        worker_store,
+        project,
+        CheckSettings(),
+        DiagnosticProvider("valid", prompt_tokens=2_147_483_648),
+    )
+
+    assert result and result["status"] == "done"
+    attempt = latest_attempt(worker_store.status(project), result["attempt_id"])
+    assert attempt["stages"]["completion"]["token_counts"] == {"completion": 7}
 
 
 def test_persistence_failure_keeps_failed_stage_and_rolls_back_hypothesis(
@@ -432,11 +467,9 @@ def test_persistence_failure_keeps_failed_stage_and_rolls_back_hypothesis(
     assert status["rules"] == []
 
 
-def status_has_no_rule_text(status: dict[str, Any]) -> bool:
+def status_has_no_private_diagnostic_keys(status: dict[str, Any]) -> bool:
     diagnostics = status["attempt_diagnostics"]
-    return all(
-        not PRIVATE_DIAGNOSTIC_KEYS.intersection(attempt) for attempt in diagnostics["recent"]
-    )
+    return all(not contains_private_diagnostic_keys(attempt) for attempt in diagnostics["recent"])
 
 
 def test_rules_empty_remains_successful_noop_and_scoped_diagnostics(

@@ -929,6 +929,38 @@ def test_retry_budget_and_recovery_are_observable(stored: dict) -> None:
     )
 
 
+def test_invalid_attempt_diagnostic_does_not_leave_job_running(stored: dict) -> None:
+    store = stored["store"]
+    job = store.claim(stored["project"])
+    assert job is not None
+    invalid_diagnostic = {
+        "stage": "completion",
+        "outcome": "running",
+        "disposition": "running",
+        "error": None,
+        "subreason": None,
+        "stages": {
+            "completion": {
+                "outcome": "running",
+                "token_counts": {"prompt": 2_147_483_648},
+            }
+        },
+    }
+
+    store.fail(job, "controlled_retry", invalid_diagnostic)
+
+    attempt = next(
+        row
+        for row in store.status(stored["project"])["attempt_diagnostics"]["recent"]
+        if row["attempt_id"] == str(job["attempt_id"])
+    )
+    assert attempt["job_state"] == "pending"
+    assert attempt["outcome"] == "failed"
+    assert attempt["disposition"] == "retry"
+    assert attempt["error"] == "controlled_retry"
+    assert "token_counts" not in attempt["stages"].get("completion", {})
+
+
 def test_attempt_history_is_bounded_per_job_and_keeps_monotonic_sequence(stored: dict) -> None:
     store = Store(replace(stored["store"].settings, max_attempts=1))
     with store.connect() as db:

@@ -80,7 +80,7 @@ def stored(tmp_path: Path, isolated_appdata: Path, json_server: JsonServer) -> d
 
 @pytest.fixture
 def version_two_store(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
-    """Создаёт отдельную БД с миграциями 001/002 для проверки upgrade до 003."""
+    """Создаёт отдельную БД с миграциями 001/002 для проверки обновления до версии 003."""
     import psycopg
     from psycopg import sql
     from psycopg.conninfo import make_conninfo

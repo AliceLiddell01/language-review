@@ -69,7 +69,7 @@ def worker_lease_seconds(settings: CheckSettings) -> int:
 
 
 def _attempt_fields(job: dict[str, Any], diagnostic: dict[str, Any]) -> dict[str, Any]:
-    """Безопасная проекция попытки для машинного результата worker."""
+    """Безопасная проекция попытки для машинного результата обработчика."""
     return {
         "attempt_id": str(job["attempt_id"]),
         "attempt": job["attempt"],
@@ -267,6 +267,9 @@ def process_one(
             Draft202012Validator(schema).validate(document)
         except ValidationError as exc:
             diagnostic["subreason"] = "schema_validation_failed"
+            raise MemoryFeatureError("memory_llm_schema_invalid") from exc
+        except RecursionError as exc:
+            diagnostic["subreason"] = "json_invalid"
             raise MemoryFeatureError("memory_llm_schema_invalid") from exc
         except ValueError as exc:
             diagnostic["subreason"] = (

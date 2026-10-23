@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from argparse import Namespace
 from collections.abc import Iterator
 from dataclasses import replace
 from typing import Any
@@ -16,6 +17,7 @@ from test_memory_integration import ConsolidationProvider
 from language_review.check_models import ProbeResult
 from language_review.config import CheckSettings
 from language_review.engine_llm import ProviderReply
+from language_review.memory.cli import run as run_memory
 from language_review.memory.search import recall
 from language_review.memory.settings import MemorySettings
 from language_review.memory.store import Store
@@ -143,6 +145,13 @@ class DiagnosticProvider:
             return ProviderReply('{"rules":[],"rules":[]}', truncated=False)
         if self.mode == "schema_invalid":
             return ProviderReply('{"accepted":true}', truncated=False)
+        if self.mode == "deep_json":
+            nested = "[" * 10000 + '"TOKEN=synthetic-depth-secret"' + "]" * 10000
+            return ProviderReply(
+                '{"rules":[{"text":"Синтетическое правило","category":"spelling",'
+                '"relation":"pattern","evidence":[' + nested + "," + nested + "]}]}",
+                truncated=False,
+            )
 
         cases = json.loads(user)["cases"]
         category = cases[0]["category"]
@@ -314,6 +323,98 @@ def test_json_and_schema_failures_keep_stage_and_safe_subreason(
     assert attempt["subreason"] == subreason
     assert attempt["outcome"] == "failed"
     assert attempt["stages"]["parse_schema"]["outcome"] == "failed"
+
+
+@pytest.mark.parametrize(
+    ("max_attempts", "job_state", "disposition"),
+    [(3, "pending", "retry"), (1, "failed", "failed_final")],
+)
+def test_deep_json_failure_is_terminal_private_and_visible_in_status(
+    worker_store: Store,
+    stored: dict[str, Any],
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    max_attempts: int,
+    job_state: str,
+    disposition: str,
+) -> None:
+    worker_store.settings = replace(worker_store.settings, max_attempts=max_attempts)
+    project = seed(worker_store, stored["report"])
+    initial = process_one(worker_store, project, CheckSettings(), DiagnosticProvider())
+    assert initial and initial["status"] == "done" and initial["rules"] == 1
+    before = worker_store.status(project)
+    with worker_store.connect() as db:
+        primary_before = {
+            table: db.execute(f"SELECT * FROM {table} ORDER BY id").fetchall()
+            for table in ("lr_events", "lr_findings", "lr_rules")
+        }
+
+    result = process_one(worker_store, project, CheckSettings(), DiagnosticProvider("deep_json"))
+
+    assert result and result["status"] == "retry_or_failed"
+    assert result["reason"] == "memory_llm_schema_invalid"
+    assert result["diagnostic"]["subreason"] == "json_invalid"
+    assert (
+        run_memory(
+            Namespace(command="memory", memory_command="status", project=project),
+            replace(stored["config"], memory=worker_store.settings),
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    status = json.loads(captured.out)
+    attempt = latest_attempt(status, result["attempt_id"])
+    assert attempt["job_state"] == job_state
+    assert attempt["outcome"] == "failed"
+    assert attempt["finished_at"] is not None
+    assert attempt["disposition"] == disposition
+    assert attempt["stage"] == "parse_schema"
+    assert attempt["error"] == "memory_llm_schema_invalid"
+    assert attempt["subreason"] == "json_invalid"
+    assert attempt["stages"]["parse_schema"]["outcome"] == "failed"
+    assert isinstance(attempt["stages"]["parse_schema"]["duration_ms"], int)
+    assert {
+        "error": "memory_llm_schema_invalid",
+        "subreason": "json_invalid",
+        "stage": "parse_schema",
+        "disposition": disposition,
+        "count": 1,
+    } in status["attempt_diagnostics"]["failure_distribution"]
+    assert status["durable_events"] == before["durable_events"]
+    assert status["findings"] == before["findings"]
+    assert status["rules"] == before["rules"]
+    assert not contains_private_diagnostic_keys(attempt)
+    with worker_store.connect() as db:
+        for table, rows in primary_before.items():
+            assert db.execute(f"SELECT * FROM {table} ORDER BY id").fetchall() == rows
+        persisted = db.execute("SELECT * FROM lr_jobs").fetchall()
+        persisted += db.execute("SELECT * FROM lr_job_attempts").fetchall()
+    serialized = json.dumps([result, status, persisted], ensure_ascii=False, default=str)
+    assert "synthetic-depth-secret" not in serialized
+    assert "synthetic-depth-secret" not in caplog.text
+    assert "TOKEN=" not in serialized
+    assert "RecursionError" not in serialized
+
+
+def test_work_continues_queue_after_deep_json_failure(
+    worker_store: Store, stored: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = seed(worker_store, stored["report"])
+    providers = iter([DiagnosticProvider("deep_json"), DiagnosticProvider()])
+    monkeypatch.setattr("language_review.memory.worker.create_provider", lambda _: next(providers))
+
+    result = work(worker_store, project, CheckSettings(), limit=2)
+
+    assert result["status"] == "partial"
+    failed, completed = result["jobs"]
+    assert failed["status"] == "retry_or_failed"
+    assert failed["reason"] == "memory_llm_schema_invalid"
+    assert completed["status"] == "done" and completed["rules"] == 1
+    assert failed["job"] != completed["job"]
+    status = worker_store.status(project)
+    assert latest_attempt(status, failed["attempt_id"])["outcome"] == "failed"
+    assert latest_attempt(status, completed["attempt_id"])["outcome"] == "succeeded"
 
 
 @pytest.mark.parametrize(

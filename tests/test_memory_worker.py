@@ -131,20 +131,9 @@ class DiagnosticProvider:
             return ProviderReply('{"rules":[]}', truncated=False)
         text = "праверить — вероятная опечатка"
         evidence = ["c1"]
-        if self.mode == "evidence_alias_unknown":
-            schema["properties"]["rules"]["items"]["properties"]["evidence"]["items"][
-                "enum"
-            ].append("c999")
-            evidence = ["c999"]
-        elif self.mode == "evidence_outside_permitted":
+        if self.mode == "current_evidence_missing":
             assert len(cases) > 1, "Для синтетического c2 требуется второе finding той же category."
             evidence = ["c2"]
-        elif self.mode == "current_evidence_missing":
-            assert len(cases) > 1, "Для синтетического c2 требуется второе finding той же category."
-            evidence = ["c2"]
-        elif self.mode == "category_mismatch":
-            category = "synthetic-other-category"
-            schema["properties"]["rules"]["items"]["properties"]["category"]["enum"] = [category]
         elif self.mode == "sanitize_changed":
             text = (
                 "TOKEN=synthetic-secret; "
@@ -206,10 +195,7 @@ def latest_attempt(status: dict[str, Any], attempt_id: str | None = None) -> dic
 @pytest.mark.parametrize(
     ("mode", "subreason"),
     [
-        ("evidence_alias_unknown", "evidence_alias_unknown"),
-        ("evidence_outside_permitted", "evidence_outside_permitted"),
         ("current_evidence_missing", "current_evidence_missing"),
-        ("category_mismatch", "category_mismatch"),
         ("sanitize_changed", "sanitize_changed"),
         ("empty_after_strip", "empty_text_after_strip"),
     ],
@@ -219,29 +205,7 @@ def test_post_schema_failures_are_publicly_distinguishable_and_private(
     stored: dict[str, Any],
     mode: str,
     subreason: str,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    if mode == "evidence_outside_permitted":
-        from language_review.memory import worker as worker_module
-
-        original = worker_module._post_schema_subreason
-
-        def inconsistent_alias(
-            rule: dict[str, Any],
-            aliases: dict[str, str],
-            permitted: set[str],
-            current_id: str,
-            category: str,
-        ) -> str | None:
-            return original(
-                rule,
-                {**aliases, "c2": "synthetic-outside-permitted"},
-                permitted,
-                current_id,
-                category,
-            )
-
-        monkeypatch.setattr(worker_module, "_post_schema_subreason", inconsistent_alias)
     project = seed(worker_store, stored["report"])
     provider = DiagnosticProvider(mode)
     before = recall(

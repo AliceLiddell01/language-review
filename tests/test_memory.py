@@ -26,7 +26,7 @@ from language_review.memory.safety import safe_text, sanitize
 from language_review.memory.search import Embedder, RecallRequest, _recall_query, recall_many
 from language_review.memory.settings import MemorySettings, validate_memory
 from language_review.memory.store import MemoryFeatureError, Store
-from language_review.memory.worker import worker_lease_seconds
+from language_review.memory.worker import _post_schema_subreason, worker_lease_seconds
 
 
 @pytest.mark.parametrize(
@@ -255,6 +255,48 @@ def test_recall_skips_unscored_candidates_and_uses_sql_vector_match() -> None:
     )
     assert db.parameters["max_vector_distance"] == 0.4
     assert [entry["id"] for entry in result["results"]] == ["vector-candidate"]
+
+
+@pytest.mark.parametrize(
+    ("evidence", "aliases", "permitted", "rule_category", "category", "expected"),
+    [
+        (
+            ["c9"],
+            {"c1": "finding-1"},
+            {"finding-1"},
+            "typo",
+            "typo",
+            "evidence_alias_unknown",
+        ),
+        (
+            ["c2"],
+            {"c1": "finding-1", "c2": "outside-permitted"},
+            {"finding-1"},
+            "typo",
+            "typo",
+            "evidence_outside_permitted",
+        ),
+        (
+            ["c1"],
+            {"c1": "finding-1"},
+            {"finding-1"},
+            "other-category",
+            "typo",
+            "category_mismatch",
+        ),
+    ],
+)
+def test_post_schema_defensive_subreasons(
+    evidence: list[str],
+    aliases: dict[str, str],
+    permitted: set[str],
+    rule_category: str,
+    category: str,
+    expected: str,
+) -> None:
+    rule = {"evidence": evidence, "category": rule_category, "text": "праверить"}
+
+    assert _post_schema_subreason(rule, aliases, permitted, "finding-1", category) == expected
 
 
 @pytest.mark.parametrize(

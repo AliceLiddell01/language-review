@@ -344,6 +344,33 @@ def test_probe_failure_is_recorded_before_completion(
     assert attempt["stages"]["probe"]["configured_limit_ms"] > 0
 
 
+def test_initial_attempt_record_failure_returns_retry_result(
+    worker_store: Store, stored: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from language_review.memory.store import MemoryFeatureError
+
+    project = seed(worker_store, stored["report"])
+    original = worker_store.record_attempt
+
+    def fail_initial_record(
+        job: dict[str, Any], diagnostic: dict[str, Any], db: Any | None = None
+    ) -> None:
+        if diagnostic["stage"] == "claim":
+            raise MemoryFeatureError("memory_database_failed")
+        original(job, diagnostic, db)
+
+    monkeypatch.setattr(worker_store, "record_attempt", fail_initial_record)
+
+    result = process_one(worker_store, project, CheckSettings(), DiagnosticProvider())
+
+    assert result and result["status"] == "retry_or_failed"
+    assert result["reason"] == "memory_database_failed"
+    attempt = latest_attempt(worker_store.status(project), result["attempt_id"])
+    assert attempt["job_state"] == "pending"
+    assert attempt["outcome"] == "failed"
+    assert attempt["error"] == "memory_database_failed"
+
+
 def test_attempt_history_keeps_timeout_after_successful_retry(
     worker_store: Store, stored: dict[str, Any]
 ) -> None:
@@ -532,6 +559,33 @@ def test_work_records_project_batch_indexing_without_provider_usage(
             assert indexing["outcome"] == "succeeded"
             assert isinstance(indexing["duration_ms"], int)
     assert any("indexing" in attempt["stages"] for attempt in attempts)
+
+
+def test_indexing_diagnostic_failure_keeps_results_and_continues(
+    worker_store: Store, stored: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from language_review.memory.store import MemoryFeatureError
+
+    project = seed(worker_store, stored["report"])
+    original = worker_store.record_attempt_stage
+    calls = 0
+
+    def fail_first_record(*args: Any, **kwargs: Any) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise MemoryFeatureError("memory_database_failed")
+        original(*args, **kwargs)
+
+    monkeypatch.setattr(worker_store, "record_attempt_stage", fail_first_record)
+
+    result = work(worker_store, project, CheckSettings(), limit=2)
+
+    assert len(result["jobs"]) == 2
+    assert all(job["status"] == "done" for job in result["jobs"])
+    assert calls == 2
+    assert result["status"] == "partial"
+    assert result["index"]["errors"] == [{"project": project, "reason": "memory_database_failed"}]
 
 
 def test_revision_stale_done_attempt_does_not_receive_indexing_stage(

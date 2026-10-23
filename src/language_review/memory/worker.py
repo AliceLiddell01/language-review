@@ -127,7 +127,6 @@ def process_one(
             "claim": {"outcome": "succeeded", "duration_ms": _duration_ms(claim_started_ns)}
         },
     }
-    store.record_attempt(job, diagnostic)
     active_stage: tuple[str, int] | None = None
 
     def begin_stage(name: str, configured_limit_ms: int | None = None) -> int:
@@ -177,6 +176,7 @@ def process_one(
         }
 
     try:
+        store.record_attempt(job, diagnostic)
         begin_stage("context")
         with store.connect() as db:
             current = db.execute(
@@ -488,15 +488,18 @@ def work(
         for result in results:
             if result["project_id"] != identifier or result["diagnostic"]["outcome"] != "succeeded":
                 continue
-            store.record_attempt_stage(
-                result["job"],
-                result["attempt_id"],
-                "indexing",
-                "failed" if stage_error else "succeeded",
-                duration_ms,
-                scope="project_batch",
-                error=stage_error,
-            )
+            try:
+                store.record_attempt_stage(
+                    result["job"],
+                    result["attempt_id"],
+                    "indexing",
+                    "failed" if stage_error else "succeeded",
+                    duration_ms,
+                    scope="project_batch",
+                    error=stage_error,
+                )
+            except MemoryFeatureError as exc:
+                errors.append({"project": identifier, "reason": str(exc)})
     if errors:
         indexed["errors"] = errors
     return {

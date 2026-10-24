@@ -56,6 +56,7 @@ _MACHINE_CODE = re.compile(r"^[a-z0-9_]{1,80}$")
 _DYNAMIC_HTTP_ERROR = re.compile(r"^(memory_llm|memory_embedding)_http_[1-5][0-9]{2}$")
 _MAX_TELEMETRY_MILLISECONDS = 86_400_000
 _MAX_TELEMETRY_TOKENS = 2_147_483_647
+_MAX_CONSOLIDATION_RULES = 4
 _SAFE_ERROR_CODES = {
     "attempts_exhausted",
     "controlled_retry",
@@ -263,7 +264,8 @@ def _validate_attempt_diagnostic(value: Any) -> dict[str, Any]:
                 or not isinstance(selection, dict)
                 or set(selection) != {"received", "selected", "excluded_current_evidence_missing"}
                 or any(
-                    type(count) is not int or not 0 <= count <= 4 for count in selection.values()
+                    type(count) is not int or not 0 <= count <= _MAX_CONSOLIDATION_RULES
+                    for count in selection.values()
                 )
                 or selection["received"]
                 != selection["selected"] + selection["excluded_current_evidence_missing"]

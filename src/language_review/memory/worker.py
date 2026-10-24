@@ -20,7 +20,12 @@ from language_review.engine_llm import (
 )
 from language_review.memory.safety import digest, sanitize, unique_object
 from language_review.memory.search import index_rules
-from language_review.memory.store import _MAX_TELEMETRY_TOKENS, MemoryFeatureError, Store
+from language_review.memory.store import (
+    _MAX_CONSOLIDATION_RULES,
+    _MAX_TELEMETRY_TOKENS,
+    MemoryFeatureError,
+    Store,
+)
 
 PROMPT_VERSION = "language-memory-consolidation/3"
 SYSTEM_PROMPT = """Ты классифицируешь предметные наблюдения о русском техническом языке.
@@ -46,7 +51,7 @@ SCHEMA: dict[str, Any] = {
     "properties": {
         "rules": {
             "type": "array",
-            "maxItems": 4,
+            "maxItems": _MAX_CONSOLIDATION_RULES,
             "items": {
                 "type": "object",
                 "additionalProperties": False,

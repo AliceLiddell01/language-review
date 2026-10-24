@@ -407,7 +407,7 @@ class ConsolidationProvider:
         if self.mode == "invalid":
             return ProviderReply('{"accepted": true}', truncated=False)
         if self.mode == "forged":
-            current = "c2"
+            current = "c999"
         if self.mode == "timeout":
             from language_review.engine_http import EngineHttpError
 
@@ -438,7 +438,7 @@ class ConsolidationProvider:
     "mode,code,stage,subreason",
     [
         ("invalid", "schema_invalid", "parse_schema", "schema_validation_failed"),
-        ("forged", "evidence_invalid", "post_schema", "current_evidence_missing"),
+        ("forged", "schema_invalid", "parse_schema", "schema_validation_failed"),
         ("timeout", "timeout", "completion", None),
     ],
 )
@@ -635,6 +635,198 @@ def test_related_cases_form_one_incremental_hypothesis_and_retain_each_original(
     assert rules[0]["state"] == "hypothesis"
     assert len(histories) == 2
     assert sum(row["count"] for row in store.status(stored["project"])["findings"]) == 2
+
+
+class SplitEvidenceProvider(ConsolidationProvider):
+    """Разделяет текущий случай и большинство; следующий ответ продолжает линию."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+        self.aliases: list[list[str]] = []
+        self.payloads: list[dict[str, Any]] = []
+        self.prior_alias: str | None = None
+
+    def complete(self, system: str, user: str, schema: dict) -> ProviderReply:
+        del system, schema
+        payload = json.loads(user)
+        self.payloads.append(payload)
+        cases = payload["cases"]
+        aliases = [case["id"] for case in cases]
+        self.aliases.append(aliases)
+        self.calls += 1
+        assert aliases[0] == "c1"
+        if self.calls == 1:
+            selected = ["c1"]
+            excluded = aliases[1:]
+        else:
+            assert self.prior_alias is not None
+            selected = ["c1", self.prior_alias]
+            excluded = [alias for alias in aliases[1:] if alias != self.prior_alias]
+        rules = [
+            {
+                "text": "Уточнённая опечатка текущего случая",
+                "category": cases[0]["category"],
+                "relation": "pattern",
+                "evidence": selected,
+            },
+            {
+                "text": "Неподтверждённое обобщение большинства",
+                "category": cases[0]["category"],
+                "relation": "exception",
+                "evidence": excluded,
+            },
+        ]
+        return ProviderReply(json.dumps({"rules": rules}, ensure_ascii=False), truncated=False)
+
+
+def test_split_evidence_keeps_current_rule_and_scopes_lineage_to_project_dataset(
+    stored: dict, json_server: JsonServer
+) -> None:
+    store = _embedding_store(stored, json_server)
+    project = stored["project"]
+    foreign_project = str(uuid4())
+
+    def primary_snapshot(db: Any) -> dict[str, Any]:
+        result = {}
+        for table in ("lr_events", "lr_findings", "lr_decisions"):
+            scope = (
+                "project_id=ANY(%s::uuid[])"
+                if table == "lr_findings"
+                else "finding_id IN (SELECT id FROM lr_findings WHERE project_id=ANY(%s::uuid[]))"
+            )
+            result[table] = db.execute(
+                f"SELECT * FROM {table} WHERE {scope} ORDER BY id",
+                ([project, foreign_project],),
+            ).fetchall()
+        return result
+
+    with store.connect() as db:
+        initial = db.execute(
+            "SELECT j.finding_id FROM lr_jobs j JOIN lr_findings f ON f.id=j.finding_id "
+            "WHERE f.project_id=%s AND f.dataset='operational' AND j.state='pending' "
+            "ORDER BY j.created_at,j.id",
+            (project,),
+        ).fetchall()
+    assert len(initial) == 2
+    first_finding, second_finding = (row["finding_id"] for row in initial)
+
+    for index in range(15):
+        _add_case(stored, f"split-{index:02}.rs")
+
+    def ingest_scoped_copy(target_project: str, dataset: str, label: str) -> None:
+        report = deepcopy(stored["report"])
+        for index, item in enumerate(report["items"]):
+            item["excerpt"] = f"{label} private context {index}"
+        run_id = str(uuid4())
+        store.begin(run_id, {"root-0001": target_project}, dataset, "live")
+        assert store.ingest(run_id, report, {})["duplicate"] is False
+
+    ingest_scoped_copy(project, "train", "foreign-dataset")
+    ingest_scoped_copy(foreign_project, "operational", "foreign-project")
+
+    with store.connect() as db:
+        foreign_ids = {
+            row["id"]
+            for row in db.execute(
+                "SELECT id FROM lr_findings WHERE dataset='train' OR project_id=%s",
+                (foreign_project,),
+            ).fetchall()
+        }
+        related = db.execute(
+            "SELECT id FROM lr_findings WHERE project_id=%s AND dataset='operational' "
+            "AND id!=%s ORDER BY created_at DESC,id LIMIT 16",
+            (project, second_finding),
+        ).fetchall()
+        assert {row["id"] for row in related} == {
+            row["id"]
+            for row in db.execute(
+                "SELECT id FROM lr_findings WHERE project_id=%s AND dataset='operational' "
+                "AND id!=%s",
+                (project, second_finding),
+            ).fetchall()
+        }
+        related_ids = [row["id"] for row in related]
+        assert first_finding in related_ids
+        prior_alias = f"c{related_ids.index(first_finding) + 2}"
+        assert len(related_ids) == 16
+        primary_before = primary_snapshot(db)
+
+    provider = SplitEvidenceProvider()
+    first_result = process_one(store, project, CheckSettings(), provider)
+
+    assert first_result and first_result["status"] == "done"
+    assert first_result["rules"] == 1
+    expected_first_selection = {
+        "received": 2,
+        "selected": 1,
+        "excluded_current_evidence_missing": 1,
+    }
+    assert first_result["rule_selection"] == expected_first_selection
+    assert first_result["diagnostic"]["subreason"] is None
+    assert first_result["diagnostic"]["stages"]["post_schema"]["outcome"] == "succeeded"
+    assert (
+        first_result["diagnostic"]["stages"]["post_schema"]["rule_selection"]
+        == expected_first_selection
+    )
+    assert provider.aliases[0] == [f"c{index}" for index in range(1, 18)]
+    assert all(
+        label not in json.dumps(provider.payloads[0], ensure_ascii=False)
+        for label in ("foreign-dataset", "foreign-project")
+    )
+    first_rule = _hypotheses(store, project)
+    assert len(first_rule) == 1
+    assert first_rule[0]["finding_id"] == first_finding
+    assert first_rule[0]["payload"]["evidence"] == [first_finding]
+    assert first_rule[0]["text"] == "Уточнённая опечатка текущего случая"
+
+    provider.prior_alias = prior_alias
+    second_result = process_one(store, project, CheckSettings(), provider)
+
+    assert second_result and second_result["status"] == "done"
+    assert second_result["rules"] == 1
+    assert second_result["rule_selection"] == expected_first_selection
+    assert provider.aliases[1] == [f"c{index}" for index in range(1, 18)]
+    assert all(
+        label not in json.dumps(provider.payloads[1], ensure_ascii=False)
+        for label in ("foreign-dataset", "foreign-project")
+    )
+    assert first_finding in first_rule[0]["payload"]["evidence"]
+    [lineage] = [row for row in _hypotheses(store, project) if row["state"] == "hypothesis"]
+    assert lineage["id"] == first_rule[0]["id"]
+    assert lineage["revision"] == 2
+    assert set(lineage["payload"]["evidence"]) == {first_finding, second_finding}
+    assert set(lineage["payload"]["evidence"]).isdisjoint(foreign_ids)
+    assert second_result["successions"] == [
+        {"rule": lineage["id"], "revision": 2, "superseded": []}
+    ]
+
+    with store.connect() as db:
+        history = db.execute(
+            "SELECT revision,payload FROM lr_rule_history WHERE rule_id=%s ORDER BY revision",
+            (lineage["id"],),
+        ).fetchall()
+        assert primary_snapshot(db) == primary_before
+    assert [row["revision"] for row in history] == [1, 2]
+    assert history[0]["payload"]["payload"]["evidence"] == [first_finding]
+    assert set(history[1]["payload"]["payload"]["evidence"]) == {
+        first_finding,
+        second_finding,
+    }
+
+    assert index_rules(store, project)["indexed"] == 1
+    recalled = recall(
+        store,
+        project,
+        "опечатка",
+        dataset="operational",
+        hybrid=False,
+        include_hypotheses=True,
+    )["results"]
+    hypotheses = [row for row in recalled if row["state"] == "hypothesis"]
+    assert [(row["id"], row["state"], set(row["evidence"])) for row in hypotheses] == [
+        (lineage["id"], "hypothesis", {first_finding, second_finding})
+    ]
 
 
 class LineageProvider(ConsolidationProvider):

@@ -567,7 +567,6 @@ def test_current_case_rule_survives_unrelated_rule_for_seventeen_cases(
 
 @pytest.mark.parametrize(
     (
-        "scenario",
         "current_status",
         "related_status",
         "excerpt",
@@ -575,15 +574,15 @@ def test_current_case_rule_survives_unrelated_rule_for_seventeen_cases(
         "related_relation",
     ),
     [
-        ("protected-command", "rejected", "accepted", "Invoke-Review", "terminology", "pattern"),
-        ("ordinary-typo", "accepted", "rejected", "праверить", "pattern", "exception"),
-        ("disputed", "disputed", "accepted", "праверить", None, None),
+        ("rejected", "accepted", "Invoke-Review", "terminology", "pattern"),
+        ("accepted", "rejected", "праверить", "pattern", "exception"),
+        ("disputed", "accepted", "праверить", None, None),
     ],
+    ids=("protected-command", "ordinary-typo", "disputed"),
 )
-def test_decision_facts_preserve_polarity_and_allow_abstention(
+def test_decision_statuses_reach_provider_and_selection_is_mechanical(
     worker_store: Store,
     stored: dict[str, Any],
-    scenario: str,
     current_status: str,
     related_status: str,
     excerpt: str,

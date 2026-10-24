@@ -25,7 +25,7 @@ jobs:
       - name: Установить uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          version: "0.13.1"
+          version: "0.13.5"
           enable-cache: true
       - name: Установить Python
         run: uv python install
@@ -69,7 +69,7 @@ jobs:
       - name: Установить uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          version: "0.13.1"
+          version: "0.13.5"
       - name: Установить Python
         run: uv python install
       - name: Установить закреплённые зависимости
@@ -89,7 +89,7 @@ jobs:
       - name: Установить uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          version: "0.13.1"
+          version: "0.13.5"
           enable-cache: true
       - name: Установить Python
         shell: python

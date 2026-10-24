@@ -5,7 +5,7 @@ description = "Инвентаризация текстовых файлов дл
 readme = "README.md"
 requires-python = ">=3.15"
 dependencies = [
-    "jsonschema>=4.25",
+    "jsonschema>=4.26.0",
     "markdown-it-py>=4.2.0",
     "pathspec>=1.1.1",
     "ruamel-yaml>=0.19.1",

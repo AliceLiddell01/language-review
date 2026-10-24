@@ -251,7 +251,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "jsonschema", specifier = ">=4.25" },
+    { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "markdown-it-py", specifier = ">=4.2.0" },
     { name = "pathspec", specifier = ">=1.1.1" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'memory'", specifier = ">=3.3.6" },

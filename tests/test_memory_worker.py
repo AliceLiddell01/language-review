@@ -273,6 +273,11 @@ class LeaseReclaimingRuleSelectionProvider(RuleSelectionProvider):
 def seventeen_case_report(report: dict[str, Any], *, excerpt: str | None = None) -> dict[str, Any]:
     """Расширяет отчёт синтетическими документами до c1…c17."""
     result = deepcopy(report)
+    if excerpt is not None:
+        for item in result["items"]:
+            item["excerpt"] = excerpt
+            for evidence in item["evidence"]:
+                evidence["source_excerpt"] = excerpt
     template_item = deepcopy(result["items"][0])
     template_document = deepcopy(
         next(
@@ -282,11 +287,6 @@ def seventeen_case_report(report: dict[str, Any], *, excerpt: str | None = None)
         )
     )
     root = template_document["root"]
-    if excerpt is not None:
-        for item in result["items"]:
-            item["excerpt"] = excerpt
-            for evidence in item["evidence"]:
-                evidence["source_excerpt"] = excerpt
     for index in range(3, 18):
         document_id = f"synthetic-document-{index}"
         document = deepcopy(template_document)
@@ -637,6 +637,7 @@ def test_decision_statuses_reach_provider_and_selection_is_mechanical(
         current_status,
         *([related_status] * 16),
     ]
+    assert [case["excerpt"] for case in provider.cases] == [excerpt] * 17
     expected_selection = {
         "received": len(rules),
         "selected": int(current_relation is not None),

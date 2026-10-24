@@ -213,6 +213,7 @@ def _validate_attempt_diagnostic(value: Any) -> dict[str, Any]:
         "scope",
         "error",
         "token_counts",
+        "rule_selection",
     }
     for name, record in stages.items():
         if (
@@ -255,6 +256,20 @@ def _validate_attempt_diagnostic(value: Any) -> dict[str, Any]:
             ):
                 raise MemoryFeatureError("memory_attempt_diagnostics_invalid")
             safe_record["token_counts"] = dict(counts)
+        if "rule_selection" in record:
+            selection = record["rule_selection"]
+            if (
+                name != "post_schema"
+                or not isinstance(selection, dict)
+                or set(selection) != {"received", "selected", "excluded_current_evidence_missing"}
+                or any(
+                    type(count) is not int or not 0 <= count <= 4 for count in selection.values()
+                )
+                or selection["received"]
+                != selection["selected"] + selection["excluded_current_evidence_missing"]
+            ):
+                raise MemoryFeatureError("memory_attempt_diagnostics_invalid")
+            safe_record["rule_selection"] = dict(selection)
         safe_stages[name] = safe_record
     return {
         "stage": stage,

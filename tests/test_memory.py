@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -25,7 +26,7 @@ from language_review.memory.pipeline import MemorySession
 from language_review.memory.safety import safe_text, sanitize
 from language_review.memory.search import Embedder, RecallRequest, _recall_query, recall_many
 from language_review.memory.settings import MemorySettings, validate_memory
-from language_review.memory.store import MemoryFeatureError, Store
+from language_review.memory.store import MemoryFeatureError, Store, _validate_attempt_diagnostic
 from language_review.memory.worker import _post_schema_subreason, worker_lease_seconds
 
 
@@ -297,6 +298,81 @@ def test_post_schema_defensive_subreasons(
     rule = {"evidence": evidence, "category": rule_category, "text": "праверить"}
 
     assert _post_schema_subreason(rule, aliases, permitted, "finding-1", category) == expected
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        {"received": 0, "selected": 0, "excluded_current_evidence_missing": 0},
+        {"received": 2, "selected": 1, "excluded_current_evidence_missing": 1},
+        {"received": 4, "selected": 0, "excluded_current_evidence_missing": 4},
+        {"received": 4, "selected": 4, "excluded_current_evidence_missing": 0},
+    ],
+)
+def test_rule_selection_diagnostic_preserves_exact_bounded_counts(selection: dict) -> None:
+    diagnostic = {
+        "stage": "post_schema",
+        "outcome": "succeeded",
+        "disposition": "completed",
+        "error": None,
+        "subreason": None,
+        "stages": {"post_schema": {"outcome": "succeeded", "rule_selection": selection}},
+    }
+    assert _validate_attempt_diagnostic(diagnostic) == diagnostic
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        {"received": True, "selected": 0, "excluded_current_evidence_missing": 1},
+        {"received": 5, "selected": 1, "excluded_current_evidence_missing": 4},
+        {"received": -1, "selected": 0, "excluded_current_evidence_missing": -1},
+        {"received": 2, "selected": 2, "excluded_current_evidence_missing": 1},
+        {"received": 1.0, "selected": 1, "excluded_current_evidence_missing": 0},
+        {"received": 1, "selected": 1},
+        {"received": 0, "selected": 0, "excluded_current_evidence_missing": 0, "text": "секрет"},
+        {
+            "received": "TOKEN=synthetic-secret",
+            "selected": 0,
+            "excluded_current_evidence_missing": 0,
+        },
+        [],
+    ],
+)
+def test_rule_selection_diagnostic_refuses_payload_or_inconsistent_counts(selection: Any) -> None:
+    diagnostic = {
+        "stage": "post_schema",
+        "outcome": "running",
+        "disposition": "running",
+        "error": None,
+        "subreason": None,
+        "stages": {"post_schema": {"outcome": "running", "rule_selection": selection}},
+    }
+    with pytest.raises(MemoryFeatureError, match="^memory_attempt_diagnostics_invalid$"):
+        _validate_attempt_diagnostic(diagnostic)
+
+
+def test_rule_selection_diagnostic_refuses_wrong_stage() -> None:
+    with pytest.raises(MemoryFeatureError, match="^memory_attempt_diagnostics_invalid$"):
+        _validate_attempt_diagnostic(
+            {
+                "stage": "completion",
+                "outcome": "running",
+                "disposition": "running",
+                "error": None,
+                "subreason": None,
+                "stages": {
+                    "completion": {
+                        "outcome": "running",
+                        "rule_selection": {
+                            "received": 0,
+                            "selected": 0,
+                            "excluded_current_evidence_missing": 0,
+                        },
+                    }
+                },
+            }
+        )
 
 
 @pytest.mark.parametrize(

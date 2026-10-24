@@ -6,6 +6,7 @@ import json
 import os
 from argparse import Namespace
 from collections.abc import Iterator
+from copy import deepcopy
 from dataclasses import replace
 from typing import Any
 from uuid import uuid4
@@ -18,6 +19,7 @@ from language_review.check_models import ProbeResult
 from language_review.config import CheckSettings
 from language_review.engine_llm import ProviderReply
 from language_review.memory.cli import run as run_memory
+from language_review.memory.cli import submit_decision
 from language_review.memory.search import recall
 from language_review.memory.settings import MemorySettings
 from language_review.memory.store import Store
@@ -159,10 +161,7 @@ class DiagnosticProvider:
             return ProviderReply('{"rules":[]}', truncated=False)
         text = "праверить — вероятная опечатка"
         evidence = ["c1"]
-        if self.mode == "current_evidence_missing":
-            assert len(cases) > 1, "Для синтетического c2 требуется второе finding той же category."
-            evidence = ["c2"]
-        elif self.mode == "sanitize_changed":
+        if self.mode == "sanitize_changed":
             text = (
                 "TOKEN=synthetic-secret; "
                 r"C:\Users\synthetic\private.txt; "
@@ -190,6 +189,193 @@ class DiagnosticProvider:
             prompt_tokens=self.prompt_tokens,
             completion_tokens=7 if self.prompt_tokens is not None else None,
         )
+
+
+class RuleSelectionProvider:
+    """Возвращает фиксированный структурный ответ для тестов выбора правила."""
+
+    name = "selection-fixture"
+    endpoint = "http://127.0.0.1"
+    model = "synthetic-model"
+
+    def __init__(self, rules: list[dict[str, Any]]) -> None:
+        self.rules = rules
+        self.cases: list[dict[str, Any]] = []
+
+    def probe(self) -> ProbeResult:
+        return ProbeResult("available")
+
+    def complete(self, system: str, user: str, schema: dict[str, Any]) -> ProviderReply:
+        del system, schema
+        self.cases = json.loads(user)["cases"]
+        rules = deepcopy(self.rules)
+        for rule in rules:
+            if rule["category"] is None:
+                rule["category"] = self.cases[0]["category"]
+        return ProviderReply(json.dumps({"rules": rules}, ensure_ascii=False), truncated=False)
+
+
+class FailOnceRuleSelectionProvider(RuleSelectionProvider):
+    def __init__(self, rules: list[dict[str, Any]]) -> None:
+        super().__init__(rules)
+        self.calls = 0
+
+    def complete(self, system: str, user: str, schema: dict[str, Any]) -> ProviderReply:
+        self.calls += 1
+        if self.calls == 1:
+            from language_review.engine_http import EngineHttpError
+
+            raise EngineHttpError("timeout", "synthetic completion")
+        return super().complete(system, user, schema)
+
+
+class RevisionChangingRuleSelectionProvider(RuleSelectionProvider):
+    def __init__(self, store: Store, project: str, rules: list[dict[str, Any]]) -> None:
+        super().__init__(rules)
+        self.store = store
+        self.project = project
+
+    def complete(self, system: str, user: str, schema: dict[str, Any]) -> ProviderReply:
+        reply = super().complete(system, user, schema)
+        with self.store.connect() as db:
+            changed = db.execute(
+                "UPDATE lr_findings f SET revision=f.revision+1 FROM lr_jobs j "
+                "WHERE j.finding_id=f.id AND j.state='running' AND f.project_id=%s "
+                "RETURNING f.id",
+                (self.project,),
+            ).fetchone()
+        assert changed is not None
+        return reply
+
+
+class LeaseReclaimingRuleSelectionProvider(RuleSelectionProvider):
+    def __init__(self, store: Store, project: str, rules: list[dict[str, Any]]) -> None:
+        super().__init__(rules)
+        self.store = store
+        self.project = project
+        self.reclaimed: dict[str, Any] | None = None
+
+    def complete(self, system: str, user: str, schema: dict[str, Any]) -> ProviderReply:
+        reply = super().complete(system, user, schema)
+        with self.store.connect() as db:
+            expired = db.execute(
+                "UPDATE lr_jobs j SET lease_until=clock_timestamp()-interval '1 second' "
+                "FROM lr_findings f WHERE j.finding_id=f.id AND f.project_id=%s "
+                "AND j.state='running' RETURNING j.id",
+                (self.project,),
+            ).fetchone()
+        assert expired is not None
+        self.reclaimed = self.store.claim(self.project, lease_seconds=300)
+        assert self.reclaimed is not None
+        return reply
+
+
+def seventeen_case_report(report: dict[str, Any], *, excerpt: str | None = None) -> dict[str, Any]:
+    """Расширяет отчёт синтетическими документами до c1…c17."""
+    result = deepcopy(report)
+    template_item = deepcopy(result["items"][0])
+    template_document = deepcopy(
+        next(
+            document
+            for document in result["analysis"]["documents"]
+            if document["id"] == template_item["document_id"]
+        )
+    )
+    root = template_document["root"]
+    if excerpt is not None:
+        for item in result["items"]:
+            item["excerpt"] = excerpt
+            for evidence in item["evidence"]:
+                evidence["source_excerpt"] = excerpt
+    for index in range(3, 18):
+        document_id = f"synthetic-document-{index}"
+        document = deepcopy(template_document)
+        document.update(id=document_id, path=f"synthetic/case-{index}.rs")
+        result["analysis"]["documents"].append(document)
+        item = deepcopy(template_item)
+        item.update(id=f"synthetic-finding-{index}", document_id=document_id)
+        result["items"].append(item)
+    assert root == result["analysis"]["roots"][0]["id"]
+    assert len(result["items"]) == 17
+    return result
+
+
+def seed_seventeen_cases(store: Store, report: dict[str, Any]) -> tuple[str, str, str]:
+    project, run = str(uuid4()), str(uuid4())
+    report = seventeen_case_report(report)
+    store.begin(run, {"root-0001": project}, "synthetic", "live")
+    store.ingest(run, report, {})
+    with store.connect() as db:
+        current = db.execute(
+            "SELECT j.id,j.finding_id FROM lr_jobs j JOIN lr_findings f ON f.id=j.finding_id "
+            "WHERE f.project_id=%s ORDER BY j.created_at,j.id LIMIT 1",
+            (project,),
+        ).fetchone()
+        db.execute(
+            "UPDATE lr_jobs SET state='done' WHERE id IN ("
+            "SELECT j.id FROM lr_jobs j JOIN lr_findings f ON f.id=j.finding_id "
+            "WHERE f.project_id=%s AND j.id!=%s)",
+            (project, current["id"]),
+        )
+    return project, str(current["finding_id"]), run
+
+
+def seed_seventeen_decision_cases(
+    store: Store,
+    report: dict[str, Any],
+    *,
+    current_status: str,
+    related_status: str,
+    excerpt: str | None = None,
+) -> tuple[str, str, str]:
+    project, run = str(uuid4()), str(uuid4())
+    report = seventeen_case_report(report, excerpt=excerpt)
+    store.begin(run, {"root-0001": project}, "synthetic", "live")
+    store.ingest(run, report, {})
+    with store.connect() as db:
+        current = db.execute(
+            "SELECT j.finding_id FROM lr_jobs j JOIN lr_findings f ON f.id=j.finding_id "
+            "WHERE f.project_id=%s ORDER BY j.created_at,j.id LIMIT 1",
+            (project,),
+        ).fetchone()
+        occurrences = db.execute(
+            "SELECT item_id,finding_id FROM lr_occurrences WHERE run_id=%s", (run,)
+        ).fetchall()
+    current_finding = str(current["finding_id"])
+    for occurrence in occurrences:
+        state = current_status if occurrence["finding_id"] == current_finding else related_status
+        submit_decision(
+            store,
+            {
+                "schema": "language-review.decision",
+                "schema_version": "1.0",
+                "project_id": project,
+                "run_id": run,
+                "item_id": occurrence["item_id"],
+                "decision": {
+                    "id": str(uuid4()),
+                    "expected_revision": 0,
+                    "status": state,
+                    "actor": "synthetic-reviewer",
+                    "reason": "Синтетическая проверка факта для теста консолидации.",
+                    "suggestion": None,
+                    "scope": "project",
+                    "public_rule": None,
+                },
+            },
+        )
+    with store.connect() as db:
+        current_job = db.execute(
+            "SELECT j.id FROM lr_jobs j JOIN lr_findings f ON f.id=j.finding_id "
+            "WHERE j.finding_id=%s AND j.revision=f.revision AND f.project_id=%s",
+            (current_finding, project),
+        ).fetchone()
+        db.execute(
+            "UPDATE lr_jobs SET state='done' WHERE id!=%s AND finding_id IN "
+            "(SELECT id FROM lr_findings WHERE project_id=%s)",
+            (current_job["id"], project),
+        )
+    return project, current_finding, run
 
 
 class RevisionChangingProvider(DiagnosticProvider):
@@ -223,7 +409,6 @@ def latest_attempt(status: dict[str, Any], attempt_id: str | None = None) -> dic
 @pytest.mark.parametrize(
     ("mode", "subreason"),
     [
-        ("current_evidence_missing", "current_evidence_missing"),
         ("sanitize_changed", "sanitize_changed"),
         ("empty_after_strip", "empty_text_after_strip"),
     ],
@@ -300,6 +485,415 @@ def test_post_schema_failures_are_publicly_distinguishable_and_private(
         ):
             assert private_value not in serialized
             assert private_value not in serialized_result
+
+
+def test_current_case_rule_survives_unrelated_rule_for_seventeen_cases(
+    worker_store: Store, stored: dict[str, Any]
+) -> None:
+    project, current_finding, _ = seed_seventeen_cases(worker_store, stored["report"])
+    provider = FailOnceRuleSelectionProvider(
+        [
+            {
+                "text": "Имя защищённой команды сохраняется без исправления.",
+                "category": None,
+                "relation": "terminology",
+                "evidence": ["c1"],
+            },
+            {
+                "text": "Большинство похожих случаев подтверждает общее правило.",
+                "category": None,
+                "relation": "pattern",
+                "evidence": [f"c{index}" for index in range(2, 18)],
+            },
+        ]
+    )
+    before = _primary_worker_state(worker_store)
+
+    failed = process_one(worker_store, project, CheckSettings(), provider)
+
+    assert failed and failed["status"] == "retry_or_failed"
+    assert failed["reason"] == "memory_llm_timeout"
+    first_attempt = latest_attempt(worker_store.status(project), failed["attempt_id"])
+    assert first_attempt["stage"] == "completion"
+    assert first_attempt["disposition"] == "retry"
+    with worker_store.connect() as db:
+        db.execute(
+            "UPDATE lr_jobs SET available_at=clock_timestamp() WHERE id=%s",
+            (failed["job"],),
+        )
+
+    result = process_one(worker_store, project, CheckSettings(), provider)
+
+    selection = {"received": 2, "selected": 1, "excluded_current_evidence_missing": 1}
+    assert result and result["status"] == "done" and result["rules"] == 1
+    assert result["job"] == failed["job"]
+    assert result["rule_selection"] == selection
+    assert [case["id"] for case in provider.cases] == [f"c{index}" for index in range(1, 18)]
+    attempt = latest_attempt(worker_store.status(project), result["attempt_id"])
+    assert attempt["outcome"] == "succeeded"
+    assert attempt["disposition"] == "completed"
+    assert attempt["subreason"] is None
+    assert attempt["stages"]["post_schema"]["outcome"] == "succeeded"
+    assert attempt["stages"]["post_schema"]["rule_selection"] == selection
+    assert attempt["job_state"] == "done"
+    attempts = [
+        row
+        for row in worker_store.status(project)["attempt_diagnostics"]["recent"]
+        if row["job_id"] == result["job"]
+    ]
+    assert [row["attempt"] for row in attempts] == [2, 1]
+    assert attempts[1]["outcome"] == "failed" and attempts[1]["error"] == "memory_llm_timeout"
+
+    with worker_store.connect() as db:
+        hypotheses = db.execute(
+            "SELECT * FROM lr_rules WHERE project_id=%s AND kind='hypothesis' "
+            "AND state='hypothesis' ORDER BY id",
+            (project,),
+        ).fetchall()
+        history = db.execute(
+            "SELECT h.* FROM lr_rule_history h JOIN lr_rules r ON r.id=h.rule_id "
+            "WHERE r.project_id=%s AND r.kind='hypothesis' ORDER BY h.rule_id,h.revision",
+            (project,),
+        ).fetchall()
+    assert len(hypotheses) == 1
+    assert hypotheses[0]["text"] == "Имя защищённой команды сохраняется без исправления."
+    assert hypotheses[0]["payload"]["relation"] == "terminology"
+    assert hypotheses[0]["payload"]["evidence"] == [current_finding]
+    assert hypotheses[0]["finding_id"] == current_finding
+    assert len(history) == 1 and history[0]["revision"] == 1
+    assert process_one(worker_store, project, CheckSettings(), provider) is None
+    assert _primary_worker_state(worker_store) == before
+
+
+@pytest.mark.parametrize(
+    (
+        "scenario",
+        "current_status",
+        "related_status",
+        "excerpt",
+        "current_relation",
+        "related_relation",
+    ),
+    [
+        ("protected-command", "rejected", "accepted", "Invoke-Review", "terminology", "pattern"),
+        ("ordinary-typo", "accepted", "rejected", "праверить", "pattern", "exception"),
+        ("disputed", "disputed", "accepted", "праверить", None, None),
+    ],
+)
+def test_decision_facts_preserve_polarity_and_allow_abstention(
+    worker_store: Store,
+    stored: dict[str, Any],
+    scenario: str,
+    current_status: str,
+    related_status: str,
+    excerpt: str,
+    current_relation: str | None,
+    related_relation: str | None,
+) -> None:
+    project, current_finding, _ = seed_seventeen_decision_cases(
+        worker_store,
+        stored["report"],
+        current_status=current_status,
+        related_status=related_status,
+        excerpt=excerpt,
+    )
+    rules: list[dict[str, Any]] = []
+    if current_relation == "terminology":
+        rules = [
+            {
+                "text": "Имя команды Invoke-Review сохраняется без исправления.",
+                "category": None,
+                "relation": current_relation,
+                "evidence": ["c1"],
+            },
+            {
+                "text": "Большинство приняло исправленное имя как правило для всех команд.",
+                "category": None,
+                "relation": related_relation,
+                "evidence": [f"c{index}" for index in range(2, 18)],
+            },
+        ]
+    elif current_relation == "pattern":
+        rules = [
+            {
+                "text": "Слово праверить — опечатка в обычной прозе.",
+                "category": None,
+                "relation": current_relation,
+                "evidence": ["c1"],
+            },
+            {
+                "text": "Отклонённые предложения относятся к отдельным исключениям.",
+                "category": None,
+                "relation": related_relation,
+                "evidence": [f"c{index}" for index in range(2, 18)],
+            },
+        ]
+    provider = RuleSelectionProvider(rules)
+    before = _primary_worker_state(worker_store)
+
+    result = process_one(worker_store, project, CheckSettings(), provider)
+
+    assert result and result["status"] == "done"
+    assert [case["decision"]["status"] for case in provider.cases] == [
+        current_status,
+        *([related_status] * 16),
+    ]
+    expected_selection = {
+        "received": len(rules),
+        "selected": int(current_relation is not None),
+        "excluded_current_evidence_missing": int(current_relation is not None),
+    }
+    assert result["rule_selection"] == expected_selection
+    assert result["rules"] == expected_selection["selected"]
+    with worker_store.connect() as db:
+        hypotheses = db.execute(
+            "SELECT * FROM lr_rules WHERE project_id=%s AND kind='hypothesis' "
+            "AND state='hypothesis' ORDER BY id",
+            (project,),
+        ).fetchall()
+        current = db.execute(
+            "SELECT state FROM lr_findings WHERE id=%s AND project_id=%s",
+            (current_finding, project),
+        ).fetchone()
+    assert current["state"] == current_status
+    if current_relation is None:
+        assert hypotheses == []
+        assert result["rule_selection"] == {
+            "received": 0,
+            "selected": 0,
+            "excluded_current_evidence_missing": 0,
+        }
+    else:
+        assert len(hypotheses) == 1
+        assert hypotheses[0]["state"] == "hypothesis"
+        assert hypotheses[0]["payload"]["relation"] == current_relation
+        assert hypotheses[0]["payload"]["evidence"] == [current_finding]
+    ordinary = recall(worker_store, project, excerpt, dataset="synthetic", hybrid=False)
+    assert not [row for row in ordinary["results"] if row["kind"] == "hypothesis"]
+    assert _primary_worker_state(worker_store) == before
+
+
+def test_majority_only_rule_completes_without_retry_or_publication(
+    worker_store: Store, stored: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, _, _ = seed_seventeen_cases(worker_store, stored["report"])
+    provider = RuleSelectionProvider(
+        [
+            {
+                "text": "Большинство похожих случаев подтверждает общее правило.",
+                "category": None,
+                "relation": "pattern",
+                "evidence": [f"c{index}" for index in range(2, 18)],
+            }
+        ]
+    )
+    monkeypatch.setattr("language_review.memory.worker.create_provider", lambda _: provider)
+
+    result = work(worker_store, project, CheckSettings(), limit=1)
+
+    assert result["status"] == "processed"
+    assert len(result["jobs"]) == 1
+    job = result["jobs"][0]
+    assert job["status"] == "done" and job["rules"] == 0
+    assert job["rule_selection"] == {
+        "received": 1,
+        "selected": 0,
+        "excluded_current_evidence_missing": 1,
+    }
+    status = worker_store.status(project)
+    attempt = latest_attempt(status, job["attempt_id"])
+    assert attempt["job_state"] == "done"
+    assert attempt["attempt"] == 1
+    assert attempt["outcome"] == "succeeded"
+    assert attempt["disposition"] == "completed"
+    assert attempt["subreason"] is None
+    assert status["rules"] == []
+    assert status["durable_events"] == len(_primary_worker_state(worker_store)["events"])
+
+
+def test_c1_membership_does_not_prove_semantic_support(
+    worker_store: Store, stored: dict[str, Any]
+) -> None:
+    project, current_finding, _ = seed_seventeen_cases(worker_store, stored["report"])
+    provider = RuleSelectionProvider(
+        [
+            {
+                "text": "Все проекты всегда обязаны использовать одно глобальное написание.",
+                "category": None,
+                "relation": "pattern",
+                "evidence": ["c1"],
+            }
+        ]
+    )
+
+    result = process_one(worker_store, project, CheckSettings(), provider)
+
+    assert result and result["status"] == "done" and result["rules"] == 1
+    assert result["rule_selection"] == {
+        "received": 1,
+        "selected": 1,
+        "excluded_current_evidence_missing": 0,
+    }
+    with worker_store.connect() as db:
+        hypotheses = db.execute(
+            "SELECT * FROM lr_rules WHERE project_id=%s AND kind='hypothesis' "
+            "AND state='hypothesis' ORDER BY id",
+            (project,),
+        ).fetchall()
+    assert len(hypotheses) == 1
+    [hypothesis] = hypotheses
+    assert (
+        hypothesis["text"] == "Все проекты всегда обязаны использовать одно глобальное написание."
+    )
+    assert hypothesis["payload"]["evidence"] == [current_finding]
+    assert hypothesis["kind"] == "hypothesis" and hypothesis["state"] == "hypothesis"
+    ordinary = recall(
+        worker_store,
+        project,
+        "одно глобальное написание",
+        dataset="synthetic",
+        hybrid=False,
+    )
+    diagnostic = recall(
+        worker_store,
+        project,
+        "одно глобальное написание",
+        dataset="synthetic",
+        hybrid=False,
+        include_hypotheses=True,
+    )
+    assert all(row["kind"] != "hypothesis" for row in ordinary["results"])
+    assert hypothesis["id"] in {row["id"] for row in diagnostic["results"]}
+
+
+@pytest.mark.parametrize("interruption", ["revision", "lease"])
+def test_selected_split_cannot_publish_after_revision_or_lease_changes(
+    worker_store: Store,
+    stored: dict[str, Any],
+    interruption: str,
+) -> None:
+    project, _, _ = seed_seventeen_cases(worker_store, stored["report"])
+    rules = [
+        {
+            "text": "Текущее правило с подтверждением c1.",
+            "category": None,
+            "relation": "pattern",
+            "evidence": ["c1"],
+        },
+        {
+            "text": "Отдельное правило большинства без текущего подтверждения.",
+            "category": None,
+            "relation": "exception",
+            "evidence": [f"c{index}" for index in range(2, 18)],
+        },
+    ]
+    provider: RuleSelectionProvider
+    if interruption == "revision":
+        provider = RevisionChangingRuleSelectionProvider(worker_store, project, rules)
+    else:
+        provider = LeaseReclaimingRuleSelectionProvider(worker_store, project, rules)
+
+    result = process_one(worker_store, project, CheckSettings(), provider)
+
+    selection = {"received": 2, "selected": 1, "excluded_current_evidence_missing": 1}
+    assert result is not None
+    assert result["diagnostic"]["stages"]["post_schema"]["rule_selection"] == selection
+    assert worker_store.status(project)["rules"] == []
+    attempt = latest_attempt(worker_store.status(project), result["attempt_id"])
+    assert attempt["stage"] == "persistence"
+    if interruption == "revision":
+        assert result["status"] == "done" and result["stale"] is True
+        assert attempt["outcome"] == "stale"
+        assert attempt["disposition"] == "stale"
+        assert attempt["stages"]["persistence"]["outcome"] == "stale"
+    else:
+        assert result["status"] == "retry_or_failed"
+        assert result["reason"] == "memory_worker_lease_lost"
+        assert attempt["outcome"] == "stale"
+        assert attempt["disposition"] == "stale"
+        assert isinstance(provider, LeaseReclaimingRuleSelectionProvider)
+        assert provider.reclaimed and provider.reclaimed["attempt"] == 2
+    with worker_store.connect() as db:
+        assert (
+            db.execute(
+                "SELECT count(*) AS count FROM lr_rules WHERE project_id=%s "
+                "AND kind='hypothesis' AND state='hypothesis'",
+                (project,),
+            ).fetchone()["count"]
+            == 0
+        )
+
+
+@pytest.mark.parametrize(
+    ("unsafe_sibling", "expected_stage", "expected_subreason"),
+    [
+        ("sanitize_changed", "post_schema", "sanitize_changed"),
+        ("empty_after_strip", "post_schema", "empty_text_after_strip"),
+        ("unknown_alias", "parse_schema", "schema_validation_failed"),
+        ("invalid_relation", "parse_schema", "schema_validation_failed"),
+    ],
+)
+def test_unsafe_sibling_rejects_whole_response_before_current_rule_persists(
+    worker_store: Store,
+    stored: dict[str, Any],
+    unsafe_sibling: str,
+    expected_stage: str,
+    expected_subreason: str,
+) -> None:
+    project = seed(worker_store, stored["report"])
+    safe_current = {
+        "text": "Синтетическое правило для текущего случая.",
+        "category": None,
+        "relation": "pattern",
+        "evidence": ["c1"],
+    }
+    unsafe = {
+        "text": "Синтетическое правило для соседнего случая.",
+        "category": None,
+        "relation": "pattern",
+        "evidence": ["c2"],
+    }
+    if unsafe_sibling == "sanitize_changed":
+        unsafe["text"] = "TOKEN=synthetic-secret; правило"
+    elif unsafe_sibling == "empty_after_strip":
+        unsafe["text"] = "   "
+    elif unsafe_sibling == "unknown_alias":
+        unsafe["evidence"] = ["not-a-case"]
+    else:
+        unsafe["relation"] = "unsupported-relation"
+    before = _primary_worker_state(worker_store)
+
+    result = process_one(
+        worker_store,
+        project,
+        CheckSettings(),
+        RuleSelectionProvider([safe_current, unsafe]),
+    )
+
+    assert result and result["status"] == "retry_or_failed"
+    status = worker_store.status(project)
+    attempt = latest_attempt(status, result["attempt_id"])
+    assert attempt["outcome"] == "failed"
+    assert attempt["disposition"] == "retry"
+    assert attempt["stage"] == expected_stage
+    assert attempt["subreason"] == expected_subreason
+    assert status["rules"] == []
+    assert _primary_worker_state(worker_store) == before
+    serialized = json.dumps([result, status], ensure_ascii=False, default=str)
+    assert "synthetic-secret" not in serialized
+    assert not contains_private_diagnostic_keys(attempt)
+
+
+def _primary_worker_state(store: Store) -> dict[str, list[dict[str, Any]]]:
+    with store.connect() as db:
+        return {
+            "events": db.execute("SELECT * FROM lr_events ORDER BY id").fetchall(),
+            "findings": db.execute("SELECT * FROM lr_findings ORDER BY id").fetchall(),
+            "decisions": db.execute("SELECT * FROM lr_decisions ORDER BY id").fetchall(),
+            "case_rules": db.execute(
+                "SELECT * FROM lr_rules WHERE kind='case' ORDER BY id"
+            ).fetchall(),
+        }
 
 
 @pytest.mark.parametrize(
@@ -623,10 +1217,16 @@ def test_rules_empty_remains_successful_noop_and_scoped_diagnostics(
     result = process_one(worker_store, project, CheckSettings(), DiagnosticProvider("empty"))
 
     assert result and result["status"] == "done" and result["rules"] == 0
+    assert result["rule_selection"] == {
+        "received": 0,
+        "selected": 0,
+        "excluded_current_evidence_missing": 0,
+    }
     status = worker_store.status(project)
     attempt = latest_attempt(status, result["attempt_id"])
     assert attempt["outcome"] == "succeeded"
     assert attempt["disposition"] == "completed"
+    assert attempt["stages"]["post_schema"]["rule_selection"] == result["rule_selection"]
     assert status["rules"] == []
     assert not status["recent_errors"]
     assert (
